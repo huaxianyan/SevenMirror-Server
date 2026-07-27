@@ -1,6 +1,6 @@
 # SPIKE-004: Android/Chrome authenticated E2EE interoperability
 
-Status: cross-platform core and API 36/IndexedDB persistence paths validated; compatibility gates remain
+Status: cross-platform core and Android API 29/36 persistence validated; real Chrome restart gate remains
 
 ## Question
 
@@ -50,6 +50,7 @@ Validated behavior:
 
 ## Runtime evidence
 
+- Android 10 / API 29 emulator HPKE and Keystore persistence instrumented tests: passed
 - Pixel 10 Pro, Android 16 / API 36 HPKE and Keystore persistence instrumented tests: passed
 - Android/JVM unit tests: passed
 - Chrome non-extractable CryptoKey + IndexedDB unit path: passed
@@ -62,9 +63,7 @@ The spike APIs that serialize private keys exist only for reproducible vectors. 
 
 ## Remaining exit evidence
 
-- Android 10 / API 29 instrumented test
 - Chrome non-extractable CryptoKey fingerprint through actual Worker/browser restart
-- Android Keystore-wrapped private scalar persistence/restore on API 29
 - persistent replay ledger on both clients
 - final AAD/routing-header codec
 - device trust, rotation, and revocation integration tests
