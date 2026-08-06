@@ -7,3 +7,5 @@ The current schema is **provisional**. Do not treat `0.1.0-dev` as a compatibili
 Client repositories vendor a tagged copy of these files and record schema integrity metadata. They must not depend on a relative path to this repository.
 
 `test-vectors/hpke-auth-p256-aes128gcm.json` is the canonical SPIKE-004 Android/Chrome interoperability vector. Its private keys are intentionally public test material and must never be used for production identity or payload encryption.
+
+`routing-header-v1.md` defines the provisional fixed 160-byte routing header that is authenticated as the exact HPKE AAD. `test-vectors/routing-header-v1.json` is the canonical Go/Kotlin/TypeScript codec vector.

@@ -17,7 +17,7 @@ jobs:
           go-version: '1.21.x'
           cache: true
       - name: Check formatting
-        run: test -z "$(gofmt -l cmd internal)"
+        run: test -z "$(gofmt -l cmd internal protocol)"
       - name: Vet
         run: go vet ./...
       - name: Test

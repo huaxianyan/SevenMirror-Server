@@ -69,13 +69,12 @@ The clear routing header contains only what the server needs:
 - workspace, sender device, and recipient device IDs;
 - sender and recipient key IDs;
 - random 128-bit message ID;
-- sender sequence/epoch where applicable;
-- creation and mandatory expiry times;
-- ciphertext length/transport bookkeeping.
+- mandatory sender sequence;
+- creation and mandatory expiry times.
 
 Business `MessageType` must move inside the ciphertext. A future protocol revision will replace the provisional envelope fields that currently expose it.
 
-The sender serializes a versioned `RoutingHeader` once and passes those exact bytes as HPKE AAD. The transport carries those same bytes without reserialization. The server parses them for routing; recipients authenticate the original byte sequence before trusting parsed fields. This avoids relying on cross-language canonical protobuf reserialization. Any server modification causes AEAD opening to fail.
+Routing Header v1 is a fixed 160-byte, big-endian structure specified in `protocol/routing-header-v1.md`. It begins with ASCII `SNH1`, pins E2EE suite `1`, reserves zero flags, uses fixed 16-byte workspace/device/message IDs and full 32-byte key IDs, and limits expiry to 24 hours. The sender serializes it once and passes those exact bytes as HPKE AAD. The transport carries those same bytes without reserialization. The server parses them for routing; recipients authenticate the original byte sequence before trusting parsed fields. Fixed offsets avoid protobuf canonicalization and parser-ambiguity dependencies. Any server modification causes AEAD opening to fail.
 
 ## Replay and expiry
 
@@ -93,7 +92,7 @@ Processing order is:
 4. atomically record the replay tuple before applying a side effect;
 5. reject duplicates, expired items, unknown keys, authentication failures, and stale notification revisions.
 
-Replay records live at least until the envelope expiry plus clock-skew allowance. Chrome must persist this state across MV3 worker suspension/restart; Android must persist it across process/device restart. In-memory guards in SPIKE-004 demonstrate policy only and are not production storage.
+Replay records live at least until the envelope expiry plus clock-skew allowance. Chrome persists this state in an atomic IndexedDB read/write transaction; Android persists it in an atomic SQLite transaction. Both fail closed at capacity rather than evicting an unexpired record. Integration must still prove that authenticated tuples are committed before notification side effects.
 
 ## Key storage
 
@@ -185,16 +184,21 @@ SPIKE-004 currently demonstrates:
 - non-extractable Chrome WebCrypto key persistence through the IndexedDB unit path;
 - unchanged Chrome identity fingerprint after actual MV3 Worker termination and full browser restart on 2026-08-06;
 - a real Chrome replay tuple accepted once, rejected immediately, and still rejected after full browser restart on 2026-08-06;
+- identical 160-byte Routing Header v1 encoding and strict malformed-header rejection in Go, Kotlin, and TypeScript;
+- HPKE authentication failure after modifying a byte in the encoded routing header;
 - Chrome TypeScript checks, Vitest, and production bundling.
 
-Canonical vector: `protocol/test-vectors/hpke-auth-p256-aes128gcm.json`.
+Canonical vectors:
+
+- `protocol/test-vectors/hpke-auth-p256-aes128gcm.json`
+- `protocol/test-vectors/routing-header-v1.json`
 
 ## Acceptance gates
 
 This ADR remains Proposed until all are complete:
 
 - integration tests proving each client records the replay tuple before applying a notification side effect;
-- final routing-header wire schema and size limits;
+- ADR-001 review/freeze of outer encrypted-envelope framing and transport size limits;
 - pairing QR/safety-number transcript and trust-state UX review;
 - rotation, revocation, and lost-device integration tests;
 - independent security review before real notification content is enabled.

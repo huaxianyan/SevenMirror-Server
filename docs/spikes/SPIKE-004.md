@@ -26,10 +26,11 @@ See `docs/adr/ADR-002-device-identity-and-e2ee.md` for the trust and lifecycle p
 
 ## Automated evidence
 
-Canonical vector:
+Canonical vectors:
 
 ```text
 protocol/test-vectors/hpke-auth-p256-aes128gcm.json
+protocol/test-vectors/routing-header-v1.json
 ```
 
 It contains only public test key material and includes:
@@ -47,7 +48,9 @@ Validated behavior:
 - modified AAD fails authentication;
 - modified ciphertext fails authentication;
 - duplicate and expired message policy prototypes behave as expected;
-- Android SQLite and Chrome IndexedDB ledgers atomically retain replay tuples across store reconstruction, serialize concurrent attempts, purge expired records, and fail closed at capacity.
+- Android SQLite and Chrome IndexedDB ledgers atomically retain replay tuples across store reconstruction, serialize concurrent attempts, purge expired records, and fail closed at capacity;
+- Go, Kotlin, and TypeScript encode and decode the same fixed 160-byte Routing Header v1 vector;
+- routing metadata is fixed-width, business message type remains encrypted, malformed headers fail closed, and any byte modification is rejected when the original header is used as HPKE AAD.
 
 ## Runtime evidence
 
@@ -67,5 +70,5 @@ The spike APIs that serialize private keys exist only for reproducible vectors. 
 ## Remaining exit evidence
 
 - integration that records replay tuples before applying notification side effects
-- final AAD/routing-header codec
+- final outer encrypted-envelope framing and transport size limits
 - device trust, rotation, and revocation integration tests
