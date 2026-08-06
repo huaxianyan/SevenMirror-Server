@@ -1,6 +1,6 @@
 # ADR-002: Device identity, trust, and end-to-end encryption
 
-- Status: **Proposed — SPIKE-004 candidate validated, persistence review pending**
+- Status: **Proposed — SPIKE-004 cryptography and identity persistence validated; lifecycle integration pending**
 - Date: 2026-07-27
 - Owners: Server, Android, and Chrome projects
 
@@ -145,8 +145,7 @@ It does not provide:
 - availability against a server that drops or delays traffic;
 - protection after an endpoint itself is compromised;
 - full forward secrecy for old ciphertext after compromise of a static recipient private key;
-- post-compromise security or a double ratchet;
-- final proof that real Chrome restart private-key persistence is safe (still an exit gate).
+- post-compromise security or a double ratchet.
 
 Per-message ephemeral encapsulation alone does not prevent a later stolen recipient static key from opening retained old ciphertext. Short server retention, expiry, and rotation limit but do not eliminate this risk. A Noise/ratcheting follow-up is required if full forward secrecy becomes a release requirement.
 
@@ -183,6 +182,7 @@ SPIKE-004 currently demonstrates:
 - bounded duplicate/expiry policy prototypes;
 - successful Bouncy Castle HPKE and Android Keystore-wrapped persistence execution on Android 10 / API 29 and Pixel 10 Pro / Android 16;
 - non-extractable Chrome WebCrypto key persistence through the IndexedDB unit path;
+- unchanged Chrome identity fingerprint after actual MV3 Worker termination and full browser restart on 2026-08-06;
 - Chrome TypeScript checks, Vitest, and production bundling.
 
 Canonical vector: `protocol/test-vectors/hpke-auth-p256-aes128gcm.json`.
@@ -191,7 +191,6 @@ Canonical vector: `protocol/test-vectors/hpke-auth-p256-aes128gcm.json`.
 
 This ADR remains Proposed until all are complete:
 
-- non-extractable/persisted Chrome WebCrypto identity-key test across actual worker and browser restart;
 - persistent atomic replay ledger on both clients;
 - final routing-header wire schema and size limits;
 - pairing QR/safety-number transcript and trust-state UX review;

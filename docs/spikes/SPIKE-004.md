@@ -1,6 +1,6 @@
 # SPIKE-004: Android/Chrome authenticated E2EE interoperability
 
-Status: cross-platform core and Android API 29/36 persistence validated; real Chrome restart gate remains
+Status: cross-platform core and Android/Chrome production-key persistence paths validated
 
 ## Question
 
@@ -56,6 +56,7 @@ Validated behavior:
 - Chrome non-extractable CryptoKey + IndexedDB unit path: passed
 - Chrome Vitest and TypeScript: passed
 - Chrome production Vite build: passed
+- Real Chrome unpacked extension retained the same non-extractable identity fingerprint after MV3 Worker termination and full browser restart: passed (2026-08-06)
 
 ## Important scope boundary
 
@@ -63,7 +64,6 @@ The spike APIs that serialize private keys exist only for reproducible vectors. 
 
 ## Remaining exit evidence
 
-- Chrome non-extractable CryptoKey fingerprint through actual Worker/browser restart
 - persistent replay ledger on both clients
 - final AAD/routing-header codec
 - device trust, rotation, and revocation integration tests
