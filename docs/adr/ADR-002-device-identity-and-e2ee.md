@@ -184,6 +184,7 @@ SPIKE-004 currently demonstrates:
 - successful Bouncy Castle HPKE and Android Keystore-wrapped persistence execution on Android 10 / API 29 and Pixel 10 Pro / Android 16;
 - non-extractable Chrome WebCrypto key persistence through the IndexedDB unit path;
 - unchanged Chrome identity fingerprint after actual MV3 Worker termination and full browser restart on 2026-08-06;
+- a real Chrome replay tuple accepted once, rejected immediately, and still rejected after full browser restart on 2026-08-06;
 - Chrome TypeScript checks, Vitest, and production bundling.
 
 Canonical vector: `protocol/test-vectors/hpke-auth-p256-aes128gcm.json`.

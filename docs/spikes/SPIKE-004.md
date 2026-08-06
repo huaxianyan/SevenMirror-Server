@@ -58,6 +58,7 @@ Validated behavior:
 - Chrome Vitest and TypeScript: passed
 - Chrome production Vite build: passed
 - Real Chrome unpacked extension retained the same non-extractable identity fingerprint after MV3 Worker termination and full browser restart: passed (2026-08-06)
+- Real Chrome replay ledger returned `accepted`, then `duplicate`, and remained `duplicate` after full browser restart; explicit Worker-only termination was unavailable, but full exit necessarily terminated the Worker: passed (2026-08-06)
 
 ## Important scope boundary
 
