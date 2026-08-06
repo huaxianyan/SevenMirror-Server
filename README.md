@@ -4,7 +4,7 @@ Private self-hosted relay for Notification Mirroring. This is one of three indep
 
 Repository: <https://github.com/huaxianyan/SyncNotifications-Server>
 
-> Status: foundation scaffold. Pairing, WebSocket relay, persistence and E2EE routing are not implemented yet.
+> Status: foundation plus test-only bounded ciphertext relay core. Pairing, production transport authentication, persistence, and exposed E2EE routing are not implemented yet.
 
 ## Current functionality
 
@@ -42,7 +42,7 @@ go test ./...
 
 ## Security status
 
-No endpoint accepts device registration or notification content yet. Public registration will remain disabled; real notification payloads will only be accepted after mandatory E2EE and device admission are implemented.
+No endpoint accepts device registration, ciphertext, or notification content yet. `internal/relay` is exercised only through tests and is intentionally not registered by `cmd/server` until production device authentication and admission exist. Public registration will remain disabled; real notification payloads will only be accepted after mandatory E2EE and device admission are implemented.
 
 ## Protocol ownership
 

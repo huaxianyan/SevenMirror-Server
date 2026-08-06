@@ -31,6 +31,7 @@ Canonical vectors:
 ```text
 protocol/test-vectors/hpke-auth-p256-aes128gcm.json
 protocol/test-vectors/routing-header-v1.json
+protocol/test-vectors/encrypted-payload-v1.json
 protocol/test-vectors/encrypted-envelope-v1.json
 ```
 
@@ -53,7 +54,11 @@ Validated behavior:
 - Go, Kotlin, and TypeScript encode and decode the same fixed 160-byte Routing Header v1 vector;
 - routing metadata is fixed-width, business message type remains encrypted, malformed headers fail closed, and any byte modification is rejected when the original header is used as HPKE AAD;
 - Go, Kotlin, and TypeScript encode the same bounded Encrypted Envelope v1 frame; truncation, trailing bytes, bad magic, invalid P-256 points, and ciphertext outside 16..524288 bytes fail closed;
-- Android and Chrome receiver pipelines return plaintext only after identity checks, HPKE authentication, and an atomic accepted replay-ledger write; tampered ciphertext does not consume replay state.
+- Android and Chrome receiver pipelines return plaintext only after identity checks, HPKE authentication, and an atomic accepted replay-ledger write; tampered ciphertext does not consume replay state;
+- Go, Kotlin, and TypeScript encode and strictly validate the same canonical protobuf `action.invoke` payload, including revision, opaque action ID, idempotency key, and optional reply text;
+- the canonical HPKE envelope now contains that payload, so Android opens and parses the exact Chrome-produced action frame;
+- Android commits both the envelope replay tuple and a persistent 30-day operation-idempotency tuple before exposing an action to the side-effect callback; a new envelope carrying the same operation cannot execute twice;
+- the test-only Go WebSocket adapter caps reads at 524521 bytes before routing, rejects oversized/text/malformed frames, binds authenticated workspace and sender device IDs to the header, and forwards the ciphertext unchanged.
 
 ## Runtime evidence
 
@@ -72,6 +77,6 @@ The spike APIs that serialize private keys exist only for reproducible vectors. 
 
 ## Remaining exit evidence
 
-- integration with actual notification payload parsing and side effects
-- WebSocket relay enforcement of the pre-allocation frame-size limit
+- production transport authentication and admission before the tested WebSocket adapter may be registered as an endpoint
+- adapter from authenticated `action.invoke` to Android's local notification controller, including opaque action-ID mapping and result recovery
 - device trust, rotation, and revocation integration tests

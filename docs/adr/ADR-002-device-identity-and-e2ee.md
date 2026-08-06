@@ -72,11 +72,13 @@ The clear routing header contains only what the server needs:
 - mandatory sender sequence;
 - creation and mandatory expiry times.
 
-Business `MessageType` must move inside the ciphertext. A future protocol revision will replace the provisional envelope fields that currently expose it.
+Business `MessageType` is inside the ciphertext in `EncryptedPayload v1`. The old provisional `Envelope` protobuf remains unreleased scaffolding and is not used by the binary transport; it must be removed or replaced before ADR-001 freezes v1.
 
 Routing Header v1 is a fixed 160-byte, big-endian structure specified in `protocol/routing-header-v1.md`. It begins with ASCII `SNH1`, pins E2EE suite `1`, reserves zero flags, uses fixed 16-byte workspace/device/message IDs and full 32-byte key IDs, and limits expiry to 24 hours. The sender serializes it once and passes those exact bytes as HPKE AAD. The transport carries those same bytes without reserialization. The server parses them for routing; recipients authenticate the original byte sequence before trusting parsed fields. Fixed offsets avoid protobuf canonicalization and parser-ambiguity dependencies. Any server modification causes AEAD opening to fail.
 
 Encrypted Envelope v1 is the binary WebSocket framing specified in `protocol/encrypted-envelope-v1.md`: ASCII `SNE1`, the exact 160-byte header, a fixed 65-byte uncompressed P-256 encapsulated key, a 32-bit ciphertext length, and 16..524288 ciphertext bytes. The full frame is bounded to 249..524521 bytes and forbids trailing data. The relay must enforce the maximum before payload-sized allocation.
+
+Encrypted Payload v1 is the canonical protobuf plaintext defined by `protocol/proto/notification/v1/payload.proto` and `protocol/encrypted-payload-v1.md`. Receivers reject unknown fields, duplicate/non-canonical wire encodings, unsupported schema versions, and semantic limit violations. `action.invoke` binds notification ID, revision, opaque 16-byte action ID, non-zero 16-byte operation-idempotency key, and optional reply text. No `PendingIntent` or `RemoteInput` capability leaves Android.
 
 ## Replay and expiry
 
@@ -94,7 +96,9 @@ Processing order is:
 4. atomically record the replay tuple before applying a side effect;
 5. reject duplicates, expired items, unknown keys, authentication failures, and stale notification revisions.
 
-Replay records live at least until the envelope expiry plus clock-skew allowance. Chrome persists this state in an atomic IndexedDB read/write transaction; Android persists it in an atomic SQLite transaction. Both fail closed at capacity rather than evicting an unexpired record. Integration must still prove that authenticated tuples are committed before notification side effects.
+Replay records live at least until the envelope expiry plus clock-skew allowance. Chrome persists this state in an atomic IndexedDB read/write transaction; Android persists it in an atomic SQLite transaction. Both fail closed at capacity rather than evicting an unexpired record.
+
+Android additionally persists `(sender_key_id, idempotency_key)` for 30 days before exposing an action to a side-effect callback. This prevents a sender retry using a new envelope message ID from repeating a logical operation. Authenticated invalid payloads consume their replay tuple; valid logical duplicates consume their distinct replay tuples but are rejected by the operation ledger.
 
 ## Key storage
 
@@ -190,20 +194,25 @@ SPIKE-004 currently demonstrates:
 - HPKE authentication failure after modifying a byte in the encoded routing header;
 - identical bounded Encrypted Envelope v1 framing and strict malformed-frame rejection in Go, Kotlin, and TypeScript;
 - Android/Chrome receiver pipelines proving authentication precedes atomic replay consumption and tampered ciphertext does not consume a tuple;
+- identical canonical protobuf `action.invoke` encoding and strict malformed/semantic rejection in Go, Kotlin, and TypeScript;
+- a Chrome-generated canonical action envelope opened and parsed by Android;
+- Android persistent operation-idempotency and ordered action receiver tests proving replay and operation records commit before a side-effect callback;
+- bounded Go WebSocket relay tests proving authenticated workspace/device binding, unchanged ciphertext forwarding, backpressure, and rejection above 524521 bytes; the adapter is deliberately not exposed before production authentication exists;
 - Chrome TypeScript checks, Vitest, and production bundling.
 
 Canonical vectors:
 
 - `protocol/test-vectors/hpke-auth-p256-aes128gcm.json`
 - `protocol/test-vectors/routing-header-v1.json`
+- `protocol/test-vectors/encrypted-payload-v1.json`
 - `protocol/test-vectors/encrypted-envelope-v1.json`
 
 ## Acceptance gates
 
 This ADR remains Proposed until all are complete:
 
-- integration tests with actual payload parsing and notification side effects after replay acceptance;
-- ADR-001 review/freeze and relay enforcement of WebSocket frame-size limits before allocation;
+- Android adapter from accepted actions to the local notification controller, opaque action-ID mapping, and encrypted result recovery;
+- ADR-001 review/freeze and production transport authentication before the bounded relay adapter is exposed;
 - pairing QR/safety-number transcript and trust-state UX review;
 - rotation, revocation, and lost-device integration tests;
 - independent security review before real notification content is enabled.
