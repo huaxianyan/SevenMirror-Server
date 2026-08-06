@@ -180,6 +180,7 @@ SPIKE-004 currently demonstrates:
 - Android-produced authenticated HPKE vector opened by Chrome;
 - ciphertext, AAD, and sender-key substitution rejection;
 - bounded duplicate/expiry policy prototypes;
+- persistent Android SQLite and Chrome IndexedDB replay ledgers with atomic check-and-record, expiry cleanup, concurrent duplicate rejection, and fail-closed capacity behavior;
 - successful Bouncy Castle HPKE and Android Keystore-wrapped persistence execution on Android 10 / API 29 and Pixel 10 Pro / Android 16;
 - non-extractable Chrome WebCrypto key persistence through the IndexedDB unit path;
 - unchanged Chrome identity fingerprint after actual MV3 Worker termination and full browser restart on 2026-08-06;
@@ -191,7 +192,7 @@ Canonical vector: `protocol/test-vectors/hpke-auth-p256-aes128gcm.json`.
 
 This ADR remains Proposed until all are complete:
 
-- persistent atomic replay ledger on both clients;
+- integration tests proving each client records the replay tuple before applying a notification side effect;
 - final routing-header wire schema and size limits;
 - pairing QR/safety-number transcript and trust-state UX review;
 - rotation, revocation, and lost-device integration tests;

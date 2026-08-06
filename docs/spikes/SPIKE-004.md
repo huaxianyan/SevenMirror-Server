@@ -46,7 +46,8 @@ Validated behavior:
 - a substituted sender public key fails authentication;
 - modified AAD fails authentication;
 - modified ciphertext fails authentication;
-- duplicate and expired message policy prototypes behave as expected.
+- duplicate and expired message policy prototypes behave as expected;
+- Android SQLite and Chrome IndexedDB ledgers atomically retain replay tuples across store reconstruction, serialize concurrent attempts, purge expired records, and fail closed at capacity.
 
 ## Runtime evidence
 
@@ -64,6 +65,6 @@ The spike APIs that serialize private keys exist only for reproducible vectors. 
 
 ## Remaining exit evidence
 
-- persistent replay ledger on both clients
+- integration that records replay tuples before applying notification side effects
 - final AAD/routing-header codec
 - device trust, rotation, and revocation integration tests
