@@ -31,6 +31,7 @@ Canonical vectors:
 ```text
 protocol/test-vectors/hpke-auth-p256-aes128gcm.json
 protocol/test-vectors/routing-header-v1.json
+protocol/test-vectors/encrypted-envelope-v1.json
 ```
 
 It contains only public test key material and includes:
@@ -50,7 +51,9 @@ Validated behavior:
 - duplicate and expired message policy prototypes behave as expected;
 - Android SQLite and Chrome IndexedDB ledgers atomically retain replay tuples across store reconstruction, serialize concurrent attempts, purge expired records, and fail closed at capacity;
 - Go, Kotlin, and TypeScript encode and decode the same fixed 160-byte Routing Header v1 vector;
-- routing metadata is fixed-width, business message type remains encrypted, malformed headers fail closed, and any byte modification is rejected when the original header is used as HPKE AAD.
+- routing metadata is fixed-width, business message type remains encrypted, malformed headers fail closed, and any byte modification is rejected when the original header is used as HPKE AAD;
+- Go, Kotlin, and TypeScript encode the same bounded Encrypted Envelope v1 frame; truncation, trailing bytes, bad magic, invalid P-256 points, and ciphertext outside 16..524288 bytes fail closed;
+- Android and Chrome receiver pipelines return plaintext only after identity checks, HPKE authentication, and an atomic accepted replay-ledger write; tampered ciphertext does not consume replay state.
 
 ## Runtime evidence
 
@@ -69,6 +72,6 @@ The spike APIs that serialize private keys exist only for reproducible vectors. 
 
 ## Remaining exit evidence
 
-- integration that records replay tuples before applying notification side effects
-- final outer encrypted-envelope framing and transport size limits
+- integration with actual notification payload parsing and side effects
+- WebSocket relay enforcement of the pre-allocation frame-size limit
 - device trust, rotation, and revocation integration tests

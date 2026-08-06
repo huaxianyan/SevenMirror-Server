@@ -76,6 +76,8 @@ Business `MessageType` must move inside the ciphertext. A future protocol revisi
 
 Routing Header v1 is a fixed 160-byte, big-endian structure specified in `protocol/routing-header-v1.md`. It begins with ASCII `SNH1`, pins E2EE suite `1`, reserves zero flags, uses fixed 16-byte workspace/device/message IDs and full 32-byte key IDs, and limits expiry to 24 hours. The sender serializes it once and passes those exact bytes as HPKE AAD. The transport carries those same bytes without reserialization. The server parses them for routing; recipients authenticate the original byte sequence before trusting parsed fields. Fixed offsets avoid protobuf canonicalization and parser-ambiguity dependencies. Any server modification causes AEAD opening to fail.
 
+Encrypted Envelope v1 is the binary WebSocket framing specified in `protocol/encrypted-envelope-v1.md`: ASCII `SNE1`, the exact 160-byte header, a fixed 65-byte uncompressed P-256 encapsulated key, a 32-bit ciphertext length, and 16..524288 ciphertext bytes. The full frame is bounded to 249..524521 bytes and forbids trailing data. The relay must enforce the maximum before payload-sized allocation.
+
 ## Replay and expiry
 
 HPKE authentication does not itself remember previously opened one-shot ciphertexts. Recipients therefore maintain a persistent replay ledger keyed by:
@@ -186,19 +188,22 @@ SPIKE-004 currently demonstrates:
 - a real Chrome replay tuple accepted once, rejected immediately, and still rejected after full browser restart on 2026-08-06;
 - identical 160-byte Routing Header v1 encoding and strict malformed-header rejection in Go, Kotlin, and TypeScript;
 - HPKE authentication failure after modifying a byte in the encoded routing header;
+- identical bounded Encrypted Envelope v1 framing and strict malformed-frame rejection in Go, Kotlin, and TypeScript;
+- Android/Chrome receiver pipelines proving authentication precedes atomic replay consumption and tampered ciphertext does not consume a tuple;
 - Chrome TypeScript checks, Vitest, and production bundling.
 
 Canonical vectors:
 
 - `protocol/test-vectors/hpke-auth-p256-aes128gcm.json`
 - `protocol/test-vectors/routing-header-v1.json`
+- `protocol/test-vectors/encrypted-envelope-v1.json`
 
 ## Acceptance gates
 
 This ADR remains Proposed until all are complete:
 
-- integration tests proving each client records the replay tuple before applying a notification side effect;
-- ADR-001 review/freeze of outer encrypted-envelope framing and transport size limits;
+- integration tests with actual payload parsing and notification side effects after replay acceptance;
+- ADR-001 review/freeze and relay enforcement of WebSocket frame-size limits before allocation;
 - pairing QR/safety-number transcript and trust-state UX review;
 - rotation, revocation, and lost-device integration tests;
 - independent security review before real notification content is enabled.
