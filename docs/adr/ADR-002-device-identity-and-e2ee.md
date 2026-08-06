@@ -78,7 +78,7 @@ Routing Header v1 is a fixed 160-byte, big-endian structure specified in `protoc
 
 Encrypted Envelope v1 is the binary WebSocket framing specified in `protocol/encrypted-envelope-v1.md`: ASCII `SNE1`, the exact 160-byte header, a fixed 65-byte uncompressed P-256 encapsulated key, a 32-bit ciphertext length, and 16..524288 ciphertext bytes. The full frame is bounded to 249..524521 bytes and forbids trailing data. The relay must enforce the maximum before payload-sized allocation.
 
-Encrypted Payload v1 is the canonical protobuf plaintext defined by `protocol/proto/notification/v1/payload.proto` and `protocol/encrypted-payload-v1.md`. Receivers reject unknown fields, duplicate/non-canonical wire encodings, unsupported schema versions, and semantic limit violations. `action.invoke` binds notification ID, revision, opaque 16-byte action ID, non-zero 16-byte operation-idempotency key, and optional reply text. No `PendingIntent` or `RemoteInput` capability leaves Android.
+Encrypted Payload v1 is the canonical protobuf plaintext defined by `protocol/proto/notification/v1/payload.proto` and `protocol/encrypted-payload-v1.md`. Receivers reject unknown fields, duplicate/non-canonical wire encodings, unsupported schema versions, and semantic limit violations. `action.invoke` binds notification ID, revision, opaque 16-byte action ID, non-zero 16-byte operation-idempotency key, and optional reply text. `action.result` binds that idempotency key to Android's locally observed execution status and optional bounded detail. No `PendingIntent` or `RemoteInput` capability leaves Android.
 
 ## Replay and expiry
 
@@ -98,7 +98,7 @@ Processing order is:
 
 Replay records live at least until the envelope expiry plus clock-skew allowance. Chrome persists this state in an atomic IndexedDB read/write transaction; Android persists it in an atomic SQLite transaction. Both fail closed at capacity rather than evicting an unexpired record.
 
-Android additionally persists `(sender_key_id, idempotency_key)` for 30 days before exposing an action to a side-effect callback. This prevents a sender retry using a new envelope message ID from repeating a logical operation. Authenticated invalid payloads consume their replay tuple; valid logical duplicates consume their distinct replay tuples but are rejected by the operation ledger.
+Android additionally persists `(sender_key_id, idempotency_key)` for 30 days before exposing an action to a side-effect callback. This prevents a sender retry using a new envelope message ID from repeating a logical operation. The canonical `action.result` bytes are stored in the same row after execution, allowing a later duplicate to recover the result without repeating the side effect. A reserved row without a result returns `OUTCOME_UNKNOWN`; it is never retried automatically because a crash cannot be distinguished from successful `PendingIntent` delivery. Authenticated invalid payloads consume their replay tuple.
 
 ## Key storage
 
@@ -196,7 +196,8 @@ SPIKE-004 currently demonstrates:
 - Android/Chrome receiver pipelines proving authentication precedes atomic replay consumption and tampered ciphertext does not consume a tuple;
 - identical canonical protobuf `action.invoke` encoding and strict malformed/semantic rejection in Go, Kotlin, and TypeScript;
 - a Chrome-generated canonical action envelope opened and parsed by Android;
-- Android persistent operation-idempotency and ordered action receiver tests proving replay and operation records commit before a side-effect callback;
+- Android persistent operation-idempotency and ordered action receiver tests proving replay and operation records commit before a side-effect callback, completed results recover without re-execution, and uncertain outcomes fail closed;
+- an Android notification adapter invoking a process-local `PendingIntent` only through a random per-revision 16-byte action ID, with stale revision and unknown action rejection;
 - bounded Go WebSocket relay tests proving authenticated workspace/device binding, unchanged ciphertext forwarding, backpressure, and rejection above 524521 bytes; the adapter is deliberately not exposed before production authentication exists;
 - Chrome TypeScript checks, Vitest, and production bundling.
 
@@ -211,7 +212,7 @@ Canonical vectors:
 
 This ADR remains Proposed until all are complete:
 
-- Android adapter from accepted actions to the local notification controller, opaque action-ID mapping, and encrypted result recovery;
+- authenticated encryption and transport of stored `action.result` payloads back to the requesting Chrome, including Chrome pending-operation reconciliation;
 - ADR-001 review/freeze and production transport authentication before the bounded relay adapter is exposed;
 - pairing QR/safety-number transcript and trust-state UX review;
 - rotation, revocation, and lost-device integration tests;

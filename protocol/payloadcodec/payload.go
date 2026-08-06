@@ -15,6 +15,7 @@ const (
 	MaxPlaintextSize        = 524272
 	MaxNotificationIDBytes  = 512
 	MaxReplyTextBytes       = 4000
+	MaxResultDetailBytes    = 256
 	IdentifierSize          = 16
 	MaxNotificationRevision = uint64(1<<63 - 1)
 )
@@ -66,11 +67,14 @@ func Validate(payload *notificationv1.EncryptedPayload) error {
 	if payload.GetSchemaVersion() != SchemaVersion {
 		return errors.New("unsupported encrypted payload schema version")
 	}
-	action := payload.GetActionInvoke()
-	if action == nil {
+	switch body := payload.GetBody().(type) {
+	case *notificationv1.EncryptedPayload_ActionInvoke:
+		return validateActionInvoke(body.ActionInvoke)
+	case *notificationv1.EncryptedPayload_ActionResult:
+		return validateActionResult(body.ActionResult)
+	default:
 		return errors.New("exactly one supported encrypted payload body is required")
 	}
-	return validateActionInvoke(action)
 }
 
 func validateActionInvoke(action *notificationv1.ActionInvoke) error {
@@ -93,6 +97,26 @@ func validateActionInvoke(action *notificationv1.ActionInvoke) error {
 		reply := action.GetReplyText()
 		if !utf8.ValidString(reply) || len(reply) < 1 || len(reply) > MaxReplyTextBytes {
 			return errors.New("reply text must be valid UTF-8 within size limit")
+		}
+	}
+	return nil
+}
+
+func validateActionResult(result *notificationv1.ActionResult) error {
+	if result == nil || len(result.ProtoReflect().GetUnknown()) != 0 {
+		return errors.New("action result contains unknown fields")
+	}
+	if len(result.GetIdempotencyKey()) != IdentifierSize || allZero(result.GetIdempotencyKey()) {
+		return errors.New("idempotency key must be a non-zero 16-byte value")
+	}
+	if result.GetStatus() < notificationv1.ActionResultStatus_ACTION_RESULT_STATUS_SUCCEEDED ||
+		result.GetStatus() > notificationv1.ActionResultStatus_ACTION_RESULT_STATUS_OUTCOME_UNKNOWN {
+		return errors.New("action result status is unsupported")
+	}
+	if result.Detail != nil {
+		detail := result.GetDetail()
+		if !utf8.ValidString(detail) || len(detail) < 1 || len(detail) > MaxResultDetailBytes {
+			return errors.New("action result detail must be valid UTF-8 within size limit")
 		}
 	}
 	return nil

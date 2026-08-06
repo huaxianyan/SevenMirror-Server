@@ -83,6 +83,48 @@ func TestRejectsNonCanonicalDuplicateAndUnknownFields(t *testing.T) {
 	}
 }
 
+func TestActionResultRoundTrip(t *testing.T) {
+	detail := "revision changed"
+	payload := &notificationv1.EncryptedPayload{
+		SchemaVersion: SchemaVersion,
+		Body: &notificationv1.EncryptedPayload_ActionResult{
+			ActionResult: &notificationv1.ActionResult{
+				IdempotencyKey: bytes.Repeat([]byte{0xb2}, IdentifierSize),
+				Status:         notificationv1.ActionResultStatus_ACTION_RESULT_STATUS_STALE_NOTIFICATION_VERSION,
+				Detail:         &detail,
+			},
+		},
+	}
+	encoded, err := Encode(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile("../test-vectors/encrypted-payload-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vector struct {
+		ActionResultEncodedHex string `json:"actionResultEncodedHex"`
+	}
+	if err := json.Unmarshal(content, &vector); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := hex.DecodeString(vector.ActionResultEncodedHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(encoded, expected) {
+		t.Fatalf("encoded action result differs from canonical vector: %x", encoded)
+	}
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decoded.GetActionResult().GetStatus() != notificationv1.ActionResultStatus_ACTION_RESULT_STATUS_STALE_NOTIFICATION_VERSION {
+		t.Fatal("action result status changed")
+	}
+}
+
 func TestRejectsInvalidActionFields(t *testing.T) {
 	tests := []struct {
 		name   string
