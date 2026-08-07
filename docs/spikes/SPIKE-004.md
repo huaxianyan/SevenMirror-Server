@@ -59,7 +59,9 @@ Validated behavior:
 - the canonical HPKE envelope now contains that payload, so Android opens and parses the exact Chrome-produced action frame;
 - Android commits both the envelope replay tuple and a persistent 30-day operation-idempotency tuple before exposing an action to the side-effect callback; completed canonical results are cached and recovered for logical duplicates, while a reserved operation with no result returns `OUTCOME_UNKNOWN` without re-execution;
 - Android assigns random 16-byte action IDs for every notification revision and resolves encrypted requests only against its process-local `PendingIntent`/`RemoteInput` table; instrumented tests cover one successful invocation, duplicate result recovery, stale revision, and unknown action rejection;
-- the test-only Go WebSocket adapter caps reads at 524521 bytes before routing, rejects oversized/text/malformed frames, binds authenticated workspace and sender device IDs to the header, and forwards the ciphertext unchanged.
+- the Go WebSocket adapter caps reads at 524521 bytes before routing, rejects oversized/text/malformed frames, binds authenticated workspace and sender device IDs to the header, and forwards ciphertext unchanged;
+- a durable SQLite/WAL private registry now hashes pairing/device credentials, transactionally consumes one-time 192-bit codes, validates P-256 identities, and survives restart; raw-credential persistence is explicitly scanned in tests;
+- the mounted relay requires a bounded 68-byte first-message `SNA1` credential within five seconds, rejects ordinary web origins, rate-limits authentication, maintains Ping/Pong liveness, and has an integration test from durable registration through Hub identity establishment.
 
 ## Runtime evidence
 
@@ -74,10 +76,10 @@ Validated behavior:
 
 ## Important scope boundary
 
-The spike APIs that serialize private keys exist only for reproducible vectors. They are not approved production key storage. Real notification content remains blocked until ADR-002's persistence, replay, pairing, revocation, and API 29 gates pass.
+The spike APIs that serialize private keys exist only for reproducible vectors. They are not approved production key storage. Server admission and transport authentication are provisional under ADR-004 and do not establish E2EE device trust. Real notification content remains blocked until client credential storage, trusted-device approval, revocation/rotation, offline transport, and security-review gates pass.
 
 ## Remaining exit evidence
 
-- production transport authentication and admission before the tested WebSocket adapter may be registered as an endpoint
-- encrypt and transport cached `action.result` payloads back to Chrome and reconcile them with pending operations
-- device trust, rotation, and revocation integration tests
+- Android/Chrome registration, protected transport-credential storage, and `SNA1` connection integration
+- connect the completed cached `action.result` sender/receiver to authenticated online/offline transport
+- administrator-secret lifecycle, trusted-proxy policy, device trust, rotation, and immediate revocation integration tests

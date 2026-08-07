@@ -7,11 +7,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
+	"github.com/huaxianyan/SyncNotifications-Server/internal/admission"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/config"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/httpapi"
+	"github.com/huaxianyan/SyncNotifications-Server/internal/relay"
 )
 
 func main() {
@@ -23,9 +26,32 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := os.MkdirAll(filepath.Dir(cfg.DatabasePath), 0o700); err != nil {
+		logger.Error("create data directory", "error", err)
+		os.Exit(1)
+	}
+	store, err := admission.Open(context.Background(), cfg.DatabasePath)
+	if err != nil {
+		logger.Error("open admission database", "error", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	hub := relay.NewHub()
+	authenticator, err := admission.NewRelayAuthenticator(store)
+	if err != nil {
+		logger.Error("configure device authenticator", "error", err)
+		os.Exit(1)
+	}
+	relayHandler, err := relay.NewAuthenticatedWebSocketHandler(hub, authenticator)
+	if err != nil {
+		logger.Error("configure authenticated relay", "error", err)
+		os.Exit(1)
+	}
+
 	server := &http.Server{
 		Addr:              cfg.Address,
-		Handler:           httpapi.NewHandler(),
+		Handler:           httpapi.NewProductionHandler(store, relayHandler),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}

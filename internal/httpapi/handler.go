@@ -3,6 +3,8 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/huaxianyan/SyncNotifications-Server/internal/admission"
 )
 
 type statusResponse struct {
@@ -10,9 +12,26 @@ type statusResponse struct {
 }
 
 func NewHandler() http.Handler {
+	return newMux(nil, nil)
+}
+
+// NewProductionHandler enables private registration and the authenticated relay.
+// Neither endpoint is mounted unless all admission dependencies are explicit.
+func NewProductionHandler(store *admission.Store, relayHandler http.Handler) http.Handler {
+	if store == nil || relayHandler == nil {
+		panic("production admission store and relay handler are required")
+	}
+	return newMux(store, relayHandler)
+}
+
+func newMux(store *admission.Store, relayHandler http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", status("ok"))
 	mux.HandleFunc("/readyz", status("ready"))
+	if store != nil && relayHandler != nil {
+		mux.Handle("/v1/devices/register", newRegistrationHandler(store))
+		mux.Handle("/v1/relay", relayHandler)
+	}
 	return securityHeaders(mux)
 }
 

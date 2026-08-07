@@ -11,7 +11,11 @@ import (
 	"github.com/huaxianyan/SyncNotifications-Server/protocol/envelopeframe"
 )
 
-const writeTimeout = 10 * time.Second
+const (
+	writeTimeout = 10 * time.Second
+	pingInterval = 30 * time.Second
+	pongTimeout  = 75 * time.Second
+)
 
 // ServeAuthenticatedConnection connects an identity already established by the
 // transport-auth layer to the ciphertext hub. It must not be exposed before
@@ -25,6 +29,12 @@ func ServeAuthenticatedConnection(
 	sessionContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	connection.SetReadLimit(int64(envelopeframe.MaxFrameSize))
+	if err := connection.SetReadDeadline(time.Now().Add(pongTimeout)); err != nil {
+		return err
+	}
+	connection.SetPongHandler(func(string) error {
+		return connection.SetReadDeadline(time.Now().Add(pongTimeout))
+	})
 	deliveries, unregister, err := hub.Register(authenticatedPeer, 16)
 	if err != nil {
 		return err
@@ -37,11 +47,22 @@ func ServeAuthenticatedConnection(
 		_ = connection.Close() // unblock NextReader before the writer exits
 	}
 	go func() {
+		pingTicker := time.NewTicker(pingInterval)
+		defer pingTicker.Stop()
 		for {
 			select {
 			case <-sessionContext.Done():
 				reportWriterError(sessionContext.Err())
 				return
+			case <-pingTicker.C:
+				if err := connection.WriteControl(
+					websocket.PingMessage,
+					nil,
+					time.Now().Add(writeTimeout),
+				); err != nil {
+					reportWriterError(err)
+					return
+				}
 			case frame := <-deliveries:
 				if err := connection.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
 					reportWriterError(err)

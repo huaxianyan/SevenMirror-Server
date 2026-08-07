@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -26,3 +27,5 @@ jobs:
         run: |
           go build ./cmd/server
           go build ./cmd/admin
+      - name: Build container
+        run: docker build .

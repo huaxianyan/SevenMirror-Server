@@ -9,17 +9,20 @@ import (
 
 const (
 	defaultAddress         = "127.0.0.1:8080"
+	defaultDatabasePath    = "data/syncnotifications.db"
 	defaultShutdownTimeout = 10 * time.Second
 )
 
 type Config struct {
 	Address         string
+	DatabasePath    string
 	ShutdownTimeout time.Duration
 }
 
 func Load() (Config, error) {
 	cfg := Config{
 		Address:         envOrDefault("NM_ADDRESS", defaultAddress),
+		DatabasePath:    envOrDefault("NM_DATABASE_PATH", defaultDatabasePath),
 		ShutdownTimeout: defaultShutdownTimeout,
 	}
 

@@ -1,12 +1,16 @@
 FROM golang:1.21-alpine AS build
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
 COPY cmd ./cmd
 COPY internal ./internal
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server
+COPY protocol ./protocol
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/server ./cmd/server \
+    && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/admin ./cmd/admin \
+    && mkdir /out/data
 
 FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/server /server
+COPY --chown=nonroot:nonroot --from=build /out /app
+WORKDIR /app
 EXPOSE 8080
 USER nonroot:nonroot
-ENTRYPOINT ["/server"]
+ENTRYPOINT ["/app/server"]
