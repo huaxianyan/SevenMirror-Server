@@ -61,7 +61,8 @@ Validated behavior:
 - Android assigns random 16-byte action IDs for every notification revision and resolves encrypted requests only against its process-local `PendingIntent`/`RemoteInput` table; instrumented tests cover one successful invocation, duplicate result recovery, stale revision, and unknown action rejection;
 - the Go WebSocket adapter caps reads at 524521 bytes before routing, rejects oversized/text/malformed frames, binds authenticated workspace and sender device IDs to the header, and forwards ciphertext unchanged;
 - a durable SQLite/WAL private registry now hashes pairing/device credentials, transactionally consumes one-time 192-bit codes, validates P-256 identities, and survives restart; raw-credential persistence is explicitly scanned in tests;
-- the mounted relay requires a bounded 68-byte first-message `SNA1` credential within five seconds, rejects ordinary web origins, rate-limits authentication, maintains Ping/Pong liveness, and has an integration test from durable registration through Hub identity establishment.
+- the mounted relay requires a bounded 68-byte first-message `SNA1` credential within five seconds, rejects ordinary web origins, rate-limits authentication, maintains Ping/Pong liveness, and has an integration test from durable registration through Hub identity establishment;
+- successful authentication and Hub registration produce fixed binary `SNO1` as the first server data message, allowing clients to distinguish socket-open/local-enqueue from server-confirmed authentication without exposing identity or secret details.
 
 ## Runtime evidence
 
@@ -80,6 +81,6 @@ The spike APIs that serialize private keys exist only for reproducible vectors. 
 
 ## Remaining exit evidence
 
-- Android/Chrome registration, protected transport-credential storage, and `SNA1` connection integration
+- Android/Chrome registration and authenticated transport cores are implemented; production UI/lifecycle integration remains
 - connect the completed cached `action.result` sender/receiver to authenticated online/offline transport
 - administrator-secret lifecycle, trusted-proxy policy, device trust, rotation, and immediate revocation integration tests

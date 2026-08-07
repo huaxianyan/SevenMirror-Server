@@ -71,8 +71,15 @@ The server hashes and matches all three against a non-revoked durable record,
 clears its temporary token buffer, then binds the resulting identity to the
 ciphertext Hub. Invalid credentials receive one generic close reason.
 
-After authentication, only bounded Encrypted Envelope v1 frames are accepted.
-The Hub verifies that clear sender workspace/device fields equal the
+After authentication and successful Hub registration, the server sends the
+fixed four-byte binary `SNO1` acknowledgement as its first data message. Clients
+must validate `SNO1` before reporting an authenticated connection or sending
+application frames. Failed authentication never receives this acknowledgement,
+so a TCP/WebSocket open or successful local `SNA1` enqueue is not mistaken for
+server acceptance.
+
+After `SNO1`, only bounded Encrypted Envelope v1 frames are accepted. The Hub
+verifies that clear sender workspace/device fields equal the
 authenticated identity before routing an unchanged ciphertext copy. Browser
 origins other than `chrome-extension://` are rejected; origin-less native
 clients are allowed. Authentication attempts and concurrent unauthenticated
@@ -113,13 +120,17 @@ handling are explicit.
 
 ## Remaining acceptance gates
 
-- Android Keystore and Chrome protected storage for transport credentials;
-- client registration and `SNA1` connection implementations;
+Completed implementation evidence now includes Android Keystore and Chrome
+extension-origin credential storage, strict registration clients, `SNA1` first
+message handling, and cross-platform `SNO1` acknowledgement validation.
+
+Remaining gates:
+
 - administrator-secret, backup, and recovery design;
 - device list, revoke, credential rotation, and immediate active-session close;
 - trusted-proxy and configurable connection/rate limits;
 - offline queue/ACK integration and MV3 reconnect behavior;
-- pairing code and authentication security review;
+- pairing code and transport authentication security review;
 - proof that logs, diagnostics, SQLite files, and URLs contain no raw secrets or
   business plaintext.
 

@@ -104,7 +104,25 @@ func dialTestDevice(t *testing.T, serverURL string, peer PeerIdentity) *websocke
 	if err != nil {
 		t.Fatal(err)
 	}
+	readAuthenticationSuccessAck(t, connection)
 	return connection
+}
+
+func readAuthenticationSuccessAck(t *testing.T, connection *websocket.Conn) {
+	t.Helper()
+	if err := connection.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	messageType, message, err := connection.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageType != websocket.BinaryMessage || string(message) != string(authenticationSuccessAck[:]) {
+		t.Fatal("connection did not receive canonical SNO1 authentication acknowledgement")
+	}
+	if err := connection.SetReadDeadline(time.Time{}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func waitUntilConnected(t *testing.T, hub *Hub, peer PeerIdentity) {

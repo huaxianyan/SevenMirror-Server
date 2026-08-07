@@ -17,6 +17,8 @@ const (
 	pongTimeout  = 75 * time.Second
 )
 
+var authenticationSuccessAck = [4]byte{'S', 'N', 'O', '1'}
+
 // ServeAuthenticatedConnection connects an identity already established by the
 // transport-auth layer to the ciphertext hub. It must not be exposed before
 // registration/authentication is implemented.
@@ -40,6 +42,14 @@ func ServeAuthenticatedConnection(
 		return err
 	}
 	defer unregister()
+	if err := connection.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+		return err
+	}
+	// This synchronous write occurs after Hub registration and before the sole
+	// writer goroutine starts, so SNO1 is always the first server data message.
+	if err := connection.WriteMessage(websocket.BinaryMessage, authenticationSuccessAck[:]); err != nil {
+		return err
+	}
 
 	writerErrors := make(chan error, 1)
 	reportWriterError := func(err error) {

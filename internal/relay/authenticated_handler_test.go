@@ -26,6 +26,7 @@ func TestAuthenticationFrameMatchesCanonicalVector(t *testing.T) {
 		DeviceID    string `json:"deviceId"`
 		AuthToken   string `json:"authToken"`
 		FrameHex    string `json:"frameHex"`
+		SuccessAck  string `json:"successAckHex"`
 	}
 	if err := json.Unmarshal(content, &vector); err != nil {
 		t.Fatal(err)
@@ -42,6 +43,9 @@ func TestAuthenticationFrameMatchesCanonicalVector(t *testing.T) {
 	}
 	if hex.EncodeToString(frame) != vector.FrameHex {
 		t.Fatal("authentication frame does not match canonical vector")
+	}
+	if hex.EncodeToString(authenticationSuccessAck[:]) != vector.SuccessAck {
+		t.Fatal("authentication success acknowledgement does not match canonical vector")
 	}
 }
 
@@ -69,10 +73,10 @@ func TestAuthenticatedHandlerRoutesOnlyAfterBinaryCredentialFrame(t *testing.T) 
 	server := httptest.NewServer(handler)
 	defer server.Close()
 
-	recipient := dialAuthenticatedDevice(t, server.URL, recipientPeer, recipientToken)
+	recipient := dialAndAuthenticateDevice(t, server.URL, recipientPeer, recipientToken)
 	defer recipient.Close()
 	waitUntilConnected(t, hub, recipientPeer)
-	sender := dialAuthenticatedDevice(t, server.URL, senderPeer, senderToken)
+	sender := dialAndAuthenticateDevice(t, server.URL, senderPeer, senderToken)
 	defer sender.Close()
 	waitUntilConnected(t, hub, senderPeer)
 
@@ -167,5 +171,17 @@ func dialAuthenticatedDevice(
 	if err := connection.WriteMessage(websocket.BinaryMessage, authFrame); err != nil {
 		t.Fatal(err)
 	}
+	return connection
+}
+
+func dialAndAuthenticateDevice(
+	t *testing.T,
+	serverURL string,
+	peer PeerIdentity,
+	token []byte,
+) *websocket.Conn {
+	t.Helper()
+	connection := dialAuthenticatedDevice(t, serverURL, peer, token)
+	readAuthenticationSuccessAck(t, connection)
 	return connection
 }

@@ -14,11 +14,11 @@ Client repositories vendor a tagged copy of these files and record schema integr
 
 `encrypted-envelope-v1.md` defines the bounded binary WebSocket frame carrying the routing header, P-256 encapsulated key, and ciphertext. `test-vectors/encrypted-envelope-v1.json` binds that frame to the HPKE, routing-header, and encrypted-payload vectors.
 
-`device-auth-frame-v1.md` defines the provisional fixed 68-byte first WebSocket binary message used for private-instance transport authentication. `test-vectors/device-auth-frame-v1.json` fixes its cross-client codec bytes using public test credentials. It is a server-admission credential format, not an E2EE message or trust mechanism.
+`device-auth-frame-v1.md` defines the provisional fixed 68-byte first WebSocket binary authentication message and the server's fixed 4-byte `SNO1` success acknowledgement. `test-vectors/device-auth-frame-v1.json` fixes both cross-client codec values using public test credentials. It is a server-admission credential format, not an E2EE message or trust mechanism.
 
 ```text
-device-auth-frame-v1.md SHA-256: 537307657cafbfe2265fc22688a5464d4e9b5186137589eab7912b01e903fe88
-device-auth-frame-v1.json SHA-256: 8d265bbd2ec2ae98d04571b83c1249635567c031b250c54f96ff1e78be897c5d
+device-auth-frame-v1.md SHA-256: 3ea7297d702a5aef13af498994fca55b0ec26e7aa642191b2963fd7c221ffecb
+device-auth-frame-v1.json SHA-256: 1896def3b76e7c3dbd2d59c30df684587159fb7134121a927c652fc276879076
 ```
 
 Generated code is committed for reproducible client builds. Regenerate the Go files with the pinned remote plugin:
