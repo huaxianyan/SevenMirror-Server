@@ -1,6 +1,6 @@
 # SPIKE-004: Android/Chrome authenticated E2EE interoperability
 
-Status: cross-platform core and Android/Chrome production-key persistence paths validated
+Status: cross-platform core, production-key persistence, and canonical trusted-device transcript validated
 
 ## Question
 
@@ -23,6 +23,8 @@ Implementations:
 - Chrome: `@hpke/core:1.9.0` using WebCrypto
 
 See `docs/adr/ADR-002-device-identity-and-e2ee.md` for the trust and lifecycle proposal.
+
+Trusted-device approval uses the independent `Trusted Device Pairing v1` transcript. A 133-byte offer and 149-byte approval bind the workspace, both device identities, both P-256 public keys, independent nonces, a maximum ten-minute validity window, and the exact offer hash. Canonical `sntrust1:` QR payloads transport records without establishing trust. Both users must explicitly compare the same transcript-derived 60-bit Crockford Base32 safety code before either local immutable pin is written.
 
 ## Automated evidence
 
@@ -62,7 +64,8 @@ Validated behavior:
 - the Go WebSocket adapter caps reads at 524521 bytes before routing, rejects oversized/text/malformed frames, binds authenticated workspace and sender device IDs to the header, and forwards ciphertext unchanged;
 - a durable SQLite/WAL private registry now hashes pairing/device credentials, transactionally consumes one-time 192-bit codes, validates P-256 identities, and survives restart; raw-credential persistence is explicitly scanned in tests;
 - the mounted relay requires a bounded 68-byte first-message `SNA1` credential within five seconds, rejects ordinary web origins, rate-limits authentication, maintains Ping/Pong liveness, and has an integration test from durable registration through Hub identity establishment;
-- successful authentication and Hub registration produce fixed binary `SNO1` as the first server data message, allowing clients to distinguish socket-open/local-enqueue from server-confirmed authentication without exposing identity or secret details.
+- successful authentication and Hub registration produce fixed binary `SNO1` as the first server data message, allowing clients to distinguish socket-open/local-enqueue from server-confirmed authentication without exposing identity or secret details;
+- Go implements the canonical Trusted Device Pairing v1 offer/approval codecs, strict QR parsing, P-256 point validation, exact-offer binding, TTL/workspace/device/key constraints, and the transcript-derived safety code; the public vector fixes `4AFH-Q91K-PGVG`, and mutation, invalid-point, wrong-hash, padding, and whitespace cases fail closed. Transport admission remains incapable of creating these local trust records.
 
 ## Runtime evidence
 
@@ -81,6 +84,6 @@ The spike APIs that serialize private keys exist only for reproducible vectors. 
 
 ## Remaining exit evidence
 
-- Android/Chrome registration and authenticated transport cores are implemented; production UI/lifecycle integration remains
-- connect the completed cached `action.result` sender/receiver to authenticated online/offline transport
-- administrator-secret lifecycle, trusted-proxy policy, device trust, rotation, and immediate revocation integration tests
+- implement durable Android/Chrome offer/approval sessions and explicit dual safety-code confirmation UI on top of the canonical transcript
+- provision both immutable peer pins with synthetic identities, then validate the already-wired `action.invoke`/`action.result` relay loop
+- administrator-secret lifecycle, trusted-proxy policy, rotation, immediate revocation, and result ACK/cursor integration tests
