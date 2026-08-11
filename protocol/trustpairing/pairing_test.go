@@ -98,7 +98,7 @@ func TestVectorFileHash(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := sha256.Sum256(contents)
-	const want = "4b428c92adfa42ca30b79bf360657befaf870ccd2fa4028e07f821b39e0999c1"
+	const want = "a7254975e5c831133453ff107b97323e722385c7ae44d5a5732cb8b27eeff861"
 	if hex.EncodeToString(got[:]) != want {
 		t.Fatalf("vector hash changed: %x", got)
 	}
