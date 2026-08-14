@@ -3,6 +3,7 @@
 /*.db
 /*.db-shm
 /*.db-wal
+/data/*.db*
 .env
 .DS_Store
 .idea/

@@ -17,6 +17,7 @@ const (
 	MaxReplyTextBytes       = 4000
 	MaxResultDetailBytes    = 256
 	IdentifierSize          = 16
+	SHA256Size              = 32
 	MaxNotificationRevision = uint64(1<<63 - 1)
 )
 
@@ -72,6 +73,8 @@ func Validate(payload *notificationv1.EncryptedPayload) error {
 		return validateActionInvoke(body.ActionInvoke)
 	case *notificationv1.EncryptedPayload_ActionResult:
 		return validateActionResult(body.ActionResult)
+	case *notificationv1.EncryptedPayload_ActionResultAck:
+		return validateActionResultAck(body.ActionResultAck)
 	default:
 		return errors.New("exactly one supported encrypted payload body is required")
 	}
@@ -118,6 +121,19 @@ func validateActionResult(result *notificationv1.ActionResult) error {
 		if !utf8.ValidString(detail) || len(detail) < 1 || len(detail) > MaxResultDetailBytes {
 			return errors.New("action result detail must be valid UTF-8 within size limit")
 		}
+	}
+	return nil
+}
+
+func validateActionResultAck(ack *notificationv1.ActionResultAck) error {
+	if ack == nil || len(ack.ProtoReflect().GetUnknown()) != 0 {
+		return errors.New("action result acknowledgement contains unknown fields")
+	}
+	if len(ack.GetIdempotencyKey()) != IdentifierSize || allZero(ack.GetIdempotencyKey()) {
+		return errors.New("idempotency key must be a non-zero 16-byte value")
+	}
+	if len(ack.GetResultSha256()) != SHA256Size || allZero(ack.GetResultSha256()) {
+		return errors.New("result SHA-256 must be a non-zero 32-byte value")
 	}
 	return nil
 }

@@ -125,6 +125,56 @@ func TestActionResultRoundTrip(t *testing.T) {
 	}
 }
 
+func TestActionResultAckRoundTrip(t *testing.T) {
+	content, err := os.ReadFile("../test-vectors/encrypted-payload-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vector struct {
+		ActionResultSHA256Hex     string `json:"actionResultSha256Hex"`
+		ActionResultAckEncodedHex string `json:"actionResultAckEncodedHex"`
+	}
+	if err := json.Unmarshal(content, &vector); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := hex.DecodeString(vector.ActionResultSHA256Hex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := hex.DecodeString(vector.ActionResultAckEncodedHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := &notificationv1.EncryptedPayload{
+		SchemaVersion: SchemaVersion,
+		Body: &notificationv1.EncryptedPayload_ActionResultAck{
+			ActionResultAck: &notificationv1.ActionResultAck{
+				IdempotencyKey: bytes.Repeat([]byte{0xb2}, IdentifierSize),
+				ResultSha256:   digest,
+			},
+		},
+	}
+	encoded, err := Encode(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(encoded, expected) {
+		t.Fatalf("encoded action result acknowledgement differs from canonical vector: %x", encoded)
+	}
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(decoded.GetActionResultAck().GetResultSha256(), digest) {
+		t.Fatal("action result acknowledgement digest changed")
+	}
+
+	payload.GetActionResultAck().ResultSha256 = make([]byte, SHA256Size)
+	if _, err := Encode(payload); err == nil {
+		t.Fatal("zero action result acknowledgement digest accepted")
+	}
+}
+
 func TestRejectsInvalidActionFields(t *testing.T) {
 	tests := []struct {
 		name   string
