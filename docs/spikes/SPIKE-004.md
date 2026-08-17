@@ -65,6 +65,7 @@ Validated behavior:
 - a durable SQLite/WAL private registry now hashes pairing/device credentials, transactionally consumes one-time 192-bit codes, validates P-256 identities, and survives restart; raw-credential persistence is explicitly scanned in tests;
 - the mounted relay requires a bounded 68-byte first-message `SNA1` credential within five seconds, rejects ordinary web origins, rate-limits authentication, maintains Ping/Pong liveness, and has an integration test from durable registration through Hub identity establishment;
 - successful authentication and Hub registration produce fixed binary `SNO1` as the first server data message, allowing clients to distinguish socket-open/local-enqueue from server-confirmed authentication without exposing identity or secret details;
+- after `SNO1`, the relay consumes exact four-byte `SNH1` heartbeat requests and returns `SNH2` through the sole writer goroutine without calling `Hub.Route`; text, malformed heartbeat-like data, and non-canonical envelopes still fail closed. The heartbeat carries no identity, credential, cursor, operation, or business content and is not a delivery acknowledgement;
 - Go implements the canonical Trusted Device Pairing v1 offer/approval codecs, strict QR parsing, P-256 point validation, exact-offer binding, TTL/workspace/device/key constraints, and the transcript-derived safety code; the public vector fixes `4AFH-Q91K-PGVG`, and mutation, invalid-point, wrong-hash, padding, and whitespace cases fail closed. Transport admission remains incapable of creating these local trust records.
 
 ## Runtime evidence
@@ -77,6 +78,7 @@ Validated behavior:
 - Chrome production Vite build: passed
 - Real Chrome unpacked extension retained the same non-extractable identity fingerprint after MV3 Worker termination and full browser restart: passed (2026-08-06)
 - Real Chrome replay ledger returned `accepted`, then `duplicate`, and remained `duplicate` after full browser restart; explicit Worker-only termination was unavailable, but full exit necessarily terminated the Worker: passed (2026-08-06)
+- Real loopback relay interruption exposed that browser socket state and one-shot alarms could remain stale after MV3 suspension. `SNH1` every 20 seconds plus a 10-second `SNH2` deadline fixed the liveness gap: after more than 70 seconds offline, the same registry recovered and both Android and Chrome re-established server connections without user reconnect; Chrome reported `Online` approximately 45 seconds after relay readiness (2026-08-17)
 
 ## Important scope boundary
 
@@ -84,6 +86,6 @@ The spike APIs that serialize private keys exist only for reproducible vectors. 
 
 ## Remaining exit evidence
 
-- implement durable Android/Chrome offer/approval sessions and explicit dual safety-code confirmation UI on top of the canonical transcript
-- provision both immutable peer pins with synthetic identities, then validate the already-wired `action.invoke`/`action.result` relay loop
-- administrator-secret lifecycle, trusted-proxy policy, rotation, immediate revocation, and result ACK/cursor integration tests
+- administrator-secret lifecycle, trusted-proxy policy, credential/key rotation, and immediate revocation
+- generic relay cursor and 2 Android × 2 Chrome offline convergence, separate from the completed per-operation result ACK path
+- camera QR UX, non-loopback HTTPS/WSS recovery evidence, and independent security review
