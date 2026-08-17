@@ -44,6 +44,30 @@ func TestWebSocketRelaysCanonicalChromeFrameUnchanged(t *testing.T) {
 	}
 }
 
+func TestWebSocketHeartbeatIsAnsweredWithoutRelayRouting(t *testing.T) {
+	hub, server := newTestWebSocketServer(t)
+	defer server.Close()
+	frame := canonicalFrame(t)
+	peer := peerFromFrame(t, frame, 24)
+	connection := dialTestDevice(t, server.URL, peer)
+	defer connection.Close()
+	waitUntilConnected(t, hub, peer)
+
+	if err := connection.WriteMessage(websocket.BinaryMessage, heartbeatRequest[:]); err != nil {
+		t.Fatal(err)
+	}
+	if err := connection.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	messageType, response, err := connection.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if messageType != websocket.BinaryMessage || string(response) != string(heartbeatResponse[:]) {
+		t.Fatal("connection did not receive canonical SNH2 heartbeat response")
+	}
+}
+
 func TestWebSocketRejectsOversizedMessageBeforeRouting(t *testing.T) {
 	hub, server := newTestWebSocketServer(t)
 	defer server.Close()

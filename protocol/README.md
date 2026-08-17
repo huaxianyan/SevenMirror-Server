@@ -16,6 +16,8 @@ Client repositories vendor a tagged copy of these files and record schema integr
 
 `device-auth-frame-v1.md` defines the provisional fixed 68-byte first WebSocket binary authentication message and the server's fixed 4-byte `SNO1` success acknowledgement. `test-vectors/device-auth-frame-v1.json` fixes both cross-client codec values using public test credentials. It is a server-admission credential format, not an E2EE message or trust mechanism.
 
+`transport-heartbeat-v1.md` defines the post-`SNO1` four-byte `SNH1`/`SNH2` liveness exchange. The relay consumes it outside the ciphertext hub; it carries no identifiers, credentials, cursor, operation, or business content and is not a delivery acknowledgement.
+
 `trusted-device-pairing-v1.md` defines the server-independent bidirectional QR and 60-bit safety-code transcript used before either endpoint may write an immutable approved-peer pin. `test-vectors/trusted-device-pairing-v1.json` fixes canonical offer/approval bytes, QR text, offer hash, and safety code. The records contain public test identities only; scanning without explicit full-code comparison never establishes trust.
 
 ```text

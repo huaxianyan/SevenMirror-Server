@@ -17,7 +17,11 @@ const (
 	pongTimeout  = 75 * time.Second
 )
 
-var authenticationSuccessAck = [4]byte{'S', 'N', 'O', '1'}
+var (
+	authenticationSuccessAck = [4]byte{'S', 'N', 'O', '1'}
+	heartbeatRequest         = [4]byte{'S', 'N', 'H', '1'}
+	heartbeatResponse        = [4]byte{'S', 'N', 'H', '2'}
+)
 
 // ServeAuthenticatedConnection connects an identity already established by the
 // transport-auth layer to the ciphertext hub. It must not be exposed before
@@ -52,6 +56,7 @@ func ServeAuthenticatedConnection(
 	}
 
 	writerErrors := make(chan error, 1)
+	heartbeats := make(chan struct{}, 1)
 	reportWriterError := func(err error) {
 		writerErrors <- err
 		_ = connection.Close() // unblock NextReader before the writer exits
@@ -70,6 +75,15 @@ func ServeAuthenticatedConnection(
 					nil,
 					time.Now().Add(writeTimeout),
 				); err != nil {
+					reportWriterError(err)
+					return
+				}
+			case <-heartbeats:
+				if err := connection.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+					reportWriterError(err)
+					return
+				}
+				if err := connection.WriteMessage(websocket.BinaryMessage, heartbeatResponse[:]); err != nil {
 					reportWriterError(err)
 					return
 				}
@@ -92,9 +106,17 @@ func ServeAuthenticatedConnection(
 			return err
 		default:
 		}
-		frame, err := readBoundedEnvelope(connection)
+		frame, isHeartbeat, err := readBoundedEnvelopeOrHeartbeat(connection)
 		if err != nil {
 			return err
+		}
+		if isHeartbeat {
+			select {
+			case heartbeats <- struct{}{}:
+			case <-sessionContext.Done():
+				return sessionContext.Err()
+			}
+			continue
 		}
 		if err := hub.Route(authenticatedPeer, frame); err != nil {
 			return err
@@ -102,24 +124,27 @@ func ServeAuthenticatedConnection(
 	}
 }
 
-func readBoundedEnvelope(connection *websocket.Conn) ([]byte, error) {
+func readBoundedEnvelopeOrHeartbeat(connection *websocket.Conn) ([]byte, bool, error) {
 	messageType, reader, err := connection.NextReader()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if messageType != websocket.BinaryMessage {
-		return nil, errors.New("relay accepts binary messages only")
+		return nil, false, errors.New("relay accepts binary messages only")
 	}
 	limited := io.LimitReader(reader, int64(envelopeframe.MaxFrameSize)+1)
 	frame, err := io.ReadAll(limited)
 	if err != nil {
-		return nil, fmt.Errorf("read encrypted envelope: %w", err)
+		return nil, false, fmt.Errorf("read encrypted envelope: %w", err)
+	}
+	if len(frame) == len(heartbeatRequest) && string(frame) == string(heartbeatRequest[:]) {
+		return nil, true, nil
 	}
 	if len(frame) > envelopeframe.MaxFrameSize {
-		return nil, errors.New("encrypted envelope exceeds maximum frame size")
+		return nil, false, errors.New("encrypted envelope exceeds maximum frame size")
 	}
 	if _, err := envelopeframe.Decode(frame); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return frame, nil
+	return frame, false, nil
 }
