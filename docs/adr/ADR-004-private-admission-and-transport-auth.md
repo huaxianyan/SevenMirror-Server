@@ -1,6 +1,6 @@
 # ADR-004: Private instance admission and WebSocket transport authentication
 
-- Status: **Proposed — persistence, authentication, and server-side immediate revocation implemented; rotation, recovery, and security review pending**
+- Status: **Proposed — persistence, authentication, immediate revocation, and server-side recoverable rotation implemented; client promotion, recovery, and security review pending**
 - Date: 2026-08-06
 - Owners: Server, Android, and Chrome projects
 
@@ -29,7 +29,8 @@ Persist only administrative metadata:
 - random 16-byte workspace and device IDs;
 - device type and bounded display name;
 - 65-byte P-256 E2EE public key;
-- SHA-256 hashes of pairing and device authentication secrets;
+- SHA-256 hashes of pairing, rotation-authorization, and device authentication secrets;
+- a positive credential version;
 - registration, last-online, expiry, consumption, and revocation timestamps.
 
 Never persist notification payloads, reply text, E2EE private keys, or raw
@@ -102,8 +103,35 @@ unverifiable peer is atomically removed from Hub routing and its active
 WebSocket receives a fixed policy close. This bounds the post-commit active
 session window without adding a network administration endpoint or trusting
 signals/PID files. Lookup failure is fail-closed for the affected peer. Other
-workspace peers remain online. Credential rotation and its client-side handoff
-remain a separate protocol and must build on this revocation primitive.
+workspace peers remain online.
+
+### Recoverable transport credential rotation
+
+`protocol/transport-credential-rotation-v1.md` defines the server-side rotation
+boundary. The administrator issues a 192-bit, short-lived, single-use code
+bound to an exact active device through its redacted reference. There remains
+no network administrator endpoint.
+
+Before submitting over HTTPS, the client generates a new 32-byte credential and
+durably stores it as pending alongside current. The strict JSON request proves
+the exact workspace/device tuple, current credential, rotation code, and
+pending credential. In one transaction the server verifies every binding,
+consumes the code, replaces only the credential hash, and increments a positive
+credential version. Same-token, wrong-device, expired, duplicate, revoked, and
+concurrent requests fail closed. Raw codes and credentials are never persisted
+or returned by the rotation response.
+
+Each WebSocket session is bound to the credential version observed during
+`SNA1`. The authorization monitor therefore closes an old-version active
+session using the same atomic Hub removal as revocation. New authentication
+accepts only the pending credential. Device ID, device metadata, E2EE public
+key, and peer trust remain unchanged.
+
+Client promotion intentionally depends on receiving `SNO1` with pending—not on
+local HTTP send or HTTP 200. If a request or response is lost, the client still
+owns pending and can distinguish committed rotation by attempting pending
+transport authentication. Android and Chrome durable dual-slot stores and this
+promotion/recovery UX remain acceptance gates.
 
 ## Alternatives considered
 
@@ -143,7 +171,8 @@ message handling, and cross-platform `SNO1` acknowledgement validation.
 Remaining gates:
 
 - administrator-secret, backup, and recovery design;
-- credential rotation, lost-device recovery, and client-visible revocation UX;
+- Android/Chrome dual-slot credential rotation and `SNO1`-gated promotion;
+- lost-device recovery and client-visible revocation UX;
 - trusted-proxy and configurable connection/rate limits;
 - offline queue/ACK integration and MV3 reconnect behavior;
 - pairing code and transport authentication security review;

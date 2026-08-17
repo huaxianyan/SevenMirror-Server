@@ -47,6 +47,8 @@ func main() {
 		listDevices(store, os.Args[2:])
 	case "revoke-device":
 		revokeDevice(store, os.Args[2:])
+	case "issue-rotation-code":
+		issueRotationCode(store, os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		usage()
@@ -119,6 +121,27 @@ func revokeDevice(store *admission.Store, args []string) {
 	fmt.Printf("device_ref=%s result=%s\n", *reference, result)
 }
 
+func issueRotationCode(store *admission.Store, args []string) {
+	flags := flag.NewFlagSet("issue-rotation-code", flag.ExitOnError)
+	workspaceText := flags.String("workspace", "", "base64url workspace ID")
+	reference := flags.String("device-ref", "", "redacted device reference from list-devices")
+	ttl := flags.Duration("ttl", 10*time.Minute, "validity duration (maximum 24h)")
+	flags.Parse(args)
+	if flags.NArg() != 0 {
+		flags.Usage()
+		os.Exit(2)
+	}
+	code, err := store.IssueCredentialRotationCode(
+		context.Background(), parseWorkspaceID(*workspaceText), *reference, time.Now(), *ttl)
+	if err != nil {
+		fatal("issue credential rotation code", err)
+	}
+	// The raw device-bound secret is printed exactly once and is never stored.
+	fmt.Printf("rotation_code=%s\n", code)
+	fmt.Printf("device_ref=%s\n", *reference)
+	fmt.Printf("expires_in=%s\n", ttl.String())
+}
+
 func parseWorkspaceID(value string) admission.WorkspaceID {
 	workspaceBytes, err := base64.RawURLEncoding.DecodeString(value)
 	if err != nil || len(workspaceBytes) != 16 || base64.RawURLEncoding.EncodeToString(workspaceBytes) != value {
@@ -135,6 +158,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin issue-pairing-code --workspace <id> --type android|chrome [--name name] [--ttl 10m]")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin list-devices --workspace <id>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin revoke-device --workspace <id> --device-ref <ref>")
+	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin issue-rotation-code --workspace <id> --device-ref <ref> [--ttl 10m]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Set NM_DATABASE_PATH to use a non-default database.")
 }

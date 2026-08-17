@@ -19,17 +19,17 @@ const (
 var authMagic = [4]byte{'S', 'N', 'A', '1'}
 
 type ConnectionAuthenticator interface {
-	AuthenticateConnection(context.Context, PeerIdentity, []byte, time.Time) error
+	AuthenticateConnection(context.Context, PeerIdentity, []byte, time.Time) (int64, error)
 }
 
-type ConnectionAuthenticatorFunc func(context.Context, PeerIdentity, []byte, time.Time) error
+type ConnectionAuthenticatorFunc func(context.Context, PeerIdentity, []byte, time.Time) (int64, error)
 
 func (f ConnectionAuthenticatorFunc) AuthenticateConnection(
 	ctx context.Context,
 	peer PeerIdentity,
 	token []byte,
 	now time.Time,
-) error {
+) (int64, error) {
 	return f(ctx, peer, token, now)
 }
 
@@ -99,14 +99,15 @@ func (h *AuthenticatedWebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http
 		return
 	}
 	defer clear(token)
-	if err := h.authenticator.AuthenticateConnection(r.Context(), peer, token, h.now()); err != nil {
+	credentialVersion, err := h.authenticator.AuthenticateConnection(r.Context(), peer, token, h.now())
+	if err != nil || credentialVersion < 1 {
 		writeGenericClose(connection)
 		return
 	}
 	<-h.authSlots
 	authSlotHeld = false
 	_ = connection.SetReadDeadline(time.Time{})
-	_ = ServeAuthenticatedConnection(r.Context(), connection, peer, h.hub)
+	_ = ServeAuthenticatedConnection(r.Context(), connection, peer, credentialVersion, h.hub)
 }
 
 func EncodeAuthenticationFrame(peer PeerIdentity, token []byte) ([]byte, error) {

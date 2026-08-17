@@ -28,8 +28,14 @@ type PeerIdentity struct {
 // Hub is an in-memory ciphertext router. It never receives decryption keys and
 // validates only the fixed clear framing required to route one recipient copy.
 type deviceSession struct {
-	deliveries   chan []byte
-	disconnected chan struct{}
+	credentialVersion int64
+	deliveries        chan []byte
+	disconnected      chan struct{}
+}
+
+type ConnectedSession struct {
+	Peer              PeerIdentity
+	CredentialVersion int64
 }
 
 type Hub struct {
@@ -44,8 +50,12 @@ func NewHub() *Hub {
 // Register reserves one bounded queue for an already authenticated device.
 func (h *Hub) Register(
 	identity PeerIdentity,
+	credentialVersion int64,
 	queueSize int,
 ) (<-chan []byte, <-chan struct{}, func(), error) {
+	if credentialVersion < 1 {
+		return nil, nil, nil, errors.New("credential version must be positive")
+	}
 	if queueSize < 1 {
 		return nil, nil, nil, errors.New("queue size must be positive")
 	}
@@ -55,8 +65,9 @@ func (h *Hub) Register(
 		return nil, nil, nil, ErrAlreadyConnected
 	}
 	session := &deviceSession{
-		deliveries:   make(chan []byte, queueSize),
-		disconnected: make(chan struct{}),
+		credentialVersion: credentialVersion,
+		deliveries:        make(chan []byte, queueSize),
+		disconnected:      make(chan struct{}),
 	}
 	h.devices[identity] = session
 	var once sync.Once
@@ -79,14 +90,17 @@ func (h *Hub) IsConnected(identity PeerIdentity) bool {
 	return exists
 }
 
-func (h *Hub) ConnectedPeers() []PeerIdentity {
+func (h *Hub) ConnectedSessions() []ConnectedSession {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	peers := make([]PeerIdentity, 0, len(h.devices))
-	for peer := range h.devices {
-		peers = append(peers, peer)
+	sessions := make([]ConnectedSession, 0, len(h.devices))
+	for peer, session := range h.devices {
+		sessions = append(sessions, ConnectedSession{
+			Peer:              peer,
+			CredentialVersion: session.credentialVersion,
+		})
 	}
-	return peers
+	return sessions
 }
 
 // Disconnect atomically removes an active device from routing and signals its

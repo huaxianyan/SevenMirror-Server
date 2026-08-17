@@ -30,6 +30,7 @@ func ServeAuthenticatedConnection(
 	ctx context.Context,
 	connection *websocket.Conn,
 	authenticatedPeer PeerIdentity,
+	credentialVersion int64,
 	hub *Hub,
 ) error {
 	sessionContext, cancel := context.WithCancel(ctx)
@@ -41,7 +42,8 @@ func ServeAuthenticatedConnection(
 	connection.SetPongHandler(func(string) error {
 		return connection.SetReadDeadline(time.Now().Add(pongTimeout))
 	})
-	deliveries, disconnected, unregister, err := hub.Register(authenticatedPeer, 16)
+	deliveries, disconnected, unregister, err := hub.Register(
+		authenticatedPeer, credentialVersion, 16)
 	if err != nil {
 		return err
 	}

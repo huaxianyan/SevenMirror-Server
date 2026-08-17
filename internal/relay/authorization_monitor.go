@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-type PeerAuthorizer func(context.Context, PeerIdentity) (bool, error)
+type SessionAuthorizer func(context.Context, ConnectedSession) (bool, error)
 
 // RunAuthorizationMonitor bounds the lifetime of a session revoked by the
 // out-of-process local admin CLI. Authorization lookup errors fail closed for
@@ -15,7 +15,7 @@ func RunAuthorizationMonitor(
 	ctx context.Context,
 	hub *Hub,
 	interval time.Duration,
-	authorize PeerAuthorizer,
+	authorize SessionAuthorizer,
 ) error {
 	if hub == nil || authorize == nil {
 		return errors.New("hub and peer authorizer are required")
@@ -30,10 +30,10 @@ func RunAuthorizationMonitor(
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			for _, peer := range hub.ConnectedPeers() {
-				authorized, err := authorize(ctx, peer)
+			for _, session := range hub.ConnectedSessions() {
+				authorized, err := authorize(ctx, session)
 				if err != nil || !authorized {
-					hub.Disconnect(peer)
+					hub.Disconnect(session.Peer)
 				}
 			}
 		}

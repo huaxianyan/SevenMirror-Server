@@ -24,11 +24,11 @@ func (a *RelayAuthenticator) AuthenticateConnection(
 	peer relay.PeerIdentity,
 	token []byte,
 	now time.Time,
-) error {
+) (int64, error) {
 	var workspaceID WorkspaceID
 	var deviceID DeviceID
 	copy(workspaceID[:], peer.WorkspaceID[:])
 	copy(deviceID[:], peer.DeviceID[:])
-	_, err := a.store.Authenticate(ctx, workspaceID, deviceID, token, now)
-	return err
+	identity, err := a.store.Authenticate(ctx, workspaceID, deviceID, token, now)
+	return identity.CredentialVersion, err
 }

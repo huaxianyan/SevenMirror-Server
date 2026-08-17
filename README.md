@@ -72,6 +72,16 @@ NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
 
 The list and revoke commands never print a full device ID, transport credential, or E2EE public key. Revocation is durable and idempotent. New authentication fails immediately; the running server revalidates active peers every 250 ms, atomically removes a revoked peer from ciphertext routing, and closes its WebSocket with a fixed policy response. Authorization lookup failures disconnect only the affected peer fail-closed.
 
+Issue an exact-device-bound, short-lived rotation authorization from the same redacted list:
+
+```sh
+NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
+  issue-rotation-code --workspace <base64url-workspace-id> \
+  --device-ref <redacted-ref> --ttl 10m
+```
+
+`POST /v1/devices/rotate` follows [`protocol/transport-credential-rotation-v1.md`](protocol/transport-credential-rotation-v1.md). The client generates and durably retains a pending 32-byte credential before the request. One transaction consumes the code, replaces only the credential hash, and increments the credential version. A response can be lost without losing the pending secret. Old-version live sessions are then removed by the same 250 ms authorization monitor; the device tuple and E2EE public key are unchanged. The raw code is printed once, and neither raw credential nor raw code is persisted.
+
 ## Test
 
 ```sh
@@ -82,7 +92,7 @@ go test ./...
 
 `cmd/server` now mounts registration and relay endpoints only with an initialized admission store and authenticated relay handler. Knowing the host, workspace ID, or device ID is insufficient: registration requires an unexpired, unused admin-issued code, and every relay connection requires the independently issued device credential. Secrets are absent from URLs and persisted only as hashes.
 
-This is not yet a production release. Durable immediate device revocation is implemented, while credential rotation, lost-device recovery, offline delivery, trusted-proxy policy, and an independent security review remain release blockers. Use `wss://` outside loopback; native TLS requires TLS 1.2 or newer. Until those gates pass, submit only synthetic encrypted test payloads—never real notification content.
+This is not yet a production release. Durable immediate device revocation and the server half of recoverable transport credential rotation are implemented. Android/Chrome dual-slot rotation and promotion, lost-device recovery, offline delivery, trusted-proxy policy, and an independent security review remain release blockers. Use `wss://` outside loopback; native TLS requires TLS 1.2 or newer. Until those gates pass, submit only synthetic encrypted test payloads—never real notification content.
 
 The first-message authentication format is documented in [`protocol/device-auth-frame-v1.md`](protocol/device-auth-frame-v1.md).
 

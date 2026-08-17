@@ -114,7 +114,7 @@ func newTestWebSocketServer(t *testing.T) (*Hub, *httptest.Server) {
 		defer connection.Close()
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
-		_ = ServeAuthenticatedConnection(ctx, connection, peer, hub)
+		_ = ServeAuthenticatedConnection(ctx, connection, peer, 1, hub)
 	})
 	return hub, httptest.NewServer(handler)
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/elliptic"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"errors"
@@ -73,7 +74,7 @@ func TestPairingCodeRegistersExactlyOnePersistentDevice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if identity.DeviceType != DeviceAndroid || identity.DeviceName != "Pixel" {
+	if identity.DeviceType != DeviceAndroid || identity.DeviceName != "Pixel" || identity.CredentialVersion != 1 {
 		t.Fatalf("unexpected identity: %+v", identity)
 	}
 	wrongToken := append([]byte(nil), registered.AuthToken...)
@@ -243,6 +244,278 @@ func TestDeviceRevocationIsIdempotentPersistentAndWorkspaceBound(t *testing.T) {
 	}
 }
 
+func TestCredentialRotationIsAtomicPersistentAndRecoverable(t *testing.T) {
+	ctx := context.Background()
+	path := tempDatabasePath(t)
+	store := openTestStore(t, path)
+	now := time.UnixMilli(1_800_000_000_000)
+	workspace, _ := store.CreateWorkspace(ctx, now)
+	code, _ := store.IssuePairingCode(ctx, workspace, DeviceChrome, "Browser", now, time.Minute)
+	registered, err := store.Register(ctx, Registration{
+		PairingCode: code, DeviceType: DeviceChrome, DeviceName: "Browser",
+		E2EEPublicKey: testPublicKey(), Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference := deviceReference(workspace, registered.DeviceID)
+	rotationCode, err := store.IssueCredentialRotationCode(
+		ctx, workspace, reference, now, 10*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := bytes.Repeat([]byte{0x71}, authTokenBytes)
+	wrongCurrent := bytes.Repeat([]byte{0x72}, authTokenBytes)
+	input := CredentialRotation{
+		WorkspaceID: workspace, DeviceID: registered.DeviceID,
+		CurrentAuthToken: wrongCurrent, RotationCode: rotationCode,
+		PendingAuthToken: pending, Now: now.Add(time.Second),
+	}
+	if _, err := store.RotateCredential(ctx, input); !errors.Is(err, ErrInvalidRotation) {
+		t.Fatalf("wrong-current error = %v", err)
+	}
+	input.CurrentAuthToken = registered.AuthToken
+	input.PendingAuthToken = registered.AuthToken
+	if _, err := store.RotateCredential(ctx, input); !errors.Is(err, ErrInvalidRotation) {
+		t.Fatalf("same-token error = %v", err)
+	}
+	input.PendingAuthToken = pending
+	version, err := store.RotateCredential(ctx, input)
+	if err != nil || version != 2 {
+		t.Fatalf("rotation version=%d error=%v", version, err)
+	}
+	if _, err := store.RotateCredential(ctx, input); !errors.Is(err, ErrInvalidRotation) {
+		t.Fatalf("duplicate rotation error = %v", err)
+	}
+	if _, err := store.Authenticate(ctx, workspace, registered.DeviceID,
+		registered.AuthToken, now.Add(2*time.Second)); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("old credential error = %v", err)
+	}
+	identity, err := store.Authenticate(ctx, workspace, registered.DeviceID,
+		pending, now.Add(2*time.Second))
+	if err != nil || identity.CredentialVersion != 2 {
+		t.Fatalf("pending authentication identity=%+v error=%v", identity, err)
+	}
+	if authorized, err := store.IsSessionAuthorized(ctx, workspace, registered.DeviceID, 1); err != nil || authorized {
+		t.Fatalf("old session authorization=%v error=%v", authorized, err)
+	}
+	if authorized, err := store.IsSessionAuthorized(ctx, workspace, registered.DeviceID, 2); err != nil || !authorized {
+		t.Fatalf("new session authorization=%v error=%v", authorized, err)
+	}
+	var storedPublicKey []byte
+	if err := store.db.QueryRow(`SELECT e2ee_public_key FROM devices WHERE workspace_id = ? AND id = ?`,
+		workspace[:], registered.DeviceID[:]).Scan(&storedPublicKey); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(storedPublicKey, testPublicKey()) {
+		t.Fatal("credential rotation changed E2EE identity")
+	}
+	rotationSecret, _ := base64.RawURLEncoding.DecodeString(rotationCode)
+	for _, databaseFile := range []string{path, path + "-wal"} {
+		contents, readErr := os.ReadFile(databaseFile)
+		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+			t.Fatal(readErr)
+		}
+		if bytes.Contains(contents, rotationSecret) || bytes.Contains(contents, registered.AuthToken) ||
+			bytes.Contains(contents, pending) {
+			t.Fatalf("raw rotation secret persisted in %s", databaseFile)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened := openTestStore(t, path)
+	identity, err = reopened.Authenticate(ctx, workspace, registered.DeviceID,
+		pending, now.Add(3*time.Second))
+	if err != nil || identity.CredentialVersion != 2 {
+		t.Fatalf("reopened authentication identity=%+v error=%v", identity, err)
+	}
+}
+
+func TestConcurrentCredentialRotationAllowsOneCommit(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, tempDatabasePath(t))
+	now := time.UnixMilli(1_800_000_000_000)
+	workspace, _ := store.CreateWorkspace(ctx, now)
+	pairingCode, _ := store.IssuePairingCode(ctx, workspace, DeviceChrome, "Browser", now, time.Minute)
+	device, err := store.Register(ctx, Registration{
+		PairingCode: pairingCode, DeviceType: DeviceChrome, DeviceName: "Browser",
+		E2EEPublicKey: testPublicKey(), Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotationCode, err := store.IssueCredentialRotationCode(
+		ctx, workspace, deviceReference(workspace, device.DeviceID), now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wait sync.WaitGroup
+	results := make(chan error, 2)
+	for index := 0; index < 2; index++ {
+		wait.Add(1)
+		go func(value byte) {
+			defer wait.Done()
+			_, err := store.RotateCredential(ctx, CredentialRotation{
+				WorkspaceID: workspace, DeviceID: device.DeviceID,
+				CurrentAuthToken: device.AuthToken, RotationCode: rotationCode,
+				PendingAuthToken: bytes.Repeat([]byte{value}, authTokenBytes), Now: now,
+			})
+			results <- err
+		}(byte(0x40 + index))
+	}
+	wait.Wait()
+	close(results)
+	successes, rejected := 0, 0
+	for err := range results {
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, ErrInvalidRotation):
+			rejected++
+		default:
+			t.Fatalf("unexpected rotation error: %v", err)
+		}
+	}
+	if successes != 1 || rejected != 1 {
+		t.Fatalf("successes=%d rejected=%d", successes, rejected)
+	}
+}
+
+func TestCredentialRotationCodeIsExactDeviceBoundAndExpires(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, tempDatabasePath(t))
+	now := time.UnixMilli(1_800_000_000_000)
+	workspace, _ := store.CreateWorkspace(ctx, now)
+	otherWorkspace, _ := store.CreateWorkspace(ctx, now)
+	register := func(name string) RegisteredDevice {
+		code, _ := store.IssuePairingCode(ctx, workspace, DeviceAndroid, name, now, time.Minute)
+		device, err := store.Register(ctx, Registration{
+			PairingCode: code, DeviceType: DeviceAndroid, DeviceName: name,
+			E2EEPublicKey: testPublicKey(), Now: now,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return device
+	}
+	device := register("Phone A")
+	otherDevice := register("Phone B")
+	rotationCode, err := store.IssueCredentialRotationCode(
+		ctx, workspace, deviceReference(workspace, device.DeviceID), now, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := CredentialRotation{
+		WorkspaceID: workspace, DeviceID: device.DeviceID,
+		CurrentAuthToken: device.AuthToken, RotationCode: rotationCode,
+		PendingAuthToken: bytes.Repeat([]byte{0x61}, authTokenBytes), Now: now,
+	}
+	wrongDevice := base
+	wrongDevice.DeviceID = otherDevice.DeviceID
+	wrongDevice.CurrentAuthToken = otherDevice.AuthToken
+	if _, err := store.RotateCredential(ctx, wrongDevice); !errors.Is(err, ErrInvalidRotation) {
+		t.Fatalf("wrong-device error = %v", err)
+	}
+	wrongWorkspace := base
+	wrongWorkspace.WorkspaceID = otherWorkspace
+	if _, err := store.RotateCredential(ctx, wrongWorkspace); !errors.Is(err, ErrInvalidRotation) {
+		t.Fatalf("wrong-workspace error = %v", err)
+	}
+	base.Now = now.Add(500 * time.Millisecond)
+	if version, err := store.RotateCredential(ctx, base); err != nil || version != 2 {
+		t.Fatalf("valid retry version=%d error=%v", version, err)
+	}
+	expiredCode, err := store.IssueCredentialRotationCode(
+		ctx, workspace, deviceReference(workspace, device.DeviceID), now, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expired := base
+	expired.CurrentAuthToken = base.PendingAuthToken
+	expired.PendingAuthToken = bytes.Repeat([]byte{0x62}, authTokenBytes)
+	expired.RotationCode = expiredCode
+	expired.Now = now.Add(time.Second)
+	if _, err := store.RotateCredential(ctx, expired); !errors.Is(err, ErrInvalidRotation) {
+		t.Fatalf("expired error = %v", err)
+	}
+	if _, err := store.IssueCredentialRotationCode(
+		ctx, otherWorkspace, deviceReference(workspace, device.DeviceID), now, time.Minute,
+	); !errors.Is(err, ErrDeviceNotFound) {
+		t.Fatalf("cross-workspace issue error = %v", err)
+	}
+	revokedCode, err := store.IssueCredentialRotationCode(
+		ctx, workspace, deviceReference(workspace, otherDevice.DeviceID), now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := store.RevokeDevice(
+		ctx, workspace, deviceReference(workspace, otherDevice.DeviceID), now,
+	); err != nil || !changed {
+		t.Fatalf("revoke before rotation changed=%v error=%v", changed, err)
+	}
+	if _, err := store.RotateCredential(ctx, CredentialRotation{
+		WorkspaceID: workspace, DeviceID: otherDevice.DeviceID,
+		CurrentAuthToken: otherDevice.AuthToken, RotationCode: revokedCode,
+		PendingAuthToken: bytes.Repeat([]byte{0x63}, authTokenBytes), Now: now,
+	}); !errors.Is(err, ErrInvalidRotation) {
+		t.Fatalf("revoked-device rotation error = %v", err)
+	}
+}
+
+func TestOpenMigratesSchemaVersionOneWithoutChangingCredential(t *testing.T) {
+	path := tempDatabasePath(t)
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statements := []string{
+		`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)`,
+		`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (1, 0)`,
+		`CREATE TABLE workspaces (id BLOB PRIMARY KEY, created_at_ms INTEGER NOT NULL)`,
+		`CREATE TABLE devices (
+			workspace_id BLOB NOT NULL, id BLOB NOT NULL, device_type TEXT NOT NULL,
+			device_name TEXT NOT NULL, auth_token_hash BLOB NOT NULL,
+			e2ee_public_key BLOB NOT NULL, registered_at_ms INTEGER NOT NULL,
+			last_online_at_ms INTEGER NOT NULL, revoked_at_ms INTEGER,
+			PRIMARY KEY(workspace_id, id))`,
+	}
+	for _, statement := range statements {
+		if _, err := db.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	workspace := bytes.Repeat([]byte{1}, 16)
+	device := bytes.Repeat([]byte{2}, 16)
+	token := bytes.Repeat([]byte{3}, authTokenBytes)
+	hash := sha256.Sum256(token)
+	if _, err := db.Exec(`INSERT INTO workspaces(id, created_at_ms) VALUES (?, 0)`, workspace); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO devices(
+		workspace_id, id, device_type, device_name, auth_token_hash, e2ee_public_key,
+		registered_at_ms, last_online_at_ms) VALUES (?, ?, 'chrome', 'Browser', ?, ?, 0, 0)`,
+		workspace, device, hash[:], testPublicKey()); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store := openTestStore(t, path)
+	var workspaceID WorkspaceID
+	var deviceID DeviceID
+	copy(workspaceID[:], workspace)
+	copy(deviceID[:], device)
+	identity, err := store.Authenticate(context.Background(), workspaceID, deviceID, token, time.Now())
+	if err != nil || identity.CredentialVersion != 1 {
+		t.Fatalf("migrated authentication identity=%+v error=%v", identity, err)
+	}
+	var version int
+	if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 2 {
+		t.Fatalf("schema version=%d error=%v", version, err)
+	}
+}
+
 func TestOpenRejectsNewerSchemaVersion(t *testing.T) {
 	path := tempDatabasePath(t)
 	db, err := sql.Open("sqlite", path)
@@ -252,7 +525,7 @@ func TestOpenRejectsNewerSchemaVersion(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (2, 0)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (3, 0)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {

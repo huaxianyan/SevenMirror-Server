@@ -72,12 +72,13 @@ func main() {
 			ctx,
 			hub,
 			250*time.Millisecond,
-			func(checkContext context.Context, peer relay.PeerIdentity) (bool, error) {
+			func(checkContext context.Context, session relay.ConnectedSession) (bool, error) {
 				var workspaceID admission.WorkspaceID
 				var deviceID admission.DeviceID
-				copy(workspaceID[:], peer.WorkspaceID[:])
-				copy(deviceID[:], peer.DeviceID[:])
-				authorized, err := store.IsDeviceAuthorized(checkContext, workspaceID, deviceID)
+				copy(workspaceID[:], session.Peer.WorkspaceID[:])
+				copy(deviceID[:], session.Peer.DeviceID[:])
+				authorized, err := store.IsSessionAuthorized(
+					checkContext, workspaceID, deviceID, session.CredentialVersion)
 				if err != nil {
 					logger.Warn("device authorization check failed; disconnecting active peer")
 				}

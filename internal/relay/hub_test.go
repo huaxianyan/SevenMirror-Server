@@ -17,12 +17,12 @@ func TestHubRoutesUnchangedCiphertextToOneRecipient(t *testing.T) {
 	sender := peerFromFrame(t, frame, 24)
 	recipient := peerFromFrame(t, frame, 40)
 	hub := NewHub()
-	_, _, unregisterSender, err := hub.Register(sender, 1)
+	_, _, unregisterSender, err := hub.Register(sender, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unregisterSender()
-	deliveries, disconnected, unregister, err := hub.Register(recipient, 1)
+	deliveries, disconnected, unregister, err := hub.Register(recipient, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestHubRejectsIdentityMismatchOfflineAndBackpressure(t *testing.T) {
 	if err := hub.Route(wrongWorkspace, frame); !errors.Is(err, ErrSenderMismatch) {
 		t.Fatalf("wrong workspace error = %v", err)
 	}
-	_, _, unregisterSender, err := hub.Register(sender, 1)
+	_, _, unregisterSender, err := hub.Register(sender, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestHubRejectsIdentityMismatchOfflineAndBackpressure(t *testing.T) {
 	if err := hub.Route(sender, frame); !errors.Is(err, ErrRecipientOffline) {
 		t.Fatalf("offline error = %v", err)
 	}
-	_, _, unregister, err := hub.Register(recipient, 1)
+	_, _, unregister, err := hub.Register(recipient, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,12 +88,12 @@ func TestHubDisconnectRemovesRoutingAndSignalsExactSession(t *testing.T) {
 	sender := peerFromFrame(t, frame, 24)
 	recipient := peerFromFrame(t, frame, 40)
 	hub := NewHub()
-	_, _, unregisterSender, err := hub.Register(sender, 1)
+	_, _, unregisterSender, err := hub.Register(sender, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unregisterSender()
-	_, disconnected, unregister, err := hub.Register(recipient, 1)
+	_, disconnected, unregister, err := hub.Register(recipient, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

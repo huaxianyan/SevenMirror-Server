@@ -58,12 +58,12 @@ func TestAuthenticatedHandlerRoutesOnlyAfterBinaryCredentialFrame(t *testing.T) 
 	tokens := map[PeerIdentity][]byte{senderPeer: senderToken, recipientPeer: recipientToken}
 	authenticator := ConnectionAuthenticatorFunc(func(
 		_ context.Context, peer PeerIdentity, token []byte, _ time.Time,
-	) error {
+	) (int64, error) {
 		expected, ok := tokens[peer]
 		if !ok || !bytes.Equal(expected, token) {
-			return errors.New("unauthorized")
+			return 0, errors.New("unauthorized")
 		}
-		return nil
+		return 1, nil
 	})
 	hub := NewHub()
 	handler, err := NewAuthenticatedWebSocketHandler(hub, authenticator)
@@ -101,11 +101,11 @@ func TestAuthenticatedHandlerClosesActiveRevokedSession(t *testing.T) {
 	hub := NewHub()
 	handler, err := NewAuthenticatedWebSocketHandler(hub, ConnectionAuthenticatorFunc(func(
 		_ context.Context, candidate PeerIdentity, received []byte, _ time.Time,
-	) error {
+	) (int64, error) {
 		if candidate != peer || !bytes.Equal(received, token) {
-			return errors.New("unauthorized")
+			return 0, errors.New("unauthorized")
 		}
-		return nil
+		return 1, nil
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -136,8 +136,8 @@ func TestAuthenticatedHandlerRejectsWrongTokenAndWebOrigin(t *testing.T) {
 	hub := NewHub()
 	handler, err := NewAuthenticatedWebSocketHandler(hub, ConnectionAuthenticatorFunc(func(
 		context.Context, PeerIdentity, []byte, time.Time,
-	) error {
-		return errors.New("unauthorized")
+	) (int64, error) {
+		return 0, errors.New("unauthorized")
 	}))
 	if err != nil {
 		t.Fatal(err)

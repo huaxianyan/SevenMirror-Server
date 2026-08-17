@@ -12,17 +12,17 @@ func TestAuthorizationMonitorDisconnectsRevokedAndLookupFailureOnly(t *testing.T
 	revoked := PeerIdentity{WorkspaceID: WorkspaceID{1}, DeviceID: DeviceID{1}}
 	active := PeerIdentity{WorkspaceID: WorkspaceID{1}, DeviceID: DeviceID{2}}
 	lookupFailure := PeerIdentity{WorkspaceID: WorkspaceID{1}, DeviceID: DeviceID{3}}
-	_, revokedSignal, revokedUnregister, err := hub.Register(revoked, 1)
+	_, revokedSignal, revokedUnregister, err := hub.Register(revoked, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer revokedUnregister()
-	_, _, activeUnregister, err := hub.Register(active, 1)
+	_, _, activeUnregister, err := hub.Register(active, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer activeUnregister()
-	_, failureSignal, failureUnregister, err := hub.Register(lookupFailure, 1)
+	_, failureSignal, failureUnregister, err := hub.Register(lookupFailure, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,9 +32,9 @@ func TestAuthorizationMonitorDisconnectsRevokedAndLookupFailureOnly(t *testing.T
 	finished := make(chan error, 1)
 	go func() {
 		finished <- RunAuthorizationMonitor(ctx, hub, time.Millisecond, func(
-			_ context.Context, peer PeerIdentity,
+			_ context.Context, session ConnectedSession,
 		) (bool, error) {
-			switch peer {
+			switch session.Peer {
 			case revoked:
 				return false, nil
 			case lookupFailure:

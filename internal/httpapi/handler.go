@@ -30,6 +30,7 @@ func newMux(store *admission.Store, relayHandler http.Handler) http.Handler {
 	mux.HandleFunc("/readyz", status("ready"))
 	if store != nil && relayHandler != nil {
 		mux.Handle("/v1/devices/register", newRegistrationHandler(store))
+		mux.Handle("/v1/devices/rotate", newCredentialRotationHandler(store))
 		mux.Handle("/v1/relay", relayHandler)
 	}
 	return securityHeaders(mux)

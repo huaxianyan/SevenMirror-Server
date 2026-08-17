@@ -1,10 +1,12 @@
 package admission
 
 import (
+	"bytes"
 	"context"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"errors"
@@ -18,15 +20,17 @@ import (
 )
 
 const (
-	pairingSecretBytes = 24
-	authTokenBytes     = 32
-	maxDeviceNameBytes = 100
+	pairingSecretBytes  = 24
+	rotationSecretBytes = 24
+	authTokenBytes      = 32
+	maxDeviceNameBytes  = 100
 )
 
 var (
 	ErrInvalidPairingCode  = errors.New("invalid or expired pairing code")
 	ErrInvalidRegistration = errors.New("invalid device registration")
 	ErrUnauthorized        = errors.New("device authentication failed")
+	ErrInvalidRotation     = errors.New("credential rotation denied")
 	ErrDeviceNotFound      = errors.New("device not found")
 )
 
@@ -59,10 +63,20 @@ type RegisteredDevice struct {
 }
 
 type DeviceIdentity struct {
-	WorkspaceID WorkspaceID
-	DeviceID    DeviceID
-	DeviceType  DeviceType
-	DeviceName  string
+	WorkspaceID       WorkspaceID
+	DeviceID          DeviceID
+	DeviceType        DeviceType
+	DeviceName        string
+	CredentialVersion int64
+}
+
+type CredentialRotation struct {
+	WorkspaceID      WorkspaceID
+	DeviceID         DeviceID
+	CurrentAuthToken []byte
+	RotationCode     string
+	PendingAuthToken []byte
+	Now              time.Time
 }
 
 type DeviceSummary struct {
@@ -277,44 +291,14 @@ func (s *Store) RevokeDevice(
 	reference string,
 	now time.Time,
 ) (bool, error) {
-	if !validDeviceReference(reference) {
-		return false, ErrDeviceNotFound
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM devices WHERE workspace_id = ?`, workspaceID[:])
+	deviceID, err := s.resolveDeviceReference(ctx, workspaceID, reference)
 	if err != nil {
-		return false, fmt.Errorf("resolve device: %w", err)
-	}
-	var matched []byte
-	for rows.Next() {
-		var idBytes []byte
-		if err := rows.Scan(&idBytes); err != nil {
-			rows.Close()
-			return false, fmt.Errorf("resolve device: %w", err)
-		}
-		if len(idBytes) != len(DeviceID{}) {
-			rows.Close()
-			return false, errors.New("stored device ID has invalid length")
-		}
-		var deviceID DeviceID
-		copy(deviceID[:], idBytes)
-		if deviceReference(workspaceID, deviceID) == reference {
-			if matched != nil {
-				rows.Close()
-				return false, errors.New("ambiguous device reference")
-			}
-			matched = append([]byte(nil), idBytes...)
-		}
-	}
-	if err := rows.Close(); err != nil {
-		return false, fmt.Errorf("resolve device: %w", err)
-	}
-	if matched == nil {
-		return false, ErrDeviceNotFound
+		return false, err
 	}
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE devices SET revoked_at_ms = ?
 		WHERE workspace_id = ? AND id = ? AND revoked_at_ms IS NULL`,
-		unixMillis(now), workspaceID[:], matched)
+		unixMillis(now), workspaceID[:], deviceID[:])
 	if err != nil {
 		return false, fmt.Errorf("revoke device: %w", err)
 	}
@@ -323,6 +307,164 @@ func (s *Store) RevokeDevice(
 		return false, fmt.Errorf("revoke device: %w", err)
 	}
 	return updated == 1, nil
+}
+
+func (s *Store) IssueCredentialRotationCode(
+	ctx context.Context,
+	workspaceID WorkspaceID,
+	reference string,
+	now time.Time,
+	ttl time.Duration,
+) (string, error) {
+	if ttl <= 0 || ttl > 24*time.Hour {
+		return "", errors.New("rotation code TTL must be in (0, 24h]")
+	}
+	deviceID, err := s.resolveDeviceReference(ctx, workspaceID, reference)
+	if err != nil {
+		return "", err
+	}
+	secret := make([]byte, rotationSecretBytes)
+	if _, err := rand.Read(secret); err != nil {
+		return "", fmt.Errorf("generate rotation code: %w", err)
+	}
+	hash := sha256.Sum256(secret)
+	result, err := s.db.ExecContext(ctx, `
+		INSERT INTO credential_rotation_codes
+		(code_hash, workspace_id, device_id, created_at_ms, expires_at_ms)
+		SELECT ?, workspace_id, id, ?, ? FROM devices
+		WHERE workspace_id = ? AND id = ? AND revoked_at_ms IS NULL`,
+		hash[:], unixMillis(now), unixMillis(now.Add(ttl)), workspaceID[:], deviceID[:])
+	if err != nil {
+		clear(secret)
+		return "", fmt.Errorf("store rotation code: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		clear(secret)
+		return "", fmt.Errorf("store rotation code: %w", err)
+	}
+	if rows != 1 {
+		clear(secret)
+		return "", ErrDeviceNotFound
+	}
+	encoded := base64.RawURLEncoding.EncodeToString(secret)
+	clear(secret)
+	return encoded, nil
+}
+
+func (s *Store) RotateCredential(ctx context.Context, input CredentialRotation) (int64, error) {
+	if len(input.CurrentAuthToken) != authTokenBytes || len(input.PendingAuthToken) != authTokenBytes ||
+		bytes.Equal(input.CurrentAuthToken, input.PendingAuthToken) {
+		return 0, ErrInvalidRotation
+	}
+	rotationSecret, err := base64.RawURLEncoding.DecodeString(input.RotationCode)
+	if err != nil || len(rotationSecret) != rotationSecretBytes ||
+		base64.RawURLEncoding.EncodeToString(rotationSecret) != input.RotationCode {
+		clear(rotationSecret)
+		return 0, ErrInvalidRotation
+	}
+	defer clear(rotationSecret)
+	codeHash := sha256.Sum256(rotationSecret)
+	currentHash := sha256.Sum256(input.CurrentAuthToken)
+	pendingHash := sha256.Sum256(input.PendingAuthToken)
+	nowMillis := unixMillis(input.Now)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin credential rotation: %w", err)
+	}
+	defer tx.Rollback()
+	var workspaceBytes, deviceBytes, storedCurrentHash []byte
+	var expiresAt, credentialVersion int64
+	var consumedAt, revokedAt sql.NullInt64
+	err = tx.QueryRowContext(ctx, `
+		SELECT c.workspace_id, c.device_id, c.expires_at_ms, c.consumed_at_ms,
+			d.auth_token_hash, d.credential_version, d.revoked_at_ms
+		FROM credential_rotation_codes c
+		JOIN devices d ON d.workspace_id = c.workspace_id AND d.id = c.device_id
+		WHERE c.code_hash = ?`, codeHash[:]).Scan(
+		&workspaceBytes, &deviceBytes, &expiresAt, &consumedAt,
+		&storedCurrentHash, &credentialVersion, &revokedAt)
+	if err != nil || consumedAt.Valid || revokedAt.Valid || expiresAt <= nowMillis ||
+		!bytes.Equal(workspaceBytes, input.WorkspaceID[:]) ||
+		!bytes.Equal(deviceBytes, input.DeviceID[:]) ||
+		subtle.ConstantTimeCompare(storedCurrentHash, currentHash[:]) != 1 || credentialVersion < 1 {
+		return 0, ErrInvalidRotation
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE credential_rotation_codes SET consumed_at_ms = ?
+		WHERE code_hash = ? AND consumed_at_ms IS NULL AND expires_at_ms > ?`,
+		nowMillis, codeHash[:], nowMillis)
+	if err != nil {
+		return 0, fmt.Errorf("consume rotation code: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("consume rotation code: %w", err)
+	}
+	if rows != 1 {
+		return 0, ErrInvalidRotation
+	}
+	result, err = tx.ExecContext(ctx, `
+		UPDATE devices SET auth_token_hash = ?, credential_version = credential_version + 1
+		WHERE workspace_id = ? AND id = ? AND auth_token_hash = ?
+			AND credential_version = ? AND revoked_at_ms IS NULL`,
+		pendingHash[:], input.WorkspaceID[:], input.DeviceID[:], currentHash[:], credentialVersion)
+	if err != nil {
+		return 0, fmt.Errorf("rotate credential: %w", err)
+	}
+	rows, err = result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("rotate credential: %w", err)
+	}
+	if rows != 1 {
+		return 0, ErrInvalidRotation
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit credential rotation: %w", err)
+	}
+	return credentialVersion + 1, nil
+}
+
+func (s *Store) resolveDeviceReference(
+	ctx context.Context,
+	workspaceID WorkspaceID,
+	reference string,
+) (DeviceID, error) {
+	if !validDeviceReference(reference) {
+		return DeviceID{}, ErrDeviceNotFound
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM devices WHERE workspace_id = ?`, workspaceID[:])
+	if err != nil {
+		return DeviceID{}, fmt.Errorf("resolve device: %w", err)
+	}
+	defer rows.Close()
+	var matched *DeviceID
+	for rows.Next() {
+		var idBytes []byte
+		if err := rows.Scan(&idBytes); err != nil {
+			return DeviceID{}, fmt.Errorf("resolve device: %w", err)
+		}
+		if len(idBytes) != len(DeviceID{}) {
+			return DeviceID{}, errors.New("stored device ID has invalid length")
+		}
+		var deviceID DeviceID
+		copy(deviceID[:], idBytes)
+		if deviceReference(workspaceID, deviceID) == reference {
+			if matched != nil {
+				return DeviceID{}, errors.New("ambiguous device reference")
+			}
+			copyOfID := deviceID
+			matched = &copyOfID
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return DeviceID{}, fmt.Errorf("resolve device: %w", err)
+	}
+	if matched == nil {
+		return DeviceID{}, ErrDeviceNotFound
+	}
+	return *matched, nil
 }
 
 func (s *Store) IsDeviceAuthorized(
@@ -343,6 +485,29 @@ func (s *Store) IsDeviceAuthorized(
 	return authorized, nil
 }
 
+func (s *Store) IsSessionAuthorized(
+	ctx context.Context,
+	workspaceID WorkspaceID,
+	deviceID DeviceID,
+	credentialVersion int64,
+) (bool, error) {
+	if credentialVersion < 1 {
+		return false, nil
+	}
+	var authorized bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT revoked_at_ms IS NULL AND credential_version = ?
+		FROM devices WHERE workspace_id = ? AND id = ?`,
+		credentialVersion, workspaceID[:], deviceID[:]).Scan(&authorized)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read session authorization: %w", err)
+	}
+	return authorized, nil
+}
+
 func (s *Store) Authenticate(
 	ctx context.Context,
 	workspaceID WorkspaceID,
@@ -355,6 +520,7 @@ func (s *Store) Authenticate(
 	}
 	hash := sha256.Sum256(authToken)
 	var deviceType, deviceName string
+	var credentialVersion int64
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE devices SET last_online_at_ms = ?
 		WHERE workspace_id = ? AND id = ? AND auth_token_hash = ? AND revoked_at_ms IS NULL`,
@@ -367,17 +533,18 @@ func (s *Store) Authenticate(
 		return DeviceIdentity{}, ErrUnauthorized
 	}
 	err = s.db.QueryRowContext(ctx, `
-		SELECT device_type, device_name FROM devices
+		SELECT device_type, device_name, credential_version FROM devices
 		WHERE workspace_id = ? AND id = ? AND auth_token_hash = ? AND revoked_at_ms IS NULL`,
-		workspaceID[:], deviceID[:], hash[:]).Scan(&deviceType, &deviceName)
+		workspaceID[:], deviceID[:], hash[:]).Scan(&deviceType, &deviceName, &credentialVersion)
 	if err != nil {
 		return DeviceIdentity{}, ErrUnauthorized
 	}
 	return DeviceIdentity{
-		WorkspaceID: workspaceID,
-		DeviceID:    deviceID,
-		DeviceType:  DeviceType(deviceType),
-		DeviceName:  deviceName,
+		WorkspaceID:       workspaceID,
+		DeviceID:          deviceID,
+		DeviceType:        DeviceType(deviceType),
+		DeviceName:        deviceName,
+		CredentialVersion: credentialVersion,
 	}, nil
 }
 
@@ -403,11 +570,14 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if version > 1 {
-		return fmt.Errorf("database schema version %d is newer than supported version 1", version)
+	if version > 2 {
+		return fmt.Errorf("database schema version %d is newer than supported version 2", version)
+	}
+	if version == 2 {
+		return nil
 	}
 	if version == 1 {
-		return nil
+		return s.applySchemaVersion2(ctx)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -454,6 +624,41 @@ func (s *Store) initialize(ctx context.Context) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit schema version 1: %w", err)
+	}
+	return s.applySchemaVersion2(ctx)
+}
+
+func (s *Store) applySchemaVersion2(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin schema version 2: %w", err)
+	}
+	defer tx.Rollback()
+	statements := []string{
+		`ALTER TABLE devices ADD COLUMN credential_version INTEGER NOT NULL DEFAULT 1 CHECK(credential_version > 0)`,
+		`CREATE TABLE credential_rotation_codes (
+			code_hash BLOB PRIMARY KEY CHECK(length(code_hash) = 32),
+			workspace_id BLOB NOT NULL,
+			device_id BLOB NOT NULL,
+			created_at_ms INTEGER NOT NULL,
+			expires_at_ms INTEGER NOT NULL,
+			consumed_at_ms INTEGER,
+			FOREIGN KEY(workspace_id, device_id) REFERENCES devices(workspace_id, id) ON DELETE CASCADE
+		) STRICT`,
+		`CREATE INDEX credential_rotation_codes_expiry ON credential_rotation_codes(expires_at_ms)`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("apply schema version 2: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (2, ?)`,
+		time.Now().UnixMilli()); err != nil {
+		return fmt.Errorf("record schema version 2: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema version 2: %w", err)
 	}
 	return nil
 }
