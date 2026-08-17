@@ -17,6 +17,8 @@ type Config struct {
 	Address         string
 	DatabasePath    string
 	ShutdownTimeout time.Duration
+	TLSCertFile     string
+	TLSKeyFile      string
 }
 
 func Load() (Config, error) {
@@ -32,6 +34,12 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("NM_SHUTDOWN_TIMEOUT_SECONDS must be a positive integer")
 		}
 		cfg.ShutdownTimeout = time.Duration(seconds) * time.Second
+	}
+
+	cfg.TLSCertFile = os.Getenv("NM_TLS_CERT_FILE")
+	cfg.TLSKeyFile = os.Getenv("NM_TLS_KEY_FILE")
+	if (cfg.TLSCertFile == "") != (cfg.TLSKeyFile == "") {
+		return Config{}, fmt.Errorf("NM_TLS_CERT_FILE and NM_TLS_KEY_FILE must be configured together")
 	}
 
 	return cfg, nil

@@ -9,6 +9,8 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("NM_ADDRESS", "")
 	t.Setenv("NM_SHUTDOWN_TIMEOUT_SECONDS", "")
 	t.Setenv("NM_DATABASE_PATH", "")
+	t.Setenv("NM_TLS_CERT_FILE", "")
+	t.Setenv("NM_TLS_KEY_FILE", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -29,5 +31,25 @@ func TestLoadRejectsInvalidTimeout(t *testing.T) {
 	t.Setenv("NM_SHUTDOWN_TIMEOUT_SECONDS", "zero")
 	if _, err := Load(); err == nil {
 		t.Fatal("Load() error = nil, want validation error")
+	}
+}
+
+func TestLoadRequiresCompleteTLSPair(t *testing.T) {
+	t.Setenv("NM_TLS_CERT_FILE", "server.pem")
+	t.Setenv("NM_TLS_KEY_FILE", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want incomplete TLS configuration error")
+	}
+}
+
+func TestLoadAcceptsCompleteTLSPair(t *testing.T) {
+	t.Setenv("NM_TLS_CERT_FILE", "server.pem")
+	t.Setenv("NM_TLS_KEY_FILE", "server-key.pem")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.TLSCertFile != "server.pem" || cfg.TLSKeyFile != "server-key.pem" {
+		t.Fatalf("TLS files = %q, %q", cfg.TLSCertFile, cfg.TLSKeyFile)
 	}
 }

@@ -79,6 +79,7 @@ Validated behavior:
 - Real Chrome unpacked extension retained the same non-extractable identity fingerprint after MV3 Worker termination and full browser restart: passed (2026-08-06)
 - Real Chrome replay ledger returned `accepted`, then `duplicate`, and remained `duplicate` after full browser restart; explicit Worker-only termination was unavailable, but full exit necessarily terminated the Worker: passed (2026-08-06)
 - Real loopback relay interruption exposed that browser socket state and one-shot alarms could remain stale after MV3 suspension. `SNH1` every 20 seconds plus a 10-second `SNH2` deadline fixed the liveness gap: after more than 70 seconds offline, the same registry recovered and both Android and Chrome re-established server connections without user reconnect; Chrome reported `Online` approximately 45 seconds after relay readiness (2026-08-17)
+- The next non-loopback slice adds optional native HTTPS/WSS with an explicit certificate/key pair and TLS 1.2 minimum. Configuration rejects a partial pair, performs no certificate generation or HTTP redirect, and preserves the default loopback plaintext listener for local reverse-proxy deployments. Unit tests cover disabled, complete, and incomplete TLS configuration; Go tests and vet pass. `docs/non-loopback-https-recovery.md` defines the dedicated-workspace, exact-origin, no-`adb reverse`, relay-outage, Android network-transition, and state-convergence acceptance matrix. Physical-device evidence is still pending.
 
 ## Important scope boundary
 

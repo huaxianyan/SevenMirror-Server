@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -56,12 +57,20 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
+	serve := server.ListenAndServe
+	transport := "http"
+	if cfg.TLSCertFile != "" {
+		server.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+		serve = func() error { return server.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile) }
+		transport = "https"
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	go func() {
-		logger.Info("server listening", "address", cfg.Address)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Info("server listening", "address", cfg.Address, "transport", transport)
+		if err := serve(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("server stopped unexpectedly", "error", err)
 			os.Exit(1)
 		}
