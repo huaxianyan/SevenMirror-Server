@@ -95,6 +95,42 @@ func TestAuthenticatedHandlerRoutesOnlyAfterBinaryCredentialFrame(t *testing.T) 
 	}
 }
 
+func TestAuthenticatedHandlerClosesActiveRevokedSession(t *testing.T) {
+	peer := PeerIdentity{WorkspaceID: WorkspaceID{1}, DeviceID: DeviceID{2}}
+	token := bytes.Repeat([]byte{3}, 32)
+	hub := NewHub()
+	handler, err := NewAuthenticatedWebSocketHandler(hub, ConnectionAuthenticatorFunc(func(
+		_ context.Context, candidate PeerIdentity, received []byte, _ time.Time,
+	) error {
+		if candidate != peer || !bytes.Equal(received, token) {
+			return errors.New("unauthorized")
+		}
+		return nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	connection := dialAndAuthenticateDevice(t, server.URL, peer, token)
+	defer connection.Close()
+	waitUntilConnected(t, hub, peer)
+	if !hub.Disconnect(peer) {
+		t.Fatal("active peer was not disconnected")
+	}
+	if err := connection.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = connection.ReadMessage()
+	var closeError *websocket.CloseError
+	if !errors.As(err, &closeError) || closeError.Code != websocket.ClosePolicyViolation {
+		t.Fatalf("revoked connection error = %v", err)
+	}
+	if hub.IsConnected(peer) {
+		t.Fatal("revoked peer remained registered")
+	}
+}
+
 func TestAuthenticatedHandlerRejectsWrongTokenAndWebOrigin(t *testing.T) {
 	peer := PeerIdentity{WorkspaceID: WorkspaceID{1}, DeviceID: DeviceID{2}}
 	hub := NewHub()

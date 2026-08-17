@@ -61,6 +61,17 @@ NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
 
 The raw pairing code is printed once. SQLite stores only its SHA-256 hash. A successful registration returns a random 32-byte device credential once; only its SHA-256 hash is persisted.
 
+List devices using redacted 96-bit administrative references, then revoke one exact device:
+
+```sh
+NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
+  list-devices --workspace <base64url-workspace-id>
+NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
+  revoke-device --workspace <base64url-workspace-id> --device-ref <redacted-ref>
+```
+
+The list and revoke commands never print a full device ID, transport credential, or E2EE public key. Revocation is durable and idempotent. New authentication fails immediately; the running server revalidates active peers every 250 ms, atomically removes a revoked peer from ciphertext routing, and closes its WebSocket with a fixed policy response. Authorization lookup failures disconnect only the affected peer fail-closed.
+
 ## Test
 
 ```sh
@@ -71,7 +82,7 @@ go test ./...
 
 `cmd/server` now mounts registration and relay endpoints only with an initialized admission store and authenticated relay handler. Knowing the host, workspace ID, or device ID is insufficient: registration requires an unexpired, unused admin-issued code, and every relay connection requires the independently issued device credential. Secrets are absent from URLs and persisted only as hashes.
 
-This is not yet a production release. Device revocation/credential rotation, existing-device E2EE approval, client credential storage, offline delivery, trusted-proxy policy, and an independent security review remain release blockers. Use `wss://` outside loopback; native TLS requires TLS 1.2 or newer. Until those gates pass, submit only synthetic encrypted test payloads—never real notification content.
+This is not yet a production release. Durable immediate device revocation is implemented, while credential rotation, lost-device recovery, offline delivery, trusted-proxy policy, and an independent security review remain release blockers. Use `wss://` outside loopback; native TLS requires TLS 1.2 or newer. Until those gates pass, submit only synthetic encrypted test payloads—never real notification content.
 
 The first-message authentication format is documented in [`protocol/device-auth-frame-v1.md`](protocol/device-auth-frame-v1.md).
 

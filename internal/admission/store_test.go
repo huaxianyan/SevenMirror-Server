@@ -151,6 +151,98 @@ func TestConcurrentPairingCodeConsumptionAllowsOneRegistration(t *testing.T) {
 	}
 }
 
+func TestDeviceRevocationIsIdempotentPersistentAndWorkspaceBound(t *testing.T) {
+	ctx := context.Background()
+	path := tempDatabasePath(t)
+	store := openTestStore(t, path)
+	now := time.UnixMilli(1_800_000_000_000)
+	workspace, _ := store.CreateWorkspace(ctx, now)
+	otherWorkspace, _ := store.CreateWorkspace(ctx, now)
+	register := func(name string) RegisteredDevice {
+		code, err := store.IssuePairingCode(ctx, workspace, DeviceChrome, name, now, time.Minute)
+		if err != nil {
+			t.Fatal(err)
+		}
+		device, err := store.Register(ctx, Registration{
+			PairingCode: code, DeviceType: DeviceChrome, DeviceName: name,
+			E2EEPublicKey: testPublicKey(), Now: now,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return device
+	}
+	revokedDevice := register("revoked browser")
+	activeDevice := register("active browser")
+	devices, err := store.ListDevices(ctx, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(devices) != 2 || devices[0].Reference == devices[1].Reference {
+		t.Fatalf("unexpected device summaries: %+v", devices)
+	}
+	for _, device := range devices {
+		if len(device.Reference) != 16 || device.Revoked {
+			t.Fatalf("unexpected device summary: %+v", device)
+		}
+	}
+	reference := deviceReference(workspace, revokedDevice.DeviceID)
+	if reference == deviceReference(otherWorkspace, revokedDevice.DeviceID) {
+		t.Fatal("device reference was not workspace-bound")
+	}
+	if _, err := store.RevokeDevice(ctx, workspace, "not-canonical", now); !errors.Is(err, ErrDeviceNotFound) {
+		t.Fatalf("malformed reference error = %v", err)
+	}
+	unknownReference := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{9}, 12))
+	if _, err := store.RevokeDevice(ctx, workspace, unknownReference, now); !errors.Is(err, ErrDeviceNotFound) {
+		t.Fatalf("unknown reference error = %v", err)
+	}
+	if _, err := store.RevokeDevice(ctx, otherWorkspace, reference, now); !errors.Is(err, ErrDeviceNotFound) {
+		t.Fatalf("cross-workspace revocation error = %v", err)
+	}
+	if changed, err := store.RevokeDevice(ctx, workspace, reference, now.Add(time.Second)); err != nil || !changed {
+		t.Fatalf("first revocation changed=%v error=%v", changed, err)
+	}
+	if changed, err := store.RevokeDevice(ctx, workspace, reference, now.Add(2*time.Second)); err != nil || changed {
+		t.Fatalf("duplicate revocation changed=%v error=%v", changed, err)
+	}
+	if _, err := store.Authenticate(ctx, workspace, revokedDevice.DeviceID,
+		revokedDevice.AuthToken, now.Add(3*time.Second)); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("revoked authentication error = %v", err)
+	}
+	if _, err := store.Authenticate(ctx, workspace, activeDevice.DeviceID,
+		activeDevice.AuthToken, now.Add(3*time.Second)); err != nil {
+		t.Fatalf("other device authentication failed: %v", err)
+	}
+	if authorized, err := store.IsDeviceAuthorized(ctx, workspace, revokedDevice.DeviceID); err != nil || authorized {
+		t.Fatalf("revoked authorization=%v error=%v", authorized, err)
+	}
+	if authorized, err := store.IsDeviceAuthorized(ctx, workspace, activeDevice.DeviceID); err != nil || !authorized {
+		t.Fatalf("active authorization=%v error=%v", authorized, err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened := openTestStore(t, path)
+	if _, err := reopened.Authenticate(ctx, workspace, revokedDevice.DeviceID,
+		revokedDevice.AuthToken, now.Add(4*time.Second)); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("reopened revoked authentication error = %v", err)
+	}
+	listed, err := reopened.ListDevices(ctx, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revokedCount := 0
+	for _, device := range listed {
+		if device.Reference == reference && device.Revoked {
+			revokedCount++
+		}
+	}
+	if revokedCount != 1 {
+		t.Fatalf("revoked summaries = %d, want 1", revokedCount)
+	}
+}
+
 func TestOpenRejectsNewerSchemaVersion(t *testing.T) {
 	path := tempDatabasePath(t)
 	db, err := sql.Open("sqlite", path)

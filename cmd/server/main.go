@@ -67,6 +67,28 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go func() {
+		err := relay.RunAuthorizationMonitor(
+			ctx,
+			hub,
+			250*time.Millisecond,
+			func(checkContext context.Context, peer relay.PeerIdentity) (bool, error) {
+				var workspaceID admission.WorkspaceID
+				var deviceID admission.DeviceID
+				copy(workspaceID[:], peer.WorkspaceID[:])
+				copy(deviceID[:], peer.DeviceID[:])
+				authorized, err := store.IsDeviceAuthorized(checkContext, workspaceID, deviceID)
+				if err != nil {
+					logger.Warn("device authorization check failed; disconnecting active peer")
+				}
+				return authorized, err
+			},
+		)
+		if err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("authorization monitor stopped", "error", err)
+			stop()
+		}
+	}()
 
 	go func() {
 		logger.Info("server listening", "address", cfg.Address, "transport", transport)

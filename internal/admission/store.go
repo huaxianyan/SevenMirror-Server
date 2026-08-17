@@ -27,6 +27,7 @@ var (
 	ErrInvalidPairingCode  = errors.New("invalid or expired pairing code")
 	ErrInvalidRegistration = errors.New("invalid device registration")
 	ErrUnauthorized        = errors.New("device authentication failed")
+	ErrDeviceNotFound      = errors.New("device not found")
 )
 
 type WorkspaceID [16]byte
@@ -62,6 +63,13 @@ type DeviceIdentity struct {
 	DeviceID    DeviceID
 	DeviceType  DeviceType
 	DeviceName  string
+}
+
+type DeviceSummary struct {
+	Reference  string
+	DeviceType DeviceType
+	DeviceName string
+	Revoked    bool
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -223,6 +231,118 @@ func (s *Store) Register(ctx context.Context, input Registration) (RegisteredDev
 	return RegisteredDevice{WorkspaceID: workspaceID, DeviceID: deviceID, AuthToken: authToken}, nil
 }
 
+func (s *Store) ListDevices(ctx context.Context, workspaceID WorkspaceID) ([]DeviceSummary, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, device_type, device_name, revoked_at_ms IS NOT NULL
+		FROM devices WHERE workspace_id = ? ORDER BY registered_at_ms, id`, workspaceID[:])
+	if err != nil {
+		return nil, fmt.Errorf("list devices: %w", err)
+	}
+	defer rows.Close()
+	devices := make([]DeviceSummary, 0)
+	references := make(map[string]struct{})
+	for rows.Next() {
+		var idBytes []byte
+		var deviceType, deviceName string
+		var revoked bool
+		if err := rows.Scan(&idBytes, &deviceType, &deviceName, &revoked); err != nil {
+			return nil, fmt.Errorf("read device: %w", err)
+		}
+		if len(idBytes) != len(DeviceID{}) {
+			return nil, errors.New("stored device ID has invalid length")
+		}
+		var deviceID DeviceID
+		copy(deviceID[:], idBytes)
+		reference := deviceReference(workspaceID, deviceID)
+		if _, exists := references[reference]; exists {
+			return nil, errors.New("ambiguous device reference")
+		}
+		references[reference] = struct{}{}
+		devices = append(devices, DeviceSummary{
+			Reference:  reference,
+			DeviceType: DeviceType(deviceType),
+			DeviceName: deviceName,
+			Revoked:    revoked,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list devices: %w", err)
+	}
+	return devices, nil
+}
+
+func (s *Store) RevokeDevice(
+	ctx context.Context,
+	workspaceID WorkspaceID,
+	reference string,
+	now time.Time,
+) (bool, error) {
+	if !validDeviceReference(reference) {
+		return false, ErrDeviceNotFound
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM devices WHERE workspace_id = ?`, workspaceID[:])
+	if err != nil {
+		return false, fmt.Errorf("resolve device: %w", err)
+	}
+	var matched []byte
+	for rows.Next() {
+		var idBytes []byte
+		if err := rows.Scan(&idBytes); err != nil {
+			rows.Close()
+			return false, fmt.Errorf("resolve device: %w", err)
+		}
+		if len(idBytes) != len(DeviceID{}) {
+			rows.Close()
+			return false, errors.New("stored device ID has invalid length")
+		}
+		var deviceID DeviceID
+		copy(deviceID[:], idBytes)
+		if deviceReference(workspaceID, deviceID) == reference {
+			if matched != nil {
+				rows.Close()
+				return false, errors.New("ambiguous device reference")
+			}
+			matched = append([]byte(nil), idBytes...)
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return false, fmt.Errorf("resolve device: %w", err)
+	}
+	if matched == nil {
+		return false, ErrDeviceNotFound
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE devices SET revoked_at_ms = ?
+		WHERE workspace_id = ? AND id = ? AND revoked_at_ms IS NULL`,
+		unixMillis(now), workspaceID[:], matched)
+	if err != nil {
+		return false, fmt.Errorf("revoke device: %w", err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("revoke device: %w", err)
+	}
+	return updated == 1, nil
+}
+
+func (s *Store) IsDeviceAuthorized(
+	ctx context.Context,
+	workspaceID WorkspaceID,
+	deviceID DeviceID,
+) (bool, error) {
+	var authorized bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT revoked_at_ms IS NULL FROM devices WHERE workspace_id = ? AND id = ?`,
+		workspaceID[:], deviceID[:]).Scan(&authorized)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("read device authorization: %w", err)
+	}
+	return authorized, nil
+}
+
 func (s *Store) Authenticate(
 	ctx context.Context,
 	workspaceID WorkspaceID,
@@ -351,6 +471,19 @@ func validateDeviceName(value string) error {
 		return fmt.Errorf("device name must be valid non-blank UTF-8 up to %d bytes", maxDeviceNameBytes)
 	}
 	return nil
+}
+
+func deviceReference(workspaceID WorkspaceID, deviceID DeviceID) string {
+	digest := sha256.New()
+	digest.Write([]byte("SyncNotifications-admin-device-ref-v1\x00"))
+	digest.Write(workspaceID[:])
+	digest.Write(deviceID[:])
+	return base64.RawURLEncoding.EncodeToString(digest.Sum(nil)[:12])
+}
+
+func validDeviceReference(value string) bool {
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	return err == nil && len(decoded) == 12 && base64.RawURLEncoding.EncodeToString(decoded) == value
 }
 
 func unixMillis(value time.Time) int64 { return value.UTC().UnixMilli() }

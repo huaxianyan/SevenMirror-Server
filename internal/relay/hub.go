@@ -9,10 +9,12 @@ import (
 )
 
 var (
-	ErrAlreadyConnected = errors.New("device already connected")
-	ErrRecipientOffline = errors.New("recipient is offline")
-	ErrRecipientBusy    = errors.New("recipient delivery queue is full")
-	ErrSenderMismatch   = errors.New("authenticated sender does not match routing header")
+	ErrAlreadyConnected   = errors.New("device already connected")
+	ErrRecipientOffline   = errors.New("recipient is offline")
+	ErrRecipientBusy      = errors.New("recipient delivery queue is full")
+	ErrSenderMismatch     = errors.New("authenticated sender does not match routing header")
+	ErrSenderOffline      = errors.New("authenticated sender is no longer connected")
+	ErrDeviceDisconnected = errors.New("device authorization was revoked")
 )
 
 type WorkspaceID [16]byte
@@ -25,36 +27,49 @@ type PeerIdentity struct {
 
 // Hub is an in-memory ciphertext router. It never receives decryption keys and
 // validates only the fixed clear framing required to route one recipient copy.
+type deviceSession struct {
+	deliveries   chan []byte
+	disconnected chan struct{}
+}
+
 type Hub struct {
 	mu      sync.RWMutex
-	devices map[PeerIdentity]chan []byte
+	devices map[PeerIdentity]*deviceSession
 }
 
 func NewHub() *Hub {
-	return &Hub{devices: make(map[PeerIdentity]chan []byte)}
+	return &Hub{devices: make(map[PeerIdentity]*deviceSession)}
 }
 
 // Register reserves one bounded queue for an already authenticated device.
-func (h *Hub) Register(identity PeerIdentity, queueSize int) (<-chan []byte, func(), error) {
+func (h *Hub) Register(
+	identity PeerIdentity,
+	queueSize int,
+) (<-chan []byte, <-chan struct{}, func(), error) {
 	if queueSize < 1 {
-		return nil, nil, errors.New("queue size must be positive")
+		return nil, nil, nil, errors.New("queue size must be positive")
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if _, exists := h.devices[identity]; exists {
-		return nil, nil, ErrAlreadyConnected
+		return nil, nil, nil, ErrAlreadyConnected
 	}
-	queue := make(chan []byte, queueSize)
-	h.devices[identity] = queue
+	session := &deviceSession{
+		deliveries:   make(chan []byte, queueSize),
+		disconnected: make(chan struct{}),
+	}
+	h.devices[identity] = session
 	var once sync.Once
 	unregister := func() {
 		once.Do(func() {
 			h.mu.Lock()
-			delete(h.devices, identity)
+			if h.devices[identity] == session {
+				delete(h.devices, identity)
+			}
 			h.mu.Unlock()
 		})
 	}
-	return queue, unregister, nil
+	return session.deliveries, session.disconnected, unregister, nil
 }
 
 func (h *Hub) IsConnected(identity PeerIdentity) bool {
@@ -62,6 +77,30 @@ func (h *Hub) IsConnected(identity PeerIdentity) bool {
 	defer h.mu.RUnlock()
 	_, exists := h.devices[identity]
 	return exists
+}
+
+func (h *Hub) ConnectedPeers() []PeerIdentity {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	peers := make([]PeerIdentity, 0, len(h.devices))
+	for peer := range h.devices {
+		peers = append(peers, peer)
+	}
+	return peers
+}
+
+// Disconnect atomically removes an active device from routing and signals its
+// transport session. It is idempotent for offline or already-disconnected peers.
+func (h *Hub) Disconnect(identity PeerIdentity) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	session, exists := h.devices[identity]
+	if !exists {
+		return false
+	}
+	delete(h.devices, identity)
+	close(session.disconnected)
+	return true
 }
 
 // Route validates an envelope and delivers an unchanged ciphertext copy. The
@@ -81,14 +120,18 @@ func (h *Hub) Route(authenticatedSender PeerIdentity, encodedFrame []byte) error
 	copy(recipient.DeviceID[:], frame.RoutingHeader[40:56])
 
 	h.mu.RLock()
-	queue, exists := h.devices[recipient]
+	if _, senderConnected := h.devices[authenticatedSender]; !senderConnected {
+		h.mu.RUnlock()
+		return ErrSenderOffline
+	}
+	session, exists := h.devices[recipient]
 	if !exists {
 		h.mu.RUnlock()
 		return ErrRecipientOffline
 	}
 	copyForRecipient := append([]byte(nil), encodedFrame...)
 	select {
-	case queue <- copyForRecipient:
+	case session.deliveries <- copyForRecipient:
 		h.mu.RUnlock()
 		return nil
 	default:

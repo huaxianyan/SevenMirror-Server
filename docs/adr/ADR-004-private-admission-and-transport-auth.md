@@ -1,6 +1,6 @@
 # ADR-004: Private instance admission and WebSocket transport authentication
 
-- Status: **Proposed — server persistence and authentication slice implemented; client lifecycle and security review pending**
+- Status: **Proposed — persistence, authentication, and server-side immediate revocation implemented; rotation, recovery, and security review pending**
 - Date: 2026-08-06
 - Owners: Server, Android, and Chrome projects
 
@@ -89,6 +89,22 @@ TLS (`wss://`) is mandatory outside loopback. This credential provides server
 admission, not message confidentiality or sender authenticity; Auth HPKE and
 local pinned peer keys remain mandatory.
 
+### Immediate device revocation
+
+The local CLI lists devices by a domain-separated 96-bit administrative
+reference rather than printing complete device IDs, credentials, or E2EE keys.
+Revocation sets `revoked_at_ms` durably and idempotently for one exact
+workspace/device tuple. New authentication already excludes revoked rows.
+
+Because the CLI and relay are separate processes, the running server revalidates
+only its currently connected peers every 250 milliseconds. A revoked or
+unverifiable peer is atomically removed from Hub routing and its active
+WebSocket receives a fixed policy close. This bounds the post-commit active
+session window without adding a network administration endpoint or trusting
+signals/PID files. Lookup failure is fail-closed for the affected peer. Other
+workspace peers remain online. Credential rotation and its client-side handoff
+remain a separate protocol and must build on this revocation primitive.
+
 ## Alternatives considered
 
 ### Bearer credential in query parameters
@@ -127,7 +143,7 @@ message handling, and cross-platform `SNO1` acknowledgement validation.
 Remaining gates:
 
 - administrator-secret, backup, and recovery design;
-- device list, revoke, credential rotation, and immediate active-session close;
+- credential rotation, lost-device recovery, and client-visible revocation UX;
 - trusted-proxy and configurable connection/rate limits;
 - offline queue/ACK integration and MV3 reconnect behavior;
 - pairing code and transport authentication security review;

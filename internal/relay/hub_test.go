@@ -17,11 +17,21 @@ func TestHubRoutesUnchangedCiphertextToOneRecipient(t *testing.T) {
 	sender := peerFromFrame(t, frame, 24)
 	recipient := peerFromFrame(t, frame, 40)
 	hub := NewHub()
-	deliveries, unregister, err := hub.Register(recipient, 1)
+	_, _, unregisterSender, err := hub.Register(sender, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unregisterSender()
+	deliveries, disconnected, unregister, err := hub.Register(recipient, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unregister()
+	select {
+	case <-disconnected:
+		t.Fatal("new session was already disconnected")
+	default:
+	}
 
 	if err := hub.Route(sender, frame); err != nil {
 		t.Fatal(err)
@@ -52,10 +62,15 @@ func TestHubRejectsIdentityMismatchOfflineAndBackpressure(t *testing.T) {
 	if err := hub.Route(wrongWorkspace, frame); !errors.Is(err, ErrSenderMismatch) {
 		t.Fatalf("wrong workspace error = %v", err)
 	}
+	_, _, unregisterSender, err := hub.Register(sender, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unregisterSender()
 	if err := hub.Route(sender, frame); !errors.Is(err, ErrRecipientOffline) {
 		t.Fatalf("offline error = %v", err)
 	}
-	_, unregister, err := hub.Register(recipient, 1)
+	_, _, unregister, err := hub.Register(recipient, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +80,46 @@ func TestHubRejectsIdentityMismatchOfflineAndBackpressure(t *testing.T) {
 	}
 	if err := hub.Route(sender, frame); !errors.Is(err, ErrRecipientBusy) {
 		t.Fatalf("backpressure error = %v", err)
+	}
+}
+
+func TestHubDisconnectRemovesRoutingAndSignalsExactSession(t *testing.T) {
+	frame := canonicalFrame(t)
+	sender := peerFromFrame(t, frame, 24)
+	recipient := peerFromFrame(t, frame, 40)
+	hub := NewHub()
+	_, _, unregisterSender, err := hub.Register(sender, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unregisterSender()
+	_, disconnected, unregister, err := hub.Register(recipient, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unregister()
+	if !hub.Disconnect(recipient) {
+		t.Fatal("connected recipient was not disconnected")
+	}
+	select {
+	case <-disconnected:
+	default:
+		t.Fatal("disconnect signal was not closed")
+	}
+	if hub.IsConnected(recipient) {
+		t.Fatal("disconnected recipient remained routable")
+	}
+	if err := hub.Route(sender, frame); !errors.Is(err, ErrRecipientOffline) {
+		t.Fatalf("route after recipient disconnect error = %v", err)
+	}
+	if !hub.Disconnect(sender) {
+		t.Fatal("connected sender was not disconnected")
+	}
+	if err := hub.Route(sender, frame); !errors.Is(err, ErrSenderOffline) {
+		t.Fatalf("route after sender disconnect error = %v", err)
+	}
+	if hub.Disconnect(recipient) {
+		t.Fatal("duplicate disconnect reported a change")
 	}
 }
 

@@ -41,7 +41,7 @@ func ServeAuthenticatedConnection(
 	connection.SetPongHandler(func(string) error {
 		return connection.SetReadDeadline(time.Now().Add(pongTimeout))
 	})
-	deliveries, unregister, err := hub.Register(authenticatedPeer, 16)
+	deliveries, disconnected, unregister, err := hub.Register(authenticatedPeer, 16)
 	if err != nil {
 		return err
 	}
@@ -68,6 +68,14 @@ func ServeAuthenticatedConnection(
 			select {
 			case <-sessionContext.Done():
 				reportWriterError(sessionContext.Err())
+				return
+			case <-disconnected:
+				_ = connection.WriteControl(
+					websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authorization revoked"),
+					time.Now().Add(writeTimeout),
+				)
+				reportWriterError(ErrDeviceDisconnected)
 				return
 			case <-pingTicker.C:
 				if err := connection.WriteControl(

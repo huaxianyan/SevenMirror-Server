@@ -43,6 +43,10 @@ func main() {
 		fmt.Printf("workspace_id=%s\n", base64.RawURLEncoding.EncodeToString(workspace[:]))
 	case "issue-pairing-code":
 		issuePairingCode(store, os.Args[2:])
+	case "list-devices":
+		listDevices(store, os.Args[2:])
+	case "revoke-device":
+		revokeDevice(store, os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		usage()
@@ -61,12 +65,7 @@ func issuePairingCode(store *admission.Store, args []string) {
 		flags.Usage()
 		os.Exit(2)
 	}
-	workspaceBytes, err := base64.RawURLEncoding.DecodeString(*workspaceText)
-	if err != nil || len(workspaceBytes) != 16 {
-		fatalMessage("--workspace must be a 16-byte base64url ID")
-	}
-	var workspace admission.WorkspaceID
-	copy(workspace[:], workspaceBytes)
+	workspace := parseWorkspaceID(*workspaceText)
 	code, err := store.IssuePairingCode(
 		context.Background(), workspace, admission.DeviceType(*deviceType), *name, time.Now(), *ttl)
 	if err != nil {
@@ -77,10 +76,65 @@ func issuePairingCode(store *admission.Store, args []string) {
 	fmt.Printf("expires_in=%s\n", ttl.String())
 }
 
+func listDevices(store *admission.Store, args []string) {
+	flags := flag.NewFlagSet("list-devices", flag.ExitOnError)
+	workspaceText := flags.String("workspace", "", "base64url workspace ID")
+	flags.Parse(args)
+	if flags.NArg() != 0 {
+		flags.Usage()
+		os.Exit(2)
+	}
+	devices, err := store.ListDevices(context.Background(), parseWorkspaceID(*workspaceText))
+	if err != nil {
+		fatal("list devices", err)
+	}
+	for _, device := range devices {
+		status := "active"
+		if device.Revoked {
+			status = "revoked"
+		}
+		fmt.Printf("device_ref=%s type=%s status=%s name=%q\n",
+			device.Reference, device.DeviceType, status, device.DeviceName)
+	}
+}
+
+func revokeDevice(store *admission.Store, args []string) {
+	flags := flag.NewFlagSet("revoke-device", flag.ExitOnError)
+	workspaceText := flags.String("workspace", "", "base64url workspace ID")
+	reference := flags.String("device-ref", "", "redacted device reference from list-devices")
+	flags.Parse(args)
+	if flags.NArg() != 0 {
+		flags.Usage()
+		os.Exit(2)
+	}
+	changed, err := store.RevokeDevice(
+		context.Background(), parseWorkspaceID(*workspaceText), *reference, time.Now())
+	if err != nil {
+		fatal("revoke device", err)
+	}
+	result := "already-revoked"
+	if changed {
+		result = "revoked"
+	}
+	fmt.Printf("device_ref=%s result=%s\n", *reference, result)
+}
+
+func parseWorkspaceID(value string) admission.WorkspaceID {
+	workspaceBytes, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil || len(workspaceBytes) != 16 || base64.RawURLEncoding.EncodeToString(workspaceBytes) != value {
+		fatalMessage("--workspace must be a canonical 16-byte base64url ID")
+	}
+	var workspace admission.WorkspaceID
+	copy(workspace[:], workspaceBytes)
+	return workspace
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, "Usage:")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin init-workspace")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin issue-pairing-code --workspace <id> --type android|chrome [--name name] [--ttl 10m]")
+	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin list-devices --workspace <id>")
+	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin revoke-device --workspace <id> --device-ref <ref>")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Set NM_DATABASE_PATH to use a non-default database.")
 }

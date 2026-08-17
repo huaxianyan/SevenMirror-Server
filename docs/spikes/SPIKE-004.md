@@ -66,6 +66,7 @@ Validated behavior:
 - the mounted relay requires a bounded 68-byte first-message `SNA1` credential within five seconds, rejects ordinary web origins, rate-limits authentication, maintains Ping/Pong liveness, and has an integration test from durable registration through Hub identity establishment;
 - successful authentication and Hub registration produce fixed binary `SNO1` as the first server data message, allowing clients to distinguish socket-open/local-enqueue from server-confirmed authentication without exposing identity or secret details;
 - after `SNO1`, the relay consumes exact four-byte `SNH1` heartbeat requests and returns `SNH2` through the sole writer goroutine without calling `Hub.Route`; text, malformed heartbeat-like data, and non-canonical envelopes still fail closed. The heartbeat carries no identity, credential, cursor, operation, or business content and is not a delivery acknowledgement;
+- the local admin CLI lists only domain-separated 96-bit device references and bounded quoted names, then durably and idempotently revokes one exact workspace/device tuple without loading or printing raw credentials, complete device IDs, or E2EE keys. Store tests cover cross-workspace rejection, duplicate revoke, unaffected peers, restart persistence, and post-revoke authentication denial. The running server rechecks only connected peers every 250 ms; Hub atomically removes unauthorized recipients before signaling the sole WebSocket writer to issue a fixed policy close. Authorization lookup failure is fail-closed for that peer. Integration coverage proves an active authenticated socket closes, ciphertext routing stops, the same credential cannot receive `SNO1` on reconnect, and other sessions remain connected;
 - Go implements the canonical Trusted Device Pairing v1 offer/approval codecs, strict QR parsing, P-256 point validation, exact-offer binding, TTL/workspace/device/key constraints, and the transcript-derived safety code; the public vector fixes `4AFH-Q91K-PGVG`, and mutation, invalid-point, wrong-hash, padding, and whitespace cases fail closed. Transport admission remains incapable of creating these local trust records.
 
 ## Runtime evidence
@@ -88,6 +89,6 @@ The spike APIs that serialize private keys exist only for reproducible vectors. 
 
 ## Remaining exit evidence
 
-- administrator-secret lifecycle, trusted-proxy policy, credential/key rotation, and immediate revocation
+- administrator-secret lifecycle, trusted-proxy policy, credential/key rotation, lost-device recovery, and client revocation UX
 - generic relay cursor and 2 Android × 2 Chrome offline convergence, separate from the completed per-operation result ACK path
 - camera QR UX and independent security review
