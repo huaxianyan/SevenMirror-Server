@@ -1,7 +1,7 @@
 # ADR-002: Device identity, trust, and end-to-end encryption
 
-- Status: **Proposed — SPIKE-004 cryptography and identity persistence validated; lifecycle integration pending**
-- Date: 2026-07-27
+- Status: **Proposed — cryptography, identity persistence, pairing, ACK, transport revocation/rotation, and identity-transition protocol validated or specified; identity lifecycle implementation and security review pending**
+- Date: 2026-08-18
 - Owners: Server, Android, and Chrome projects
 
 ## Context
@@ -116,14 +116,19 @@ Exporting keys for backup is not part of MVP.
 
 ## Rotation
 
-- Rotation creates a new key and key ID without overwriting the old pin.
-- While the old key is still trusted, the device sends an authenticated, encrypted key-transition message to every trusted peer.
-- Peers pin the new key only after opening that transition with the old key.
-- Senders switch new ciphertexts to the new recipient key after acknowledgement.
-- Old private keys remain available only for a bounded grace period and are then destroyed.
-- Lost-key rotation, where the old key cannot authenticate the transition, requires the same out-of-band verification as adding a new device.
+The authoritative lifecycle is `protocol/e2ee-identity-key-transition-v1.md`. Rotation creates a pending key and key ID without overwriting the old private key or any peer pin. It uses a three-message, per-peer transition:
 
-Regular rotation bounds historical exposure but is not a full ratchet.
+1. the rotating device sends an exact canonical transition authenticated by the old key;
+2. the peer durably stores the pending successor and sends an exact ACK encrypted to the new key; and
+3. after opening that ACK, the rotating device sends a commit authenticated by the new key, allowing the peer to atomically promote the successor.
+
+The ACK binds SHA-256 of the exact canonical transition, and the commit binds both the transition digest and SHA-256 of the peer's exact canonical ACK. A pending new key may authenticate only that bound commit; it cannot send general business payloads before promotion. Each network retry uses a fresh envelope tuple while reusing the exact lifecycle payload.
+
+The rotating device snapshots its approved peers and retains both private keys until every retained peer has produced a valid ACK and every commit is durably queued. An unavailable peer cannot be silently skipped; explicit local distrust removes it from the transition. Before the first ACK, rotation may be aborted by destroying only the proposed key. After an ACK, silent rollback is forbidden. Seven-day session expiry enters a blocked state rather than auto-promoting, auto-removing peers, destroying the old key, or generating a replacement.
+
+Lost-key recovery is not rotation. If the old key cannot authenticate a transition, the client fails closed, the administrator revokes the old transport device, and the endpoint registers as a new device with a new device ID, credential, and identity. Every peer must explicitly remove the old pin and complete a fresh Offer/Approval transcript with an independently compared full safety code. The server directory and old transport membership cannot authorize replacement.
+
+Regular rotation bounds future use of an old static identity but is not a full ratchet or post-compromise recovery.
 
 ## Revocation
 

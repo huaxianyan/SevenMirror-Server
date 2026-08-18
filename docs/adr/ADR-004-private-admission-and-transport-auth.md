@@ -1,7 +1,7 @@
 # ADR-004: Private instance admission and WebSocket transport authentication
 
-- Status: **Proposed — persistence, authentication, immediate revocation, and server-side recoverable rotation implemented; client promotion, recovery, and security review pending**
-- Date: 2026-08-06
+- Status: **Proposed — persistence, authentication, immediate revocation, and recoverable three-process transport rotation validated; administrator lifecycle, lost-device recovery, and security review pending**
+- Date: 2026-08-18
 - Owners: Server, Android, and Chrome projects
 
 ## Context
@@ -130,8 +130,11 @@ key, and peer trust remain unchanged.
 Client promotion intentionally depends on receiving `SNO1` with pending—not on
 local HTTP send or HTTP 200. If a request or response is lost, the client still
 owns pending and can distinguish committed rotation by attempting pending
-transport authentication. Android and Chrome durable dual-slot stores and this
-promotion/recovery UX remain acceptance gates.
+transport authentication. Android and Chrome implement durable dual-slot stores and exact pending recovery.
+The non-loopback real-process matrix validates pre-commit failure, committed
+response loss, Android process and Chrome Worker reconstruction, current
+fallback, exact pending `SNO1` promotion, post-promotion restart, and permanent
+old-credential rejection without changing the device or E2EE identity tuple.
 
 ## Alternatives considered
 
@@ -171,10 +174,9 @@ message handling, and cross-platform `SNO1` acknowledgement validation.
 Remaining gates:
 
 - administrator-secret, backup, and recovery design;
-- Android/Chrome dual-slot credential rotation and `SNO1`-gated promotion;
 - lost-device recovery and client-visible revocation UX;
 - trusted-proxy and configurable connection/rate limits;
-- offline queue/ACK integration and MV3 reconnect behavior;
+- general offline queue/cursor integration and multi-device convergence;
 - pairing code and transport authentication security review;
 - proof that logs, diagnostics, SQLite files, and URLs contain no raw secrets or
   business plaintext.

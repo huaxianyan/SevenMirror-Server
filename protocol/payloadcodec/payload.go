@@ -2,6 +2,8 @@ package payloadcodec
 
 import (
 	"bytes"
+	"crypto/elliptic"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"unicode/utf8"
@@ -11,14 +13,16 @@ import (
 )
 
 const (
-	SchemaVersion           = 1
-	MaxPlaintextSize        = 524272
-	MaxNotificationIDBytes  = 512
-	MaxReplyTextBytes       = 4000
-	MaxResultDetailBytes    = 256
-	IdentifierSize          = 16
-	SHA256Size              = 32
-	MaxNotificationRevision = uint64(1<<63 - 1)
+	SchemaVersion                  = 1
+	IdentityLifecycleSchemaVersion = 2
+	MaxPlaintextSize               = 524272
+	MaxNotificationIDBytes         = 512
+	MaxReplyTextBytes              = 4000
+	MaxResultDetailBytes           = 256
+	IdentifierSize                 = 16
+	SHA256Size                     = 32
+	P256PublicKeySize              = 65
+	MaxNotificationRevision        = uint64(1<<63 - 1)
 )
 
 var deterministic = proto.MarshalOptions{Deterministic: true}
@@ -65,16 +69,19 @@ func Validate(payload *notificationv1.EncryptedPayload) error {
 	if len(payload.ProtoReflect().GetUnknown()) != 0 {
 		return errors.New("encrypted payload contains unknown fields")
 	}
-	if payload.GetSchemaVersion() != SchemaVersion {
-		return errors.New("unsupported encrypted payload schema version")
-	}
 	switch body := payload.GetBody().(type) {
 	case *notificationv1.EncryptedPayload_ActionInvoke:
-		return validateActionInvoke(body.ActionInvoke)
+		return validateSchema(payload, SchemaVersion, validateActionInvoke(body.ActionInvoke))
 	case *notificationv1.EncryptedPayload_ActionResult:
-		return validateActionResult(body.ActionResult)
+		return validateSchema(payload, SchemaVersion, validateActionResult(body.ActionResult))
 	case *notificationv1.EncryptedPayload_ActionResultAck:
-		return validateActionResultAck(body.ActionResultAck)
+		return validateSchema(payload, SchemaVersion, validateActionResultAck(body.ActionResultAck))
+	case *notificationv1.EncryptedPayload_IdentityKeyTransition:
+		return validateSchema(payload, IdentityLifecycleSchemaVersion, validateIdentityKeyTransition(body.IdentityKeyTransition))
+	case *notificationv1.EncryptedPayload_IdentityKeyTransitionAck:
+		return validateSchema(payload, IdentityLifecycleSchemaVersion, validateIdentityKeyTransitionAck(body.IdentityKeyTransitionAck))
+	case *notificationv1.EncryptedPayload_IdentityKeyTransitionCommit:
+		return validateSchema(payload, IdentityLifecycleSchemaVersion, validateIdentityKeyTransitionCommit(body.IdentityKeyTransitionCommit))
 	default:
 		return errors.New("exactly one supported encrypted payload body is required")
 	}
@@ -134,6 +141,84 @@ func validateActionResultAck(ack *notificationv1.ActionResultAck) error {
 	}
 	if len(ack.GetResultSha256()) != SHA256Size || allZero(ack.GetResultSha256()) {
 		return errors.New("result SHA-256 must be a non-zero 32-byte value")
+	}
+	return nil
+}
+
+func validateSchema(payload *notificationv1.EncryptedPayload, expected uint32, bodyError error) error {
+	if payload.GetSchemaVersion() != expected {
+		return errors.New("encrypted payload schema version does not match body")
+	}
+	return bodyError
+}
+
+func validateIdentityKeyTransition(transition *notificationv1.IdentityKeyTransition) error {
+	if transition == nil || len(transition.ProtoReflect().GetUnknown()) != 0 {
+		return errors.New("identity key transition contains unknown fields")
+	}
+	if err := validateTransitionBinding(
+		transition.GetTransitionId(),
+		transition.GetPreviousKeyId(),
+		transition.GetNewKeyId(),
+	); err != nil {
+		return err
+	}
+	publicKey := transition.GetNewPublicKey()
+	if len(publicKey) != P256PublicKeySize {
+		return errors.New("new identity public key must be a 65-byte P-256 point")
+	}
+	x, y := elliptic.Unmarshal(elliptic.P256(), publicKey)
+	if x == nil || y == nil {
+		return errors.New("new identity public key must be a valid P-256 point")
+	}
+	digest := sha256.Sum256(publicKey)
+	if !bytes.Equal(digest[:], transition.GetNewKeyId()) {
+		return errors.New("new identity key id must equal SHA-256 of public key")
+	}
+	return nil
+}
+
+func validateIdentityKeyTransitionAck(ack *notificationv1.IdentityKeyTransitionAck) error {
+	if ack == nil || len(ack.ProtoReflect().GetUnknown()) != 0 {
+		return errors.New("identity key transition acknowledgement contains unknown fields")
+	}
+	if err := validateTransitionBinding(ack.GetTransitionId(), ack.GetPreviousKeyId(), ack.GetNewKeyId()); err != nil {
+		return err
+	}
+	if len(ack.GetTransitionSha256()) != SHA256Size || allZero(ack.GetTransitionSha256()) {
+		return errors.New("transition SHA-256 must be a non-zero 32-byte value")
+	}
+	return nil
+}
+
+func validateIdentityKeyTransitionCommit(commit *notificationv1.IdentityKeyTransitionCommit) error {
+	if commit == nil || len(commit.ProtoReflect().GetUnknown()) != 0 {
+		return errors.New("identity key transition commit contains unknown fields")
+	}
+	if err := validateTransitionBinding(commit.GetTransitionId(), commit.GetPreviousKeyId(), commit.GetNewKeyId()); err != nil {
+		return err
+	}
+	if len(commit.GetTransitionSha256()) != SHA256Size || allZero(commit.GetTransitionSha256()) {
+		return errors.New("transition SHA-256 must be a non-zero 32-byte value")
+	}
+	if len(commit.GetAckSha256()) != SHA256Size || allZero(commit.GetAckSha256()) {
+		return errors.New("transition acknowledgement SHA-256 must be a non-zero 32-byte value")
+	}
+	return nil
+}
+
+func validateTransitionBinding(transitionID, previousKeyID, newKeyID []byte) error {
+	if len(transitionID) != IdentifierSize || allZero(transitionID) {
+		return errors.New("transition id must be a non-zero 16-byte value")
+	}
+	if len(previousKeyID) != SHA256Size || allZero(previousKeyID) {
+		return errors.New("previous identity key id must be a non-zero 32-byte value")
+	}
+	if len(newKeyID) != SHA256Size || allZero(newKeyID) {
+		return errors.New("new identity key id must be a non-zero 32-byte value")
+	}
+	if bytes.Equal(previousKeyID, newKeyID) {
+		return errors.New("new identity key must differ from previous key")
 	}
 	return nil
 }

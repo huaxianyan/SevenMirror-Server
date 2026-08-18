@@ -175,6 +175,184 @@ func TestActionResultAckRoundTrip(t *testing.T) {
 	}
 }
 
+func TestIdentityKeyTransitionCanonicalVector(t *testing.T) {
+	vector := loadIdentityTransitionVector(t)
+	transition := &notificationv1.EncryptedPayload{
+		SchemaVersion: IdentityLifecycleSchemaVersion,
+		Body: &notificationv1.EncryptedPayload_IdentityKeyTransition{
+			IdentityKeyTransition: &notificationv1.IdentityKeyTransition{
+				TransitionId:  vector.transitionID,
+				PreviousKeyId: vector.previousKeyID,
+				NewPublicKey:  vector.newPublicKey,
+				NewKeyId:      vector.newKeyID,
+			},
+		},
+	}
+	assertCanonicalPayload(t, transition, vector.transitionEncoded)
+
+	ack := &notificationv1.EncryptedPayload{
+		SchemaVersion: IdentityLifecycleSchemaVersion,
+		Body: &notificationv1.EncryptedPayload_IdentityKeyTransitionAck{
+			IdentityKeyTransitionAck: &notificationv1.IdentityKeyTransitionAck{
+				TransitionId:     vector.transitionID,
+				PreviousKeyId:    vector.previousKeyID,
+				NewKeyId:         vector.newKeyID,
+				TransitionSha256: vector.transitionSHA256,
+			},
+		},
+	}
+	assertCanonicalPayload(t, ack, vector.ackEncoded)
+
+	commit := &notificationv1.EncryptedPayload{
+		SchemaVersion: IdentityLifecycleSchemaVersion,
+		Body: &notificationv1.EncryptedPayload_IdentityKeyTransitionCommit{
+			IdentityKeyTransitionCommit: &notificationv1.IdentityKeyTransitionCommit{
+				TransitionId:     vector.transitionID,
+				PreviousKeyId:    vector.previousKeyID,
+				NewKeyId:         vector.newKeyID,
+				TransitionSha256: vector.transitionSHA256,
+				AckSha256:        vector.ackSHA256,
+			},
+		},
+	}
+	assertCanonicalPayload(t, commit, vector.commitEncoded)
+}
+
+func TestRejectsInvalidIdentityKeyTransitionFields(t *testing.T) {
+	vector := loadIdentityTransitionVector(t)
+	valid := func() *notificationv1.EncryptedPayload {
+		return &notificationv1.EncryptedPayload{
+			SchemaVersion: IdentityLifecycleSchemaVersion,
+			Body: &notificationv1.EncryptedPayload_IdentityKeyTransition{
+				IdentityKeyTransition: &notificationv1.IdentityKeyTransition{
+					TransitionId:  append([]byte(nil), vector.transitionID...),
+					PreviousKeyId: append([]byte(nil), vector.previousKeyID...),
+					NewPublicKey:  append([]byte(nil), vector.newPublicKey...),
+					NewKeyId:      append([]byte(nil), vector.newKeyID...),
+				},
+			},
+		}
+	}
+	tests := []struct {
+		name   string
+		change func(*notificationv1.EncryptedPayload)
+	}{
+		{"schema v1", func(p *notificationv1.EncryptedPayload) { p.SchemaVersion = SchemaVersion }},
+		{"zero transition id", func(p *notificationv1.EncryptedPayload) {
+			p.GetIdentityKeyTransition().TransitionId = make([]byte, IdentifierSize)
+		}},
+		{"same key id", func(p *notificationv1.EncryptedPayload) {
+			p.GetIdentityKeyTransition().NewKeyId = append([]byte(nil), p.GetIdentityKeyTransition().PreviousKeyId...)
+		}},
+		{"invalid point", func(p *notificationv1.EncryptedPayload) { p.GetIdentityKeyTransition().NewPublicKey[0] = 0x05 }},
+		{"wrong key digest", func(p *notificationv1.EncryptedPayload) { p.GetIdentityKeyTransition().NewKeyId[0] ^= 0xff }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload := valid()
+			test.change(payload)
+			if _, err := Encode(payload); err == nil {
+				t.Fatal("invalid identity key transition accepted")
+			}
+		})
+	}
+}
+
+func TestRejectsIdentityLifecycleDigestAndSchemaMismatch(t *testing.T) {
+	vector := loadIdentityTransitionVector(t)
+	ack := &notificationv1.EncryptedPayload{
+		SchemaVersion: IdentityLifecycleSchemaVersion,
+		Body: &notificationv1.EncryptedPayload_IdentityKeyTransitionAck{
+			IdentityKeyTransitionAck: &notificationv1.IdentityKeyTransitionAck{
+				TransitionId:     vector.transitionID,
+				PreviousKeyId:    vector.previousKeyID,
+				NewKeyId:         vector.newKeyID,
+				TransitionSha256: make([]byte, SHA256Size),
+			},
+		},
+	}
+	if _, err := Encode(ack); err == nil {
+		t.Fatal("zero transition digest accepted")
+	}
+	ack.GetIdentityKeyTransitionAck().TransitionSha256 = vector.transitionSHA256
+	ack.SchemaVersion = SchemaVersion
+	if _, err := Encode(ack); err == nil {
+		t.Fatal("identity lifecycle body accepted under schema v1")
+	}
+
+	action := validPayload()
+	action.SchemaVersion = IdentityLifecycleSchemaVersion
+	if _, err := Encode(action); err == nil {
+		t.Fatal("action body accepted under identity lifecycle schema")
+	}
+}
+
+type identityTransitionVector struct {
+	transitionID      []byte
+	previousKeyID     []byte
+	newPublicKey      []byte
+	newKeyID          []byte
+	transitionEncoded []byte
+	transitionSHA256  []byte
+	ackEncoded        []byte
+	ackSHA256         []byte
+	commitEncoded     []byte
+}
+
+func loadIdentityTransitionVector(t *testing.T) identityTransitionVector {
+	t.Helper()
+	content, err := os.ReadFile("../test-vectors/e2ee-identity-key-transition-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw struct {
+		TransitionIDHex      string `json:"transitionIdHex"`
+		PreviousKeyIDHex     string `json:"previousKeyIdHex"`
+		NewPublicKeyHex      string `json:"newPublicKeyHex"`
+		NewKeyIDHex          string `json:"newKeyIdHex"`
+		TransitionEncodedHex string `json:"transitionEncodedHex"`
+		TransitionSHA256Hex  string `json:"transitionSha256Hex"`
+		AckEncodedHex        string `json:"ackEncodedHex"`
+		AckSHA256Hex         string `json:"ackSha256Hex"`
+		CommitEncodedHex     string `json:"commitEncodedHex"`
+	}
+	if err := json.Unmarshal(content, &raw); err != nil {
+		t.Fatal(err)
+	}
+	decode := func(value string) []byte {
+		result, err := hex.DecodeString(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	return identityTransitionVector{
+		transitionID:      decode(raw.TransitionIDHex),
+		previousKeyID:     decode(raw.PreviousKeyIDHex),
+		newPublicKey:      decode(raw.NewPublicKeyHex),
+		newKeyID:          decode(raw.NewKeyIDHex),
+		transitionEncoded: decode(raw.TransitionEncodedHex),
+		transitionSHA256:  decode(raw.TransitionSHA256Hex),
+		ackEncoded:        decode(raw.AckEncodedHex),
+		ackSHA256:         decode(raw.AckSHA256Hex),
+		commitEncoded:     decode(raw.CommitEncodedHex),
+	}
+}
+
+func assertCanonicalPayload(t *testing.T, payload *notificationv1.EncryptedPayload, expected []byte) {
+	t.Helper()
+	encoded, err := Encode(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(encoded, expected) {
+		t.Fatalf("encoded payload differs from canonical vector: %x", encoded)
+	}
+	if _, err := Decode(expected); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRejectsInvalidActionFields(t *testing.T) {
 	tests := []struct {
 		name   string

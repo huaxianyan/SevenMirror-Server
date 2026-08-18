@@ -12,6 +12,8 @@ Client repositories vendor a tagged copy of these files and record schema integr
 
 `encrypted-payload-v1.md` and `proto/notification/v1/payload.proto` define the canonical protobuf plaintext carried inside HPKE. `test-vectors/encrypted-payload-v1.json` fixes the first `action.invoke` encoding; the same schema also defines bounded `action.result` messages and `OUTCOME_UNKNOWN` recovery semantics.
 
+`e2ee-identity-key-transition-v1.md` defines old-key-authenticated transition, new-key-addressed peer ACK, new-key-authenticated commit, durable dual-key state, and the strict lost-identity recovery boundary. `test-vectors/e2ee-identity-key-transition-v1.json` fixes all three canonical schema-v2 payloads using public test keys only.
+
 `encrypted-envelope-v1.md` defines the bounded binary WebSocket frame carrying the routing header, P-256 encapsulated key, and ciphertext. `test-vectors/encrypted-envelope-v1.json` binds that frame to the HPKE, routing-header, and encrypted-payload vectors.
 
 `device-auth-frame-v1.md` defines the provisional fixed 68-byte first WebSocket binary authentication message and the server's fixed 4-byte `SNO1` success acknowledgement. `test-vectors/device-auth-frame-v1.json` fixes both cross-client codec values using public test credentials. It is a server-admission credential format, not an E2EE message or trust mechanism.
@@ -28,6 +30,8 @@ device-auth-frame-v1.json SHA-256: 1896def3b76e7c3dbd2d59c30df684587159fb7134121
 trusted-device-pairing-v1.md SHA-256: e013d6a59b3ddae4826875603b3b431d460751a2ff93c143e13b2dbfe6093706
 trusted-device-pairing-v1.json SHA-256: a7254975e5c831133453ff107b97323e722385c7ae44d5a5732cb8b27eeff861
 transport-credential-rotation-v1.md SHA-256: 6f8fb759ce11ca2b7f8470b830ae99feaf199ec2272318224deb2ae0cd190294
+e2ee-identity-key-transition-v1.md SHA-256: 665e676d3ac0620cdb10d48a0e0c5ecc1d0ffb2cb1997caf724e9e94a33fb323
+e2ee-identity-key-transition-v1.json SHA-256: f87f605480d320b622d3810a250f445b40ba0bc6aec27a2a6f5630f87d29c3d0
 ```
 
 Generated code is committed for reproducible client builds. Regenerate the Go files with the pinned remote plugin:
