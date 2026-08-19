@@ -181,13 +181,19 @@ func TestNotificationCanonicalVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	var vector struct {
-		NotificationID                string `json:"notificationPayloadId"`
-		NotificationUpsertRevision    uint64 `json:"notificationUpsertRevision,string"`
-		NotificationRemovedRevision   uint64 `json:"notificationRemovedRevision,string"`
-		NotificationTitle             string `json:"notificationTitle"`
-		NotificationBody              string `json:"notificationBody"`
-		NotificationUpsertEncodedHex  string `json:"notificationUpsertEncodedHex"`
-		NotificationRemovedEncodedHex string `json:"notificationRemovedEncodedHex"`
+		NotificationID                        string `json:"notificationPayloadId"`
+		NotificationUpsertRevision            uint64 `json:"notificationUpsertRevision,string"`
+		NotificationRemovedRevision           uint64 `json:"notificationRemovedRevision,string"`
+		NotificationTitle                     string `json:"notificationTitle"`
+		NotificationBody                      string `json:"notificationBody"`
+		NotificationUpsertEncodedHex          string `json:"notificationUpsertEncodedHex"`
+		NotificationRemovedEncodedHex         string `json:"notificationRemovedEncodedHex"`
+		NotificationSnapshotHighWaterRevision uint64 `json:"notificationSnapshotHighWaterRevision,string"`
+		NotificationSnapshotEntries           []struct {
+			NotificationID       string `json:"notificationId"`
+			NotificationRevision uint64 `json:"notificationRevision,string"`
+		} `json:"notificationSnapshotEntries"`
+		NotificationSnapshotManifestEncodedHex string `json:"notificationSnapshotManifestEncodedHex"`
 	}
 	if err := json.Unmarshal(content, &vector); err != nil {
 		t.Fatal(err)
@@ -222,6 +228,79 @@ func TestNotificationCanonicalVectors(t *testing.T) {
 		},
 	}
 	assertCanonicalPayload(t, removed, decodeHex(vector.NotificationRemovedEncodedHex))
+
+	entries := make([]*notificationv1.NotificationSnapshotEntry, len(vector.NotificationSnapshotEntries))
+	for index, entry := range vector.NotificationSnapshotEntries {
+		entries[index] = &notificationv1.NotificationSnapshotEntry{
+			NotificationId:       entry.NotificationID,
+			NotificationRevision: entry.NotificationRevision,
+		}
+	}
+	manifest := &notificationv1.EncryptedPayload{
+		SchemaVersion: NotificationSchemaVersion,
+		Body: &notificationv1.EncryptedPayload_NotificationSnapshotManifest{
+			NotificationSnapshotManifest: &notificationv1.NotificationSnapshotManifest{
+				HighWaterRevision:   vector.NotificationSnapshotHighWaterRevision,
+				ActiveNotifications: entries,
+			},
+		},
+	}
+	assertCanonicalPayload(t, manifest, decodeHex(vector.NotificationSnapshotManifestEncodedHex))
+}
+
+func TestRejectsInvalidNotificationSnapshotManifest(t *testing.T) {
+	valid := func() *notificationv1.EncryptedPayload {
+		return &notificationv1.EncryptedPayload{
+			SchemaVersion: NotificationSchemaVersion,
+			Body: &notificationv1.EncryptedPayload_NotificationSnapshotManifest{
+				NotificationSnapshotManifest: &notificationv1.NotificationSnapshotManifest{
+					HighWaterRevision: 9,
+					ActiveNotifications: []*notificationv1.NotificationSnapshotEntry{
+						{NotificationId: "synthetic.notification/42", NotificationRevision: 7},
+						{NotificationId: "synthetic.notification/99", NotificationRevision: 9},
+					},
+				},
+			},
+		}
+	}
+	tests := []struct {
+		name   string
+		change func(*notificationv1.EncryptedPayload)
+	}{
+		{"wrong schema", func(p *notificationv1.EncryptedPayload) { p.SchemaVersion = SchemaVersion }},
+		{"entry above high water", func(p *notificationv1.EncryptedPayload) {
+			p.GetNotificationSnapshotManifest().ActiveNotifications[0].NotificationRevision = 10
+		}},
+		{"duplicate id", func(p *notificationv1.EncryptedPayload) {
+			p.GetNotificationSnapshotManifest().ActiveNotifications[1].NotificationId = "synthetic.notification/42"
+		}},
+		{"unsorted ids", func(p *notificationv1.EncryptedPayload) {
+			p.GetNotificationSnapshotManifest().ActiveNotifications[0].NotificationId = "synthetic.notification/zz"
+		}},
+		{"too many entries", func(p *notificationv1.EncryptedPayload) {
+			entry := p.GetNotificationSnapshotManifest().ActiveNotifications[0]
+			p.GetNotificationSnapshotManifest().ActiveNotifications = make([]*notificationv1.NotificationSnapshotEntry, MaxSnapshotEntries+1)
+			for index := range p.GetNotificationSnapshotManifest().ActiveNotifications {
+				p.GetNotificationSnapshotManifest().ActiveNotifications[index] = entry
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload := valid()
+			test.change(payload)
+			if _, err := Encode(payload); err == nil {
+				t.Fatal("invalid notification snapshot manifest accepted")
+			}
+		})
+	}
+
+	empty := valid()
+	empty.GetNotificationSnapshotManifest().HighWaterRevision = 0
+	empty.GetNotificationSnapshotManifest().ActiveNotifications = nil
+	if _, err := Encode(empty); err != nil {
+		t.Fatalf("empty zero-high-water snapshot rejected: %v", err)
+	}
 }
 
 func TestRejectsInvalidNotificationFieldsAndSchema(t *testing.T) {

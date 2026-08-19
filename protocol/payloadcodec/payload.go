@@ -20,6 +20,7 @@ const (
 	MaxNotificationIDBytes         = 512
 	MaxNotificationTitleBytes      = 512
 	MaxNotificationBodyBytes       = 4000
+	MaxSnapshotEntries             = 200
 	MaxReplyTextBytes              = 4000
 	MaxResultDetailBytes           = 256
 	IdentifierSize                 = 16
@@ -89,6 +90,8 @@ func Validate(payload *notificationv1.EncryptedPayload) error {
 		return validateSchema(payload, NotificationSchemaVersion, validateNotificationUpsert(body.NotificationUpsert))
 	case *notificationv1.EncryptedPayload_NotificationRemoved:
 		return validateSchema(payload, NotificationSchemaVersion, validateNotificationRemoved(body.NotificationRemoved))
+	case *notificationv1.EncryptedPayload_NotificationSnapshotManifest:
+		return validateSchema(payload, NotificationSchemaVersion, validateNotificationSnapshotManifest(body.NotificationSnapshotManifest))
 	default:
 		return errors.New("exactly one supported encrypted payload body is required")
 	}
@@ -124,6 +127,36 @@ func validateNotificationRemoved(notification *notificationv1.NotificationRemove
 		return errors.New("notification removed contains unknown fields")
 	}
 	return validateNotificationBinding(notification.GetNotificationId(), notification.GetNotificationRevision())
+}
+
+func validateNotificationSnapshotManifest(manifest *notificationv1.NotificationSnapshotManifest) error {
+	if manifest == nil || len(manifest.ProtoReflect().GetUnknown()) != 0 {
+		return errors.New("notification snapshot manifest contains unknown fields")
+	}
+	if manifest.GetHighWaterRevision() > MaxNotificationRevision {
+		return errors.New("notification snapshot high-water revision is out of range")
+	}
+	entries := manifest.GetActiveNotifications()
+	if len(entries) > MaxSnapshotEntries {
+		return errors.New("notification snapshot has too many active entries")
+	}
+	previousID := ""
+	for _, entry := range entries {
+		if entry == nil || len(entry.ProtoReflect().GetUnknown()) != 0 {
+			return errors.New("notification snapshot entry contains unknown fields")
+		}
+		if err := validateNotificationBinding(entry.GetNotificationId(), entry.GetNotificationRevision()); err != nil {
+			return err
+		}
+		if entry.GetNotificationRevision() > manifest.GetHighWaterRevision() {
+			return errors.New("notification snapshot entry exceeds high-water revision")
+		}
+		if previousID != "" && entry.GetNotificationId() <= previousID {
+			return errors.New("notification snapshot entries are not unique and strictly sorted")
+		}
+		previousID = entry.GetNotificationId()
+	}
+	return nil
 }
 
 func validateNotificationBinding(notificationID string, revision uint64) error {
