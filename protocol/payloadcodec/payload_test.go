@@ -175,6 +175,90 @@ func TestActionResultAckRoundTrip(t *testing.T) {
 	}
 }
 
+func TestNotificationCanonicalVectors(t *testing.T) {
+	content, err := os.ReadFile("../test-vectors/encrypted-payload-v1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vector struct {
+		NotificationID                string `json:"notificationPayloadId"`
+		NotificationUpsertRevision    uint64 `json:"notificationUpsertRevision,string"`
+		NotificationRemovedRevision   uint64 `json:"notificationRemovedRevision,string"`
+		NotificationTitle             string `json:"notificationTitle"`
+		NotificationBody              string `json:"notificationBody"`
+		NotificationUpsertEncodedHex  string `json:"notificationUpsertEncodedHex"`
+		NotificationRemovedEncodedHex string `json:"notificationRemovedEncodedHex"`
+	}
+	if err := json.Unmarshal(content, &vector); err != nil {
+		t.Fatal(err)
+	}
+	decodeHex := func(value string) []byte {
+		decoded, err := hex.DecodeString(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return decoded
+	}
+	upsert := &notificationv1.EncryptedPayload{
+		SchemaVersion: NotificationSchemaVersion,
+		Body: &notificationv1.EncryptedPayload_NotificationUpsert{
+			NotificationUpsert: &notificationv1.NotificationUpsert{
+				NotificationId:       vector.NotificationID,
+				NotificationRevision: vector.NotificationUpsertRevision,
+				Title:                &vector.NotificationTitle,
+				Body:                 &vector.NotificationBody,
+			},
+		},
+	}
+	assertCanonicalPayload(t, upsert, decodeHex(vector.NotificationUpsertEncodedHex))
+
+	removed := &notificationv1.EncryptedPayload{
+		SchemaVersion: NotificationSchemaVersion,
+		Body: &notificationv1.EncryptedPayload_NotificationRemoved{
+			NotificationRemoved: &notificationv1.NotificationRemoved{
+				NotificationId:       vector.NotificationID,
+				NotificationRevision: vector.NotificationRemovedRevision,
+			},
+		},
+	}
+	assertCanonicalPayload(t, removed, decodeHex(vector.NotificationRemovedEncodedHex))
+}
+
+func TestRejectsInvalidNotificationFieldsAndSchema(t *testing.T) {
+	title := "Synthetic notification"
+	valid := func() *notificationv1.EncryptedPayload {
+		return &notificationv1.EncryptedPayload{
+			SchemaVersion: NotificationSchemaVersion,
+			Body: &notificationv1.EncryptedPayload_NotificationUpsert{
+				NotificationUpsert: &notificationv1.NotificationUpsert{
+					NotificationId:       "synthetic.notification/42",
+					NotificationRevision: 7,
+					Title:                &title,
+				},
+			},
+		}
+	}
+	tests := []struct {
+		name   string
+		change func(*notificationv1.EncryptedPayload)
+	}{
+		{"action schema", func(p *notificationv1.EncryptedPayload) { p.SchemaVersion = SchemaVersion }},
+		{"empty notification id", func(p *notificationv1.EncryptedPayload) { p.GetNotificationUpsert().NotificationId = "" }},
+		{"zero revision", func(p *notificationv1.EncryptedPayload) { p.GetNotificationUpsert().NotificationRevision = 0 }},
+		{"missing text", func(p *notificationv1.EncryptedPayload) { p.GetNotificationUpsert().Title = nil }},
+		{"empty title", func(p *notificationv1.EncryptedPayload) { empty := ""; p.GetNotificationUpsert().Title = &empty }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload := valid()
+			test.change(payload)
+			if _, err := Encode(payload); err == nil {
+				t.Fatal("invalid notification payload accepted")
+			}
+		})
+	}
+}
+
 func TestIdentityKeyTransitionCanonicalVector(t *testing.T) {
 	vector := loadIdentityTransitionVector(t)
 	transition := &notificationv1.EncryptedPayload{

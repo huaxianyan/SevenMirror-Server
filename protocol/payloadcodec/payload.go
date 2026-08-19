@@ -15,8 +15,11 @@ import (
 const (
 	SchemaVersion                  = 1
 	IdentityLifecycleSchemaVersion = 2
+	NotificationSchemaVersion      = 3
 	MaxPlaintextSize               = 524272
 	MaxNotificationIDBytes         = 512
+	MaxNotificationTitleBytes      = 512
+	MaxNotificationBodyBytes       = 4000
 	MaxReplyTextBytes              = 4000
 	MaxResultDetailBytes           = 256
 	IdentifierSize                 = 16
@@ -82,20 +85,63 @@ func Validate(payload *notificationv1.EncryptedPayload) error {
 		return validateSchema(payload, IdentityLifecycleSchemaVersion, validateIdentityKeyTransitionAck(body.IdentityKeyTransitionAck))
 	case *notificationv1.EncryptedPayload_IdentityKeyTransitionCommit:
 		return validateSchema(payload, IdentityLifecycleSchemaVersion, validateIdentityKeyTransitionCommit(body.IdentityKeyTransitionCommit))
+	case *notificationv1.EncryptedPayload_NotificationUpsert:
+		return validateSchema(payload, NotificationSchemaVersion, validateNotificationUpsert(body.NotificationUpsert))
+	case *notificationv1.EncryptedPayload_NotificationRemoved:
+		return validateSchema(payload, NotificationSchemaVersion, validateNotificationRemoved(body.NotificationRemoved))
 	default:
 		return errors.New("exactly one supported encrypted payload body is required")
 	}
+}
+
+func validateNotificationUpsert(notification *notificationv1.NotificationUpsert) error {
+	if notification == nil || len(notification.ProtoReflect().GetUnknown()) != 0 {
+		return errors.New("notification upsert contains unknown fields")
+	}
+	if err := validateNotificationBinding(notification.GetNotificationId(), notification.GetNotificationRevision()); err != nil {
+		return err
+	}
+	if notification.Title == nil && notification.Body == nil {
+		return errors.New("notification upsert requires title or body")
+	}
+	if notification.Title != nil {
+		title := notification.GetTitle()
+		if !utf8.ValidString(title) || len(title) < 1 || len(title) > MaxNotificationTitleBytes {
+			return errors.New("notification title must be valid UTF-8 within size limit")
+		}
+	}
+	if notification.Body != nil {
+		body := notification.GetBody()
+		if !utf8.ValidString(body) || len(body) < 1 || len(body) > MaxNotificationBodyBytes {
+			return errors.New("notification body must be valid UTF-8 within size limit")
+		}
+	}
+	return nil
+}
+
+func validateNotificationRemoved(notification *notificationv1.NotificationRemoved) error {
+	if notification == nil || len(notification.ProtoReflect().GetUnknown()) != 0 {
+		return errors.New("notification removed contains unknown fields")
+	}
+	return validateNotificationBinding(notification.GetNotificationId(), notification.GetNotificationRevision())
+}
+
+func validateNotificationBinding(notificationID string, revision uint64) error {
+	if !utf8.ValidString(notificationID) || len(notificationID) < 1 || len(notificationID) > MaxNotificationIDBytes {
+		return errors.New("notification id must be valid UTF-8 within size limit")
+	}
+	if revision < 1 || revision > MaxNotificationRevision {
+		return errors.New("notification revision is out of range")
+	}
+	return nil
 }
 
 func validateActionInvoke(action *notificationv1.ActionInvoke) error {
 	if len(action.ProtoReflect().GetUnknown()) != 0 {
 		return errors.New("action invocation contains unknown fields")
 	}
-	if !utf8.ValidString(action.GetNotificationId()) || len(action.GetNotificationId()) < 1 || len(action.GetNotificationId()) > MaxNotificationIDBytes {
-		return errors.New("notification id must be valid UTF-8 within size limit")
-	}
-	if action.GetNotificationRevision() < 1 || action.GetNotificationRevision() > MaxNotificationRevision {
-		return errors.New("notification revision is out of range")
+	if err := validateNotificationBinding(action.GetNotificationId(), action.GetNotificationRevision()); err != nil {
+		return err
 	}
 	if len(action.GetActionId()) != IdentifierSize {
 		return errors.New("action id must be 16 bytes")
