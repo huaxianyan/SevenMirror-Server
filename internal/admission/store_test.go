@@ -3,6 +3,7 @@ package admission
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/sha256"
 	"database/sql"
@@ -14,6 +15,10 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/huaxianyan/SyncNotifications-Server/internal/membership"
+	membershipv1 "github.com/huaxianyan/SyncNotifications-Server/protocol/generated/membership/v1"
+	"github.com/huaxianyan/SyncNotifications-Server/protocol/membershipcodec"
 )
 
 func TestPairingCodeRegistersExactlyOnePersistentDevice(t *testing.T) {
@@ -116,6 +121,115 @@ func TestPairingCodeConstraintsDoNotLeakOrConsumeOnWrongType(t *testing.T) {
 		E2EEPublicKey: testPublicKey(), Now: now.Add(time.Second),
 	}); !errors.Is(err, ErrInvalidPairingCode) {
 		t.Fatalf("expired code error = %v", err)
+	}
+}
+
+func TestPendingRegistrationRequiresExactIdentityProofBeforeApproval(t *testing.T) {
+	ctx := context.Background()
+	path := tempDatabasePath(t)
+	store := openTestStore(t, path)
+	now := time.UnixMilli(1_800_000_000_000)
+	authorityPrivateKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x51}, ed25519.SeedSize))
+	defer clear(authorityPrivateKey)
+	var authorityPublicKey membership.AuthorityPublicKey
+	copy(authorityPublicKey[:], authorityPrivateKey.Public().(ed25519.PublicKey))
+	workspace, err := store.CreateWorkspace(ctx, authorityPublicKey, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := store.IssuePairingCode(ctx, workspace, DeviceChrome, "Browser", now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := bytes.Repeat([]byte{0x41}, sha256.Size)
+	secret := bytes.Repeat([]byte{0x42}, sha256.Size)
+	device, err := store.RegisterPending(ctx, Registration{
+		PairingCode: code, DeviceType: DeviceChrome,
+		DeviceName: "Browser", E2EEPublicKey: testPublicKey(), Now: now,
+	}, func(challengeWorkspace WorkspaceID, challengeDevice DeviceID) (PendingChallenge, error) {
+		if challengeWorkspace != workspace || challengeDevice == (DeviceID{}) {
+			t.Fatal("challenge factory received the wrong device binding")
+		}
+		return PendingChallenge{Digest: digest, Secret: secret, ExpiresAt: now.Add(5 * time.Minute)}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Authenticate(ctx, workspace, device.DeviceID, device.AuthToken, now); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("pending relay authentication error=%v", err)
+	}
+	wrongSecret := append([]byte(nil), secret...)
+	wrongSecret[0] ^= 1
+	proof := PendingIdentityProof{WorkspaceID: workspace, DeviceID: device.DeviceID,
+		AuthToken: device.AuthToken, ChallengeDigest: digest, ChallengeSecret: wrongSecret,
+		Now: now.Add(time.Minute)}
+	if err := store.CompletePendingIdentityProof(ctx, proof); !errors.Is(err, ErrInvalidMembershipProof) {
+		t.Fatalf("wrong proof error=%v", err)
+	}
+	proof.ChallengeSecret = secret
+	if err := store.CompletePendingIdentityProof(ctx, proof); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompletePendingIdentityProof(ctx, proof); !errors.Is(err, ErrInvalidMembershipProof) {
+		t.Fatalf("repeated proof error=%v", err)
+	}
+	var state string
+	var storedSecret []byte
+	if err := store.db.QueryRow(`SELECT membership_state, proof_secret_hash FROM devices
+		WHERE workspace_id = ? AND id = ?`, workspace[:], device.DeviceID[:]).Scan(&state, &storedSecret); err != nil {
+		t.Fatal(err)
+	}
+	if state != "pending_approval" || storedSecret != nil {
+		t.Fatalf("membership state=%q secret hash retained=%t", state, storedSecret != nil)
+	}
+	approved, err := store.ApprovePendingMembership(ctx, ApprovePendingDevice{
+		WorkspaceID: workspace, DeviceReference: deviceReference(workspace, device.DeviceID),
+		Roles: []membershipv1.DeviceRole{
+			membershipv1.DeviceRole_DEVICE_ROLE_RECEIVE_NOTIFICATIONS,
+			membershipv1.DeviceRole_DEVICE_ROLE_INVOKE_NOTIFICATION_ACTIONS,
+		},
+		AuthorityPrivateKey: authorityPrivateKey, Now: now.Add(2 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if approved.RosterEpoch != 1 || approved.CertificateID == ([sha256.Size]byte{}) ||
+		approved.RosterDigest == ([sha256.Size]byte{}) {
+		t.Fatalf("unexpected approval result: %+v", approved)
+	}
+	if _, err := store.Authenticate(ctx, workspace, device.DeviceID, device.AuthToken, now.Add(3*time.Minute)); err != nil {
+		t.Fatalf("approved relay authentication failed: %v", err)
+	}
+	var signedRoster []byte
+	if err := store.db.QueryRow(`SELECT signed_roster FROM workspace_rosters
+		WHERE workspace_id = ? AND epoch = 1`, workspace[:]).Scan(&signedRoster); err != nil {
+		t.Fatal(err)
+	}
+	decodedRoster, err := membershipcodec.DecodeSignedWorkspaceRoster(
+		signedRoster, authorityPrivateKey.Public().(ed25519.PublicKey))
+	if err != nil || len(decodedRoster.GetRoster().GetActiveCertificates()) != 1 {
+		t.Fatalf("stored roster=%+v error=%v", decodedRoster, err)
+	}
+	if _, err := store.ApprovePendingMembership(ctx, ApprovePendingDevice{
+		WorkspaceID: workspace, DeviceReference: deviceReference(workspace, device.DeviceID),
+		Roles:               []membershipv1.DeviceRole{membershipv1.DeviceRole_DEVICE_ROLE_RECEIVE_NOTIFICATIONS},
+		AuthorityPrivateKey: authorityPrivateKey, Now: now.Add(4 * time.Minute),
+	}); !errors.Is(err, ErrDeviceNotFound) {
+		t.Fatalf("repeated approval error=%v", err)
+	}
+	if _, err := store.RevokeDevice(
+		ctx, workspace, deviceReference(workspace, device.DeviceID), now.Add(5*time.Minute),
+	); !errors.Is(err, ErrMembershipRosterUpdateRequired) {
+		t.Fatalf("certified device legacy revocation error=%v", err)
+	}
+	for _, databaseFile := range []string{path, path + "-wal"} {
+		contents, readErr := os.ReadFile(databaseFile)
+		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+			t.Fatal(readErr)
+		}
+		if bytes.Contains(contents, secret) {
+			t.Fatalf("raw challenge secret persisted in %s", databaseFile)
+		}
 	}
 }
 
@@ -515,7 +629,7 @@ func TestOpenMigratesSchemaVersionOneWithoutChangingCredential(t *testing.T) {
 		t.Fatalf("migrated authentication identity=%+v error=%v", identity, err)
 	}
 	var version int
-	if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 3 {
+	if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 4 {
 		t.Fatalf("schema version=%d error=%v", version, err)
 	}
 	if _, err := store.WorkspaceAuthorityPublicKey(context.Background(), workspaceID); !errors.Is(err, ErrWorkspaceAuthorityUnavailable) {
@@ -532,7 +646,7 @@ func TestOpenRejectsNewerSchemaVersion(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (4, 0)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (5, 0)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -546,7 +660,7 @@ func TestOpenRejectsNewerSchemaVersion(t *testing.T) {
 
 func TestCreateWorkspaceRejectsZeroAuthorityPublicKey(t *testing.T) {
 	store := openTestStore(t, tempDatabasePath(t))
-	if _, err := store.CreateWorkspace(context.Background(), AuthorityPublicKey{}, time.Now()); err == nil {
+	if _, err := store.CreateWorkspace(context.Background(), membership.AuthorityPublicKey{}, time.Now()); err == nil {
 		t.Fatal("zero workspace authority public key unexpectedly accepted")
 	}
 }
@@ -566,8 +680,8 @@ func tempDatabasePath(t *testing.T) string {
 	return t.TempDir() + "/admission.db"
 }
 
-func testAuthorityPublicKey() AuthorityPublicKey {
-	var key AuthorityPublicKey
+func testAuthorityPublicKey() membership.AuthorityPublicKey {
+	var key membership.AuthorityPublicKey
 	for index := range key {
 		key[index] = byte(index + 1)
 	}

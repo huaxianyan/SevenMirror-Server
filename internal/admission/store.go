@@ -3,6 +3,7 @@ package admission
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
@@ -11,34 +12,40 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math"
 	"os"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	authority "github.com/huaxianyan/SyncNotifications-Server/internal/membership"
+	membershipv1 "github.com/huaxianyan/SyncNotifications-Server/protocol/generated/membership/v1"
+	"github.com/huaxianyan/SyncNotifications-Server/protocol/membershipcodec"
+	"google.golang.org/protobuf/proto"
 	_ "modernc.org/sqlite"
 )
 
 const (
-	pairingSecretBytes      = 24
-	rotationSecretBytes     = 24
-	authTokenBytes          = 32
-	authorityPublicKeyBytes = 32
-	maxDeviceNameBytes      = 100
+	pairingSecretBytes  = 24
+	rotationSecretBytes = 24
+	authTokenBytes      = 32
+	maxDeviceNameBytes  = 100
 )
 
 var (
-	ErrInvalidPairingCode            = errors.New("invalid or expired pairing code")
-	ErrInvalidRegistration           = errors.New("invalid device registration")
-	ErrUnauthorized                  = errors.New("device authentication failed")
-	ErrInvalidRotation               = errors.New("credential rotation denied")
-	ErrDeviceNotFound                = errors.New("device not found")
-	ErrWorkspaceAuthorityUnavailable = errors.New("workspace authority is unavailable")
+	ErrInvalidPairingCode             = errors.New("invalid or expired pairing code")
+	ErrInvalidRegistration            = errors.New("invalid device registration")
+	ErrUnauthorized                   = errors.New("device authentication failed")
+	ErrInvalidRotation                = errors.New("credential rotation denied")
+	ErrDeviceNotFound                 = errors.New("device not found")
+	ErrWorkspaceAuthorityUnavailable  = errors.New("workspace authority is unavailable")
+	ErrInvalidMembershipProof         = errors.New("membership identity proof denied")
+	ErrMembershipRosterUpdateRequired = errors.New("certified device revocation requires a signed roster update")
 )
 
 type WorkspaceID [16]byte
 type DeviceID [16]byte
-type AuthorityPublicKey [authorityPublicKeyBytes]byte
 
 type DeviceType string
 
@@ -65,6 +72,38 @@ type RegisteredDevice struct {
 	AuthToken   []byte
 }
 
+type PendingChallenge struct {
+	Digest    []byte
+	Secret    []byte
+	ExpiresAt time.Time
+}
+
+type PendingChallengeFactory func(WorkspaceID, DeviceID) (PendingChallenge, error)
+
+type PendingIdentityProof struct {
+	WorkspaceID     WorkspaceID
+	DeviceID        DeviceID
+	AuthToken       []byte
+	ChallengeDigest []byte
+	ChallengeSecret []byte
+	Now             time.Time
+}
+
+type ApprovePendingDevice struct {
+	WorkspaceID         WorkspaceID
+	DeviceReference     string
+	Roles               []membershipv1.DeviceRole
+	AuthorityPrivateKey ed25519.PrivateKey
+	Now                 time.Time
+}
+
+type ApprovedMembership struct {
+	DeviceReference string
+	CertificateID   [sha256.Size]byte
+	RosterEpoch     int64
+	RosterDigest    [sha256.Size]byte
+}
+
 type DeviceIdentity struct {
 	WorkspaceID       WorkspaceID
 	DeviceID          DeviceID
@@ -87,6 +126,12 @@ type DeviceSummary struct {
 	DeviceType DeviceType
 	DeviceName string
 	Revoked    bool
+}
+
+type PendingDeviceSummary struct {
+	Reference  string
+	DeviceType DeviceType
+	DeviceName string
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -121,10 +166,10 @@ func (s *Store) Close() error { return s.db.Close() }
 
 func (s *Store) CreateWorkspace(
 	ctx context.Context,
-	authorityPublicKey AuthorityPublicKey,
+	authorityPublicKey authority.AuthorityPublicKey,
 	now time.Time,
 ) (WorkspaceID, error) {
-	if bytes.Equal(authorityPublicKey[:], make([]byte, authorityPublicKeyBytes)) {
+	if bytes.Equal(authorityPublicKey[:], make([]byte, len(authorityPublicKey))) {
 		return WorkspaceID{}, errors.New("workspace authority public key must not be zero")
 	}
 	var id WorkspaceID
@@ -143,14 +188,14 @@ func (s *Store) CreateWorkspace(
 func (s *Store) WorkspaceAuthorityPublicKey(
 	ctx context.Context,
 	workspaceID WorkspaceID,
-) (AuthorityPublicKey, error) {
+) (authority.AuthorityPublicKey, error) {
 	var stored []byte
 	if err := s.db.QueryRowContext(ctx,
 		`SELECT authority_public_key FROM workspaces WHERE id = ?`, workspaceID[:]).Scan(&stored); err != nil ||
-		len(stored) != authorityPublicKeyBytes {
-		return AuthorityPublicKey{}, ErrWorkspaceAuthorityUnavailable
+		len(stored) != len(authority.AuthorityPublicKey{}) {
+		return authority.AuthorityPublicKey{}, ErrWorkspaceAuthorityUnavailable
 	}
-	var publicKey AuthorityPublicKey
+	var publicKey authority.AuthorityPublicKey
 	copy(publicKey[:], stored)
 	return publicKey, nil
 }
@@ -192,6 +237,25 @@ func (s *Store) IssuePairingCode(
 }
 
 func (s *Store) Register(ctx context.Context, input Registration) (RegisteredDevice, error) {
+	return s.register(ctx, input, nil)
+}
+
+func (s *Store) RegisterPending(
+	ctx context.Context,
+	input Registration,
+	createChallenge PendingChallengeFactory,
+) (RegisteredDevice, error) {
+	if createChallenge == nil {
+		return RegisteredDevice{}, fmt.Errorf("%w: membership challenge factory is required", ErrInvalidRegistration)
+	}
+	return s.register(ctx, input, createChallenge)
+}
+
+func (s *Store) register(
+	ctx context.Context,
+	input Registration,
+	createChallenge PendingChallengeFactory,
+) (RegisteredDevice, error) {
 	if err := validateDeviceType(input.DeviceType); err != nil {
 		return RegisteredDevice{}, ErrInvalidPairingCode
 	}
@@ -255,13 +319,34 @@ func (s *Store) Register(ctx context.Context, input Registration) (RegisteredDev
 
 	var workspaceID WorkspaceID
 	copy(workspaceID[:], workspaceBytes)
+	membershipState := "legacy_active"
+	var challengeDigest, secretHash []byte
+	var challengeExpiryValue any
+	if createChallenge != nil {
+		challenge, challengeErr := createChallenge(workspaceID, deviceID)
+		if challengeErr != nil {
+			return RegisteredDevice{}, fmt.Errorf("create membership challenge: %w", challengeErr)
+		}
+		if len(challenge.Digest) != sha256.Size || allBytesZero(challenge.Digest) ||
+			len(challenge.Secret) != sha256.Size || allBytesZero(challenge.Secret) ||
+			!challenge.ExpiresAt.After(input.Now) || challenge.ExpiresAt.Sub(input.Now) > 10*time.Minute {
+			return RegisteredDevice{}, fmt.Errorf("%w: invalid membership challenge", ErrInvalidRegistration)
+		}
+		membershipState = "pending_proof"
+		challengeDigest = append([]byte(nil), challenge.Digest...)
+		hash := sha256.Sum256(challenge.Secret)
+		secretHash = hash[:]
+		challengeExpiryValue = unixMillis(challenge.ExpiresAt)
+	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO devices
 		(workspace_id, id, device_type, device_name, auth_token_hash, e2ee_public_key,
-		 registered_at_ms, last_online_at_ms)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		 registered_at_ms, last_online_at_ms, membership_state, proof_challenge_digest,
+		 proof_secret_hash, proof_expires_at_ms)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		workspaceID[:], deviceID[:], string(input.DeviceType), input.DeviceName,
-		authHash[:], input.E2EEPublicKey, nowMillis, nowMillis)
+		authHash[:], input.E2EEPublicKey, nowMillis, nowMillis, membershipState,
+		challengeDigest, secretHash, challengeExpiryValue)
 	if err != nil {
 		return RegisteredDevice{}, fmt.Errorf("register device: %w", err)
 	}
@@ -269,6 +354,215 @@ func (s *Store) Register(ctx context.Context, input Registration) (RegisteredDev
 		return RegisteredDevice{}, fmt.Errorf("commit registration: %w", err)
 	}
 	return RegisteredDevice{WorkspaceID: workspaceID, DeviceID: deviceID, AuthToken: authToken}, nil
+}
+
+func (s *Store) CompletePendingIdentityProof(ctx context.Context, input PendingIdentityProof) error {
+	if len(input.AuthToken) != authTokenBytes || len(input.ChallengeDigest) != sha256.Size ||
+		len(input.ChallengeSecret) != sha256.Size {
+		return ErrInvalidMembershipProof
+	}
+	authHash := sha256.Sum256(input.AuthToken)
+	secretHash := sha256.Sum256(input.ChallengeSecret)
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE devices
+		SET membership_state = 'pending_approval', proof_completed_at_ms = ?,
+			proof_secret_hash = NULL
+		WHERE workspace_id = ? AND id = ? AND auth_token_hash = ?
+			AND membership_state = 'pending_proof' AND revoked_at_ms IS NULL
+			AND proof_expires_at_ms > ? AND proof_challenge_digest = ?
+			AND proof_secret_hash = ?`,
+		unixMillis(input.Now), input.WorkspaceID[:], input.DeviceID[:], authHash[:],
+		unixMillis(input.Now), input.ChallengeDigest, secretHash[:])
+	if err != nil {
+		return fmt.Errorf("complete membership identity proof: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("complete membership identity proof: %w", err)
+	}
+	if rows != 1 {
+		return ErrInvalidMembershipProof
+	}
+	return nil
+}
+
+func (s *Store) ApprovePendingMembership(
+	ctx context.Context,
+	input ApprovePendingDevice,
+) (ApprovedMembership, error) {
+	if len(input.AuthorityPrivateKey) != ed25519.PrivateKeySize || len(input.Roles) == 0 {
+		return ApprovedMembership{}, errors.New("authority private key and roles are required")
+	}
+	deviceID, err := s.resolveDeviceReference(ctx, input.WorkspaceID, input.DeviceReference)
+	if err != nil {
+		return ApprovedMembership{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ApprovedMembership{}, fmt.Errorf("begin membership approval: %w", err)
+	}
+	defer tx.Rollback()
+
+	var authorityPublicKey, identityPublicKey []byte
+	if err := tx.QueryRowContext(ctx,
+		`SELECT authority_public_key FROM workspaces WHERE id = ?`, input.WorkspaceID[:]).Scan(&authorityPublicKey); err != nil ||
+		len(authorityPublicKey) != ed25519.PublicKeySize ||
+		!bytes.Equal(input.AuthorityPrivateKey.Public().(ed25519.PublicKey), authorityPublicKey) {
+		return ApprovedMembership{}, ErrWorkspaceAuthorityUnavailable
+	}
+	var deviceType, deviceName, membershipState string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT device_type, device_name, e2ee_public_key, membership_state
+		FROM devices WHERE workspace_id = ? AND id = ? AND revoked_at_ms IS NULL`,
+		input.WorkspaceID[:], deviceID[:]).Scan(
+		&deviceType, &deviceName, &identityPublicKey, &membershipState); err != nil ||
+		membershipState != "pending_approval" {
+		return ApprovedMembership{}, ErrDeviceNotFound
+	}
+
+	var previousRoster *membershipv1.SignedWorkspaceRoster
+	var previousEncoded []byte
+	err = tx.QueryRowContext(ctx, `
+		SELECT signed_roster FROM workspace_rosters
+		WHERE workspace_id = ? ORDER BY epoch DESC LIMIT 1`, input.WorkspaceID[:]).Scan(&previousEncoded)
+	if err == nil {
+		previousRoster, err = membershipcodec.DecodeSignedWorkspaceRoster(previousEncoded, authorityPublicKey)
+		if err != nil {
+			return ApprovedMembership{}, fmt.Errorf("read current workspace roster: %w", err)
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return ApprovedMembership{}, fmt.Errorf("read current workspace roster: %w", err)
+	}
+
+	rosterEpoch := int64(1)
+	previousDigest := make([]byte, sha256.Size)
+	activeCertificates := make([]*membershipv1.SignedDeviceCertificate, 0, 1)
+	revocations := make([]*membershipv1.RevokedCertificate, 0)
+	if previousRoster != nil {
+		if previousRoster.GetRoster().GetRosterEpoch() >= uint64(math.MaxInt64) {
+			return ApprovedMembership{}, errors.New("workspace roster epoch exhausted")
+		}
+		rosterEpoch = int64(previousRoster.GetRoster().GetRosterEpoch()) + 1
+		previousDigest = append([]byte(nil), previousRoster.GetRosterDigest()...)
+		for _, certificate := range previousRoster.GetRoster().GetActiveCertificates() {
+			activeCertificates = append(activeCertificates, proto.Clone(certificate).(*membershipv1.SignedDeviceCertificate))
+		}
+		for _, revocation := range previousRoster.GetRoster().GetRevocations() {
+			revocations = append(revocations, proto.Clone(revocation).(*membershipv1.RevokedCertificate))
+		}
+	}
+	identityKeyID := sha256.Sum256(identityPublicKey)
+	certificate, err := membershipcodec.SignDeviceCertificate(&membershipv1.DeviceCertificate{
+		ProtocolVersion:   membershipcodec.ProtocolVersion,
+		WorkspaceId:       append([]byte(nil), input.WorkspaceID[:]...),
+		DeviceId:          append([]byte(nil), deviceID[:]...),
+		DeviceType:        membershipDeviceType(DeviceType(deviceType)),
+		DisplayName:       deviceName,
+		Roles:             append([]membershipv1.DeviceRole(nil), input.Roles...),
+		IdentityPublicKey: append([]byte(nil), identityPublicKey...),
+		IdentityKeyId:     identityKeyID[:],
+		IssuedAtUnixMs:    uint64(unixMillis(input.Now)),
+		MembershipEpoch:   uint64(rosterEpoch),
+	}, input.AuthorityPrivateKey)
+	if err != nil {
+		return ApprovedMembership{}, fmt.Errorf("sign device certificate: %w", err)
+	}
+	activeCertificates = append(activeCertificates, certificate)
+	sort.Slice(activeCertificates, func(left, right int) bool {
+		return bytes.Compare(activeCertificates[left].GetCertificate().GetDeviceId(),
+			activeCertificates[right].GetCertificate().GetDeviceId()) < 0
+	})
+	roster, err := membershipcodec.SignWorkspaceRoster(&membershipv1.WorkspaceRoster{
+		ProtocolVersion:      membershipcodec.ProtocolVersion,
+		WorkspaceId:          append([]byte(nil), input.WorkspaceID[:]...),
+		RosterEpoch:          uint64(rosterEpoch),
+		PreviousRosterDigest: previousDigest,
+		ActiveCertificates:   activeCertificates,
+		Revocations:          revocations,
+	}, input.AuthorityPrivateKey)
+	if err != nil {
+		return ApprovedMembership{}, fmt.Errorf("sign workspace roster: %w", err)
+	}
+	certificateEncoded, err := membershipcodec.EncodeSignedDeviceCertificate(certificate, authorityPublicKey)
+	if err != nil {
+		return ApprovedMembership{}, err
+	}
+	rosterEncoded, err := membershipcodec.EncodeSignedWorkspaceRoster(roster, authorityPublicKey)
+	if err != nil {
+		return ApprovedMembership{}, err
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE devices SET membership_state = 'approved', certificate_id = ?,
+			signed_certificate = ?, approved_at_ms = ?, proof_challenge_digest = NULL,
+			proof_expires_at_ms = NULL
+		WHERE workspace_id = ? AND id = ? AND membership_state = 'pending_approval'
+			AND revoked_at_ms IS NULL`,
+		certificate.GetCertificateId(), certificateEncoded, unixMillis(input.Now),
+		input.WorkspaceID[:], deviceID[:])
+	if err != nil {
+		return ApprovedMembership{}, fmt.Errorf("approve membership device: %w", err)
+	}
+	if rows, rowsErr := result.RowsAffected(); rowsErr != nil || rows != 1 {
+		return ApprovedMembership{}, ErrDeviceNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO workspace_rosters
+		(workspace_id, epoch, digest, previous_digest, signed_roster, created_at_ms)
+		VALUES (?, ?, ?, ?, ?, ?)`, input.WorkspaceID[:], rosterEpoch,
+		roster.GetRosterDigest(), previousDigest, rosterEncoded, unixMillis(input.Now)); err != nil {
+		return ApprovedMembership{}, fmt.Errorf("store workspace roster: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return ApprovedMembership{}, fmt.Errorf("commit membership approval: %w", err)
+	}
+	var certificateID, rosterDigest [sha256.Size]byte
+	copy(certificateID[:], certificate.GetCertificateId())
+	copy(rosterDigest[:], roster.GetRosterDigest())
+	return ApprovedMembership{DeviceReference: input.DeviceReference, CertificateID: certificateID,
+		RosterEpoch: rosterEpoch, RosterDigest: rosterDigest}, nil
+}
+
+func membershipDeviceType(value DeviceType) membershipv1.DeviceType {
+	if value == DeviceAndroid {
+		return membershipv1.DeviceType_DEVICE_TYPE_ANDROID
+	}
+	if value == DeviceChrome {
+		return membershipv1.DeviceType_DEVICE_TYPE_CHROME
+	}
+	return membershipv1.DeviceType_DEVICE_TYPE_UNSPECIFIED
+}
+
+func (s *Store) ListPendingDevices(
+	ctx context.Context,
+	workspaceID WorkspaceID,
+) ([]PendingDeviceSummary, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, device_type, device_name FROM devices
+		WHERE workspace_id = ? AND membership_state = 'pending_approval'
+			AND revoked_at_ms IS NULL ORDER BY registered_at_ms, id`, workspaceID[:])
+	if err != nil {
+		return nil, fmt.Errorf("list pending devices: %w", err)
+	}
+	defer rows.Close()
+	result := make([]PendingDeviceSummary, 0)
+	for rows.Next() {
+		var id []byte
+		var deviceType, deviceName string
+		if err := rows.Scan(&id, &deviceType, &deviceName); err != nil {
+			return nil, fmt.Errorf("read pending device: %w", err)
+		}
+		if len(id) != len(DeviceID{}) {
+			return nil, errors.New("stored device ID has invalid length")
+		}
+		var deviceID DeviceID
+		copy(deviceID[:], id)
+		result = append(result, PendingDeviceSummary{Reference: deviceReference(workspaceID, deviceID),
+			DeviceType: DeviceType(deviceType), DeviceName: deviceName})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list pending devices: %w", err)
+	}
+	return result, nil
 }
 
 func (s *Store) ListDevices(ctx context.Context, workspaceID WorkspaceID) ([]DeviceSummary, error) {
@@ -322,8 +616,9 @@ func (s *Store) RevokeDevice(
 		return false, err
 	}
 	result, err := s.db.ExecContext(ctx, `
-		UPDATE devices SET revoked_at_ms = ?
-		WHERE workspace_id = ? AND id = ? AND revoked_at_ms IS NULL`,
+		UPDATE devices SET revoked_at_ms = ?, membership_state = 'revoked'
+		WHERE workspace_id = ? AND id = ? AND revoked_at_ms IS NULL
+			AND membership_state != 'approved'`,
 		unixMillis(now), workspaceID[:], deviceID[:])
 	if err != nil {
 		return false, fmt.Errorf("revoke device: %w", err)
@@ -331,6 +626,13 @@ func (s *Store) RevokeDevice(
 	updated, err := result.RowsAffected()
 	if err != nil {
 		return false, fmt.Errorf("revoke device: %w", err)
+	}
+	if updated == 0 {
+		var state string
+		if err := s.db.QueryRowContext(ctx, `SELECT membership_state FROM devices
+			WHERE workspace_id = ? AND id = ?`, workspaceID[:], deviceID[:]).Scan(&state); err == nil && state == "approved" {
+			return false, ErrMembershipRosterUpdateRequired
+		}
 	}
 	return updated == 1, nil
 }
@@ -358,7 +660,8 @@ func (s *Store) IssueCredentialRotationCode(
 		INSERT INTO credential_rotation_codes
 		(code_hash, workspace_id, device_id, created_at_ms, expires_at_ms)
 		SELECT ?, workspace_id, id, ?, ? FROM devices
-		WHERE workspace_id = ? AND id = ? AND revoked_at_ms IS NULL`,
+		WHERE workspace_id = ? AND id = ? AND revoked_at_ms IS NULL
+			AND membership_state IN ('legacy_active', 'approved')`,
 		hash[:], unixMillis(now), unixMillis(now.Add(ttl)), workspaceID[:], deviceID[:])
 	if err != nil {
 		clear(secret)
@@ -500,7 +803,8 @@ func (s *Store) IsDeviceAuthorized(
 ) (bool, error) {
 	var authorized bool
 	err := s.db.QueryRowContext(ctx, `
-		SELECT revoked_at_ms IS NULL FROM devices WHERE workspace_id = ? AND id = ?`,
+		SELECT revoked_at_ms IS NULL AND membership_state IN ('legacy_active', 'approved')
+		FROM devices WHERE workspace_id = ? AND id = ?`,
 		workspaceID[:], deviceID[:]).Scan(&authorized)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -523,6 +827,7 @@ func (s *Store) IsSessionAuthorized(
 	var authorized bool
 	err := s.db.QueryRowContext(ctx, `
 		SELECT revoked_at_ms IS NULL AND credential_version = ?
+			AND membership_state IN ('legacy_active', 'approved')
 		FROM devices WHERE workspace_id = ? AND id = ?`,
 		credentialVersion, workspaceID[:], deviceID[:]).Scan(&authorized)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -549,7 +854,8 @@ func (s *Store) Authenticate(
 	var credentialVersion int64
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE devices SET last_online_at_ms = ?
-		WHERE workspace_id = ? AND id = ? AND auth_token_hash = ? AND revoked_at_ms IS NULL`,
+		WHERE workspace_id = ? AND id = ? AND auth_token_hash = ? AND revoked_at_ms IS NULL
+			AND membership_state IN ('legacy_active', 'approved')`,
 		unixMillis(now), workspaceID[:], deviceID[:], hash[:])
 	if err != nil {
 		return DeviceIdentity{}, fmt.Errorf("authenticate device: %w", err)
@@ -560,7 +866,8 @@ func (s *Store) Authenticate(
 	}
 	err = s.db.QueryRowContext(ctx, `
 		SELECT device_type, device_name, credential_version FROM devices
-		WHERE workspace_id = ? AND id = ? AND auth_token_hash = ? AND revoked_at_ms IS NULL`,
+		WHERE workspace_id = ? AND id = ? AND auth_token_hash = ? AND revoked_at_ms IS NULL
+			AND membership_state IN ('legacy_active', 'approved')`,
 		workspaceID[:], deviceID[:], hash[:]).Scan(&deviceType, &deviceName, &credentialVersion)
 	if err != nil {
 		return DeviceIdentity{}, ErrUnauthorized
@@ -596,20 +903,29 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if version > 3 {
-		return fmt.Errorf("database schema version %d is newer than supported version 3", version)
+	if version > 4 {
+		return fmt.Errorf("database schema version %d is newer than supported version 4", version)
 	}
-	if version == 3 {
+	if version == 4 {
 		return nil
 	}
+	if version == 3 {
+		return s.applySchemaVersion4(ctx)
+	}
 	if version == 2 {
-		return s.applySchemaVersion3(ctx)
+		if err := s.applySchemaVersion3(ctx); err != nil {
+			return err
+		}
+		return s.applySchemaVersion4(ctx)
 	}
 	if version == 1 {
 		if err := s.applySchemaVersion2(ctx); err != nil {
 			return err
 		}
-		return s.applySchemaVersion3(ctx)
+		if err := s.applySchemaVersion3(ctx); err != nil {
+			return err
+		}
+		return s.applySchemaVersion4(ctx)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -660,7 +976,10 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err := s.applySchemaVersion2(ctx); err != nil {
 		return err
 	}
-	return s.applySchemaVersion3(ctx)
+	if err := s.applySchemaVersion3(ctx); err != nil {
+		return err
+	}
+	return s.applySchemaVersion4(ctx)
 }
 
 func (s *Store) applySchemaVersion2(ctx context.Context) error {
@@ -718,6 +1037,57 @@ func (s *Store) applySchemaVersion3(ctx context.Context) error {
 		return fmt.Errorf("commit schema version 3: %w", err)
 	}
 	return nil
+}
+
+func (s *Store) applySchemaVersion4(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin schema version 4: %w", err)
+	}
+	defer tx.Rollback()
+	statements := []string{
+		`ALTER TABLE devices ADD COLUMN membership_state TEXT NOT NULL DEFAULT 'legacy_active'
+		 CHECK(membership_state IN ('legacy_active', 'pending_proof', 'pending_approval', 'approved', 'revoked'))`,
+		`ALTER TABLE devices ADD COLUMN proof_challenge_digest BLOB CHECK(proof_challenge_digest IS NULL OR length(proof_challenge_digest) = 32)`,
+		`ALTER TABLE devices ADD COLUMN proof_secret_hash BLOB CHECK(proof_secret_hash IS NULL OR length(proof_secret_hash) = 32)`,
+		`ALTER TABLE devices ADD COLUMN proof_expires_at_ms INTEGER`,
+		`ALTER TABLE devices ADD COLUMN proof_completed_at_ms INTEGER`,
+		`ALTER TABLE devices ADD COLUMN certificate_id BLOB CHECK(certificate_id IS NULL OR length(certificate_id) = 32)`,
+		`ALTER TABLE devices ADD COLUMN signed_certificate BLOB`,
+		`ALTER TABLE devices ADD COLUMN approved_at_ms INTEGER`,
+		`CREATE TABLE workspace_rosters (
+			workspace_id BLOB NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+			epoch INTEGER NOT NULL CHECK(epoch > 0),
+			digest BLOB NOT NULL CHECK(length(digest) = 32),
+			previous_digest BLOB NOT NULL CHECK(length(previous_digest) = 32),
+			signed_roster BLOB NOT NULL,
+			created_at_ms INTEGER NOT NULL,
+			PRIMARY KEY(workspace_id, epoch),
+			UNIQUE(workspace_id, digest)
+		) STRICT`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("apply schema version 4: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (4, ?)`,
+		time.Now().UnixMilli()); err != nil {
+		return fmt.Errorf("record schema version 4: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema version 4: %w", err)
+	}
+	return nil
+}
+
+func allBytesZero(value []byte) bool {
+	var combined byte
+	for _, item := range value {
+		combined |= item
+	}
+	return combined == 0
 }
 
 func validateDeviceType(value DeviceType) error {

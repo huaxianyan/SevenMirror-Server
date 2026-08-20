@@ -4,12 +4,12 @@ Private self-hosted relay for Notification Mirroring. This is one of three indep
 
 Repository: <https://github.com/huaxianyan/SyncNotifications-Server>
 
-> Status: provisional private admission and authenticated ciphertext relay are implemented for synthetic test devices. ADR-005 now makes the server administrator the workspace membership authority; initial authority-key custody plus the strict Workspace Membership v1 Server codec/vector are implemented, while Android/Chrome codecs, verified backup/restore, rotation, pending-device approval/persistence, roster delivery, offline delivery, and production security review are not complete yet. The existing bilateral client trust path is frozen and real third-party notification content remains blocked.
+> Status: provisional private admission and authenticated ciphertext relay are implemented for synthetic test devices. ADR-005 authority-key custody, strict three-client Workspace Membership v1 codecs/vectors, and the Server pending-proof/atomic approval persistence boundary are implemented. The public registration endpoint still uses the frozen legacy 1 × 1 path until clients can retrieve and persist certificates/rosters; verified backup/restore, authority rotation, roster delivery, offline delivery, and production security review remain incomplete. The existing bilateral client trust path is frozen and real third-party notification content remains blocked.
 
 ## Current functionality
 
 - `GET /healthz` and `GET /readyz`
-- SQLite/WAL schema migration and durable private device registry
+- SQLite/WAL schema migration and durable private device registry with explicit `legacy_active`, pending-proof, pending-approval, approved, and revoked membership states
 - Local admin CLI for workspace initialization with a unique Ed25519 authority and 192-bit, short-lived, one-time pairing codes
 - Code-gated `POST /v1/devices/register`; no open registration mode
 - First-binary-frame WebSocket authentication at `GET /v1/relay`
@@ -72,6 +72,18 @@ NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
 NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
   revoke-device --workspace <base64url-workspace-id> --device-ref <redacted-ref>
 ```
+
+The membership admin commands are available for pending records created through the new Store boundary; the public registration endpoint does not create those records yet:
+
+```sh
+NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
+  list-pending-devices --workspace <base64url-workspace-id>
+NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
+  approve-device --workspace <base64url-workspace-id> --device-ref <redacted-ref> \
+  --roles receive,invoke
+```
+
+Approval loads the exact workspace authority key from `NM_AUTHORITY_KEY_DIR`, signs the device certificate, advances and signs the roster, and commits the certificate, device state, and roster in one SQLite transaction. It prints only the redacted device reference and roster epoch. The legacy `revoke-device` path refuses certified devices because revoking one without atomically signing the next roster would create conflicting authorization state; certified revocation is the next persistence slice.
 
 The list and revoke commands never print a full device ID, transport credential, or E2EE public key. Revocation is durable and idempotent. New authentication fails immediately; the running server revalidates active peers every 250 ms, atomically removes a revoked peer from ciphertext routing, and closes its WebSocket with a fixed policy response. Authorization lookup failures disconnect only the affected peer fail-closed.
 

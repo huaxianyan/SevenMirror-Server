@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/huaxianyan/SyncNotifications-Server/internal/admission"
+	"github.com/huaxianyan/SyncNotifications-Server/internal/membership"
 )
 
 func TestPrivateRegistrationConsumesAdminIssuedCode(t *testing.T) {
@@ -22,7 +23,7 @@ func TestPrivateRegistrationConsumesAdminIssuedCode(t *testing.T) {
 	}
 	defer store.Close()
 	now := time.UnixMilli(1_800_000_000_000)
-	var authorityPublicKey admission.AuthorityPublicKey
+	var authorityPublicKey membership.AuthorityPublicKey
 	authorityPublicKey[0] = 1
 	workspace, err := store.CreateWorkspace(ctx, authorityPublicKey, now)
 	if err != nil {
