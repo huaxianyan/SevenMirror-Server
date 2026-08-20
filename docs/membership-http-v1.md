@@ -32,10 +32,10 @@ The response contains:
 - current internal membership state;
 - the pinned authority public key;
 - the device's signed certificate when approved;
-- up to 256 contiguous signed rosters after the requested epoch;
+- up to 256 contiguous signed rosters after the requested epoch, additionally bounded to 1 MiB of raw signed-roster bytes per page;
 - the latest server roster epoch as a decimal string.
 
-If more than 256 roster versions are missing, the client validates the returned chain, persists its last accepted epoch/digest, and requests the next page. A previously enrolled client must not skip epochs. A newly approved client applies the bootstrap rule from `protocol/workspace-membership-v1.md`.
+For `after_roster_epoch = 0`, an approved device starts at its certificate's membership epoch rather than replaying rosters from before it joined; that first returned roster must contain the exact local certificate under the bootstrap rule. If a page does not reach the latest epoch, the client validates the returned chain, durably persists its last accepted epoch/digest, and requests the next page. A previously enrolled client must not skip epochs.
 
 The endpoint authenticates pending or approved membership credentials but does not make pending credentials valid for WebSocket relay authentication.
 

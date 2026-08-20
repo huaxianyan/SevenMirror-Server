@@ -27,10 +27,12 @@ import (
 )
 
 const (
-	pairingSecretBytes  = 24
-	rotationSecretBytes = 24
-	authTokenBytes      = 32
-	maxDeviceNameBytes  = 100
+	pairingSecretBytes         = 24
+	rotationSecretBytes        = 24
+	authTokenBytes             = 32
+	maxDeviceNameBytes         = 100
+	maxMembershipRosterPage    = 256
+	maxMembershipRosterPageRaw = 1 << 20
 )
 
 var (
@@ -602,15 +604,28 @@ func (s *Store) ReadMembershipState(
 	if state != "approved" {
 		return view, nil
 	}
+	queryAfterEpoch := afterRosterEpoch
+	if afterRosterEpoch == 0 {
+		certificate, decodeErr := membershipcodec.DecodeSignedDeviceCertificate(
+			signedCertificate,
+			ed25519.PublicKey(authorityPublicKey),
+		)
+		if decodeErr != nil || certificate.GetCertificate().GetMembershipEpoch() < 1 ||
+			certificate.GetCertificate().GetMembershipEpoch() > math.MaxInt64 {
+			return MembershipStateView{}, errors.New("stored device certificate is invalid")
+		}
+		queryAfterEpoch = int64(certificate.GetCertificate().GetMembershipEpoch()) - 1
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT epoch, signed_roster FROM workspace_rosters
-		WHERE workspace_id = ? AND epoch > ? ORDER BY epoch LIMIT 256`,
-		workspaceID[:], afterRosterEpoch)
+		WHERE workspace_id = ? AND epoch > ? ORDER BY epoch LIMIT ?`,
+		workspaceID[:], queryAfterEpoch, maxMembershipRosterPage)
 	if err != nil {
 		return MembershipStateView{}, fmt.Errorf("read workspace roster chain: %w", err)
 	}
 	defer rows.Close()
-	expectedEpoch := afterRosterEpoch + 1
+	expectedEpoch := queryAfterEpoch + 1
+	pageBytes := 0
 	for rows.Next() {
 		var epoch int64
 		var signedRoster []byte
@@ -620,8 +635,11 @@ func (s *Store) ReadMembershipState(
 		if epoch != expectedEpoch {
 			return MembershipStateView{}, errors.New("workspace roster chain is not contiguous")
 		}
+		if len(view.Rosters) != 0 && pageBytes+len(signedRoster) > maxMembershipRosterPageRaw {
+			break
+		}
 		view.Rosters = append(view.Rosters, append([]byte(nil), signedRoster...))
-		view.LatestRosterEpoch = epoch
+		pageBytes += len(signedRoster)
 		expectedEpoch++
 	}
 	if err := rows.Err(); err != nil {

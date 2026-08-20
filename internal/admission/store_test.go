@@ -200,6 +200,46 @@ func TestPendingRegistrationRequiresExactIdentityProofBeforeApproval(t *testing.
 	if _, err := store.Authenticate(ctx, workspace, device.DeviceID, device.AuthToken, now.Add(3*time.Minute)); err != nil {
 		t.Fatalf("approved relay authentication failed: %v", err)
 	}
+
+	secondCode, err := store.IssuePairingCode(ctx, workspace, DeviceChrome, "Second Browser", now.Add(3*time.Minute), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.RegisterPending(ctx, Registration{
+		PairingCode: secondCode, DeviceType: DeviceChrome, DeviceName: "Second Browser",
+		E2EEPublicKey: testPublicKey(), Now: now.Add(3 * time.Minute),
+	}, func(WorkspaceID, DeviceID) (PendingChallenge, error) {
+		return PendingChallenge{Digest: digest, Secret: secret, ExpiresAt: now.Add(8 * time.Minute)}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompletePendingIdentityProof(ctx, PendingIdentityProof{
+		WorkspaceID: workspace, DeviceID: second.DeviceID, AuthToken: second.AuthToken,
+		ChallengeDigest: digest, ChallengeSecret: secret, Now: now.Add(4 * time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ApprovePendingMembership(ctx, ApprovePendingDevice{
+		WorkspaceID: workspace, DeviceReference: deviceReference(workspace, second.DeviceID),
+		Roles:               []membershipv1.DeviceRole{membershipv1.DeviceRole_DEVICE_ROLE_RECEIVE_NOTIFICATIONS},
+		AuthorityPrivateKey: authorityPrivateKey, Now: now.Add(5 * time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	secondState, err := store.ReadMembershipState(ctx, workspace, second.DeviceID, second.AuthToken, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondState.LatestRosterEpoch != 2 || len(secondState.Rosters) != 1 {
+		t.Fatalf("second-device bootstrap latest=%d rosters=%d", secondState.LatestRosterEpoch, len(secondState.Rosters))
+	}
+	bootstrapRoster, err := membershipcodec.DecodeSignedWorkspaceRoster(
+		secondState.Rosters[0], authorityPrivateKey.Public().(ed25519.PublicKey))
+	if err != nil || bootstrapRoster.GetRoster().GetRosterEpoch() != 2 {
+		t.Fatalf("second-device bootstrap roster=%+v error=%v", bootstrapRoster, err)
+	}
+
 	var signedRoster []byte
 	if err := store.db.QueryRow(`SELECT signed_roster FROM workspace_rosters
 		WHERE workspace_id = ? AND epoch = 1`, workspace[:]).Scan(&signedRoster); err != nil {
