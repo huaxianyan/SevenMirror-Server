@@ -20,22 +20,25 @@ import (
 )
 
 const (
-	pairingSecretBytes  = 24
-	rotationSecretBytes = 24
-	authTokenBytes      = 32
-	maxDeviceNameBytes  = 100
+	pairingSecretBytes      = 24
+	rotationSecretBytes     = 24
+	authTokenBytes          = 32
+	authorityPublicKeyBytes = 32
+	maxDeviceNameBytes      = 100
 )
 
 var (
-	ErrInvalidPairingCode  = errors.New("invalid or expired pairing code")
-	ErrInvalidRegistration = errors.New("invalid device registration")
-	ErrUnauthorized        = errors.New("device authentication failed")
-	ErrInvalidRotation     = errors.New("credential rotation denied")
-	ErrDeviceNotFound      = errors.New("device not found")
+	ErrInvalidPairingCode            = errors.New("invalid or expired pairing code")
+	ErrInvalidRegistration           = errors.New("invalid device registration")
+	ErrUnauthorized                  = errors.New("device authentication failed")
+	ErrInvalidRotation               = errors.New("credential rotation denied")
+	ErrDeviceNotFound                = errors.New("device not found")
+	ErrWorkspaceAuthorityUnavailable = errors.New("workspace authority is unavailable")
 )
 
 type WorkspaceID [16]byte
 type DeviceID [16]byte
+type AuthorityPublicKey [authorityPublicKeyBytes]byte
 
 type DeviceType string
 
@@ -116,17 +119,40 @@ func Open(ctx context.Context, path string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
-func (s *Store) CreateWorkspace(ctx context.Context, now time.Time) (WorkspaceID, error) {
+func (s *Store) CreateWorkspace(
+	ctx context.Context,
+	authorityPublicKey AuthorityPublicKey,
+	now time.Time,
+) (WorkspaceID, error) {
+	if bytes.Equal(authorityPublicKey[:], make([]byte, authorityPublicKeyBytes)) {
+		return WorkspaceID{}, errors.New("workspace authority public key must not be zero")
+	}
 	var id WorkspaceID
 	if _, err := rand.Read(id[:]); err != nil {
 		return WorkspaceID{}, fmt.Errorf("generate workspace id: %w", err)
 	}
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO workspaces (id, created_at_ms) VALUES (?, ?)`, id[:], unixMillis(now))
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO workspaces (id, created_at_ms, authority_public_key)
+		VALUES (?, ?, ?)`, id[:], unixMillis(now), authorityPublicKey[:])
 	if err != nil {
 		return WorkspaceID{}, fmt.Errorf("create workspace: %w", err)
 	}
 	return id, nil
+}
+
+func (s *Store) WorkspaceAuthorityPublicKey(
+	ctx context.Context,
+	workspaceID WorkspaceID,
+) (AuthorityPublicKey, error) {
+	var stored []byte
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT authority_public_key FROM workspaces WHERE id = ?`, workspaceID[:]).Scan(&stored); err != nil ||
+		len(stored) != authorityPublicKeyBytes {
+		return AuthorityPublicKey{}, ErrWorkspaceAuthorityUnavailable
+	}
+	var publicKey AuthorityPublicKey
+	copy(publicKey[:], stored)
+	return publicKey, nil
 }
 
 func (s *Store) IssuePairingCode(
@@ -570,14 +596,20 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if version > 2 {
-		return fmt.Errorf("database schema version %d is newer than supported version 2", version)
+	if version > 3 {
+		return fmt.Errorf("database schema version %d is newer than supported version 3", version)
 	}
-	if version == 2 {
+	if version == 3 {
 		return nil
 	}
+	if version == 2 {
+		return s.applySchemaVersion3(ctx)
+	}
 	if version == 1 {
-		return s.applySchemaVersion2(ctx)
+		if err := s.applySchemaVersion2(ctx); err != nil {
+			return err
+		}
+		return s.applySchemaVersion3(ctx)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -625,7 +657,10 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit schema version 1: %w", err)
 	}
-	return s.applySchemaVersion2(ctx)
+	if err := s.applySchemaVersion2(ctx); err != nil {
+		return err
+	}
+	return s.applySchemaVersion3(ctx)
 }
 
 func (s *Store) applySchemaVersion2(ctx context.Context) error {
@@ -659,6 +694,28 @@ func (s *Store) applySchemaVersion2(ctx context.Context) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit schema version 2: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) applySchemaVersion3(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin schema version 3: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `
+		ALTER TABLE workspaces ADD COLUMN authority_public_key BLOB
+		CHECK(authority_public_key IS NULL OR length(authority_public_key) = 32)`); err != nil {
+		return fmt.Errorf("apply schema version 3: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (3, ?)`,
+		time.Now().UnixMilli()); err != nil {
+		return fmt.Errorf("record schema version 3: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema version 3: %w", err)
 	}
 	return nil
 }

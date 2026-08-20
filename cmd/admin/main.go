@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/huaxianyan/SyncNotifications-Server/internal/admission"
+	"github.com/huaxianyan/SyncNotifications-Server/internal/membership"
 )
 
 func main() {
@@ -36,11 +37,29 @@ func main() {
 			usage()
 			os.Exit(2)
 		}
-		workspace, err := store.CreateWorkspace(context.Background(), time.Now())
+		authorityKeyDirectory := os.Getenv("NM_AUTHORITY_KEY_DIR")
+		if authorityKeyDirectory == "" {
+			authorityKeyDirectory = filepath.Join(filepath.Dir(databasePath), "authority-keys")
+		}
+		authority, err := membership.GenerateAuthority(authorityKeyDirectory)
 		if err != nil {
+			fatal("generate workspace authority", err)
+		}
+		var authorityPublicKey admission.AuthorityPublicKey
+		copy(authorityPublicKey[:], authority.PublicKey[:])
+		workspace, err := store.CreateWorkspace(
+			context.Background(), authorityPublicKey, time.Now())
+		if err != nil {
+			if cleanupErr := os.Remove(authority.Path); cleanupErr != nil {
+				fatal("initialize workspace",
+					fmt.Errorf("%w; also failed to remove uncommitted authority key %q: %v",
+						err, authority.Path, cleanupErr))
+			}
 			fatal("initialize workspace", err)
 		}
 		fmt.Printf("workspace_id=%s\n", base64.RawURLEncoding.EncodeToString(workspace[:]))
+		fmt.Printf("authority_key_id=%s\n", authority.KeyID)
+		fmt.Printf("authority_private_key_file=%s\n", authority.Path)
 	case "issue-pairing-code":
 		issuePairingCode(store, os.Args[2:])
 	case "list-devices":
@@ -161,6 +180,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin issue-rotation-code --workspace <id> --device-ref <ref> [--ttl 10m]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Set NM_DATABASE_PATH to use a non-default database.")
+	fmt.Fprintln(os.Stderr, "Set NM_AUTHORITY_KEY_DIR to place new workspace authority private keys in a protected directory.")
 }
 
 func fatal(operation string, err error) {

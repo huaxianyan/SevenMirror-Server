@@ -16,7 +16,7 @@ func TestRegisteredCredentialAuthenticatesProductionRelayBoundary(t *testing.T) 
 	ctx := context.Background()
 	store := openTestStore(t, tempDatabasePath(t))
 	now := time.UnixMilli(1_800_000_000_000)
-	workspace, _ := store.CreateWorkspace(ctx, now)
+	workspace, _ := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
 	code, _ := store.IssuePairingCode(ctx, workspace, DeviceChrome, "Browser", now, time.Minute)
 	registered, err := store.Register(ctx, Registration{
 		PairingCode: code, DeviceType: DeviceChrome, DeviceName: "Browser",
@@ -67,7 +67,7 @@ func TestDurableRevocationClosesActiveRelayAndRejectsReconnect(t *testing.T) {
 	defer cancel()
 	store := openTestStore(t, tempDatabasePath(t))
 	now := time.UnixMilli(1_800_000_000_000)
-	workspace, _ := store.CreateWorkspace(ctx, now)
+	workspace, _ := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
 	code, _ := store.IssuePairingCode(ctx, workspace, DeviceChrome, "Browser", now, time.Minute)
 	registered, err := store.Register(ctx, Registration{
 		PairingCode: code, DeviceType: DeviceChrome, DeviceName: "Browser",
@@ -144,7 +144,7 @@ func TestCredentialRotationClosesOldSessionAndAuthenticatesPendingCredential(t *
 	defer cancel()
 	store := openTestStore(t, tempDatabasePath(t))
 	now := time.UnixMilli(1_800_000_000_000)
-	workspace, _ := store.CreateWorkspace(ctx, now)
+	workspace, _ := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
 	code, _ := store.IssuePairingCode(ctx, workspace, DeviceChrome, "Browser", now, time.Minute)
 	registered, err := store.Register(ctx, Registration{
 		PairingCode: code, DeviceType: DeviceChrome, DeviceName: "Browser",

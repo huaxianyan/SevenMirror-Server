@@ -22,7 +22,9 @@ func TestPrivateRegistrationConsumesAdminIssuedCode(t *testing.T) {
 	}
 	defer store.Close()
 	now := time.UnixMilli(1_800_000_000_000)
-	workspace, err := store.CreateWorkspace(ctx, now)
+	var authorityPublicKey admission.AuthorityPublicKey
+	authorityPublicKey[0] = 1
+	workspace, err := store.CreateWorkspace(ctx, authorityPublicKey, now)
 	if err != nil {
 		t.Fatal(err)
 	}

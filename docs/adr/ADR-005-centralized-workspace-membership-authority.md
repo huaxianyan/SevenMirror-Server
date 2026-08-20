@@ -1,6 +1,6 @@
 # ADR-005: Centralized workspace membership authority
 
-- Status: **Accepted — trust-model decision; certificate, roster, authority-key custody, and migration protocols pending**
+- Status: **Accepted — initial authority-key generation/custody implemented; certificate, roster, verified recovery, rotation, and migration protocols pending**
 - Date: 2026-08-19
 - Owners: Server, Android, and Chrome projects
 
@@ -178,8 +178,8 @@ rotation, and recovery behavior.
 
 ## Required next slices
 
-1. Define authority-key generation, protected storage, backup, restore, and
-   rotation.
+1. Complete the authority-key lifecycle contract in
+   [`../workspace-authority-key-lifecycle.md`](../workspace-authority-key-lifecycle.md), including verified backup/restore tooling and signed rotation; initial generation, separated PKCS#8 custody, public-key persistence, and fail-closed loading are implemented.
 2. Define canonical pending registration proof, device certificate, signed
    roster, revocation, and fixed vectors.
 3. Implement Server persistence and local administrator approval commands.

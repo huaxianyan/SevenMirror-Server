@@ -30,9 +30,13 @@ func TestPairingCodeRegistersExactlyOnePersistentDevice(t *testing.T) {
 		}
 	}
 	now := time.UnixMilli(1_800_000_000_000)
-	workspace, err := store.CreateWorkspace(ctx, now)
+	workspace, err := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
 	if err != nil {
 		t.Fatal(err)
+	}
+	storedAuthority, err := store.WorkspaceAuthorityPublicKey(ctx, workspace)
+	if err != nil || storedAuthority != testAuthorityPublicKey() {
+		t.Fatalf("stored authority=%x error=%v", storedAuthority, err)
 	}
 	code, err := store.IssuePairingCode(ctx, workspace, DeviceAndroid, "Pixel", now, 10*time.Minute)
 	if err != nil {
@@ -89,7 +93,7 @@ func TestPairingCodeConstraintsDoNotLeakOrConsumeOnWrongType(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, tempDatabasePath(t))
 	now := time.UnixMilli(1_800_000_000_000)
-	workspace, _ := store.CreateWorkspace(ctx, now)
+	workspace, _ := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
 	code, _ := store.IssuePairingCode(ctx, workspace, DeviceChrome, "Browser", now, time.Minute)
 
 	_, err := store.Register(ctx, Registration{
@@ -119,7 +123,7 @@ func TestConcurrentPairingCodeConsumptionAllowsOneRegistration(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, tempDatabasePath(t))
 	now := time.UnixMilli(1_800_000_000_000)
-	workspace, _ := store.CreateWorkspace(ctx, now)
+	workspace, _ := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
 	code, _ := store.IssuePairingCode(ctx, workspace, DeviceAndroid, "", now, time.Minute)
 
 	var wg sync.WaitGroup
@@ -157,8 +161,8 @@ func TestDeviceRevocationIsIdempotentPersistentAndWorkspaceBound(t *testing.T) {
 	path := tempDatabasePath(t)
 	store := openTestStore(t, path)
 	now := time.UnixMilli(1_800_000_000_000)
-	workspace, _ := store.CreateWorkspace(ctx, now)
-	otherWorkspace, _ := store.CreateWorkspace(ctx, now)
+	workspace, _ := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
+	otherWorkspace, _ := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
 	register := func(name string) RegisteredDevice {
 		code, err := store.IssuePairingCode(ctx, workspace, DeviceChrome, name, now, time.Minute)
 		if err != nil {
@@ -249,7 +253,7 @@ func TestCredentialRotationIsAtomicPersistentAndRecoverable(t *testing.T) {
 	path := tempDatabasePath(t)
 	store := openTestStore(t, path)
 	now := time.UnixMilli(1_800_000_000_000)
-	workspace, _ := store.CreateWorkspace(ctx, now)
+	workspace, _ := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
 	code, _ := store.IssuePairingCode(ctx, workspace, DeviceChrome, "Browser", now, time.Minute)
 	registered, err := store.Register(ctx, Registration{
 		PairingCode: code, DeviceType: DeviceChrome, DeviceName: "Browser",
@@ -336,7 +340,7 @@ func TestConcurrentCredentialRotationAllowsOneCommit(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, tempDatabasePath(t))
 	now := time.UnixMilli(1_800_000_000_000)
-	workspace, _ := store.CreateWorkspace(ctx, now)
+	workspace, _ := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
 	pairingCode, _ := store.IssuePairingCode(ctx, workspace, DeviceChrome, "Browser", now, time.Minute)
 	device, err := store.Register(ctx, Registration{
 		PairingCode: pairingCode, DeviceType: DeviceChrome, DeviceName: "Browser",
@@ -386,8 +390,8 @@ func TestCredentialRotationCodeIsExactDeviceBoundAndExpires(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t, tempDatabasePath(t))
 	now := time.UnixMilli(1_800_000_000_000)
-	workspace, _ := store.CreateWorkspace(ctx, now)
-	otherWorkspace, _ := store.CreateWorkspace(ctx, now)
+	workspace, _ := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
+	otherWorkspace, _ := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
 	register := func(name string) RegisteredDevice {
 		code, _ := store.IssuePairingCode(ctx, workspace, DeviceAndroid, name, now, time.Minute)
 		device, err := store.Register(ctx, Registration{
@@ -511,8 +515,11 @@ func TestOpenMigratesSchemaVersionOneWithoutChangingCredential(t *testing.T) {
 		t.Fatalf("migrated authentication identity=%+v error=%v", identity, err)
 	}
 	var version int
-	if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 2 {
+	if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 3 {
 		t.Fatalf("schema version=%d error=%v", version, err)
+	}
+	if _, err := store.WorkspaceAuthorityPublicKey(context.Background(), workspaceID); !errors.Is(err, ErrWorkspaceAuthorityUnavailable) {
+		t.Fatalf("legacy workspace authority error=%v", err)
 	}
 }
 
@@ -525,7 +532,7 @@ func TestOpenRejectsNewerSchemaVersion(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (3, 0)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (4, 0)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -534,6 +541,13 @@ func TestOpenRejectsNewerSchemaVersion(t *testing.T) {
 	if store, err := Open(context.Background(), path); err == nil {
 		store.Close()
 		t.Fatal("newer schema version unexpectedly accepted")
+	}
+}
+
+func TestCreateWorkspaceRejectsZeroAuthorityPublicKey(t *testing.T) {
+	store := openTestStore(t, tempDatabasePath(t))
+	if _, err := store.CreateWorkspace(context.Background(), AuthorityPublicKey{}, time.Now()); err == nil {
+		t.Fatal("zero workspace authority public key unexpectedly accepted")
 	}
 }
 
@@ -550,6 +564,14 @@ func openTestStore(t *testing.T, path string) *Store {
 func tempDatabasePath(t *testing.T) string {
 	t.Helper()
 	return t.TempDir() + "/admission.db"
+}
+
+func testAuthorityPublicKey() AuthorityPublicKey {
+	var key AuthorityPublicKey
+	for index := range key {
+		key[index] = byte(index + 1)
+	}
+	return key
 }
 
 func testPublicKey() []byte {

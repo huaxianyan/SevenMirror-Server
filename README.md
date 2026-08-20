@@ -4,13 +4,13 @@ Private self-hosted relay for Notification Mirroring. This is one of three indep
 
 Repository: <https://github.com/huaxianyan/SyncNotifications-Server>
 
-> Status: provisional private admission and authenticated ciphertext relay are implemented for synthetic test devices. ADR-005 now makes the server administrator the workspace membership authority; pending-device approval, authority-signed device certificates/rosters, authority-key lifecycle, offline delivery, and production security review are not implemented yet. The existing bilateral client trust path is frozen and real third-party notification content remains blocked.
+> Status: provisional private admission and authenticated ciphertext relay are implemented for synthetic test devices. ADR-005 now makes the server administrator the workspace membership authority; initial authority-key generation and separated private-key storage are implemented, while verified backup/restore, rotation, pending-device approval, authority-signed device certificates/rosters, offline delivery, and production security review are not complete yet. The existing bilateral client trust path is frozen and real third-party notification content remains blocked.
 
 ## Current functionality
 
 - `GET /healthz` and `GET /readyz`
 - SQLite/WAL schema migration and durable private device registry
-- Local admin CLI for workspace initialization and 192-bit, short-lived, one-time pairing codes
+- Local admin CLI for workspace initialization with a unique Ed25519 authority and 192-bit, short-lived, one-time pairing codes
 - Code-gated `POST /v1/devices/register`; no open registration mode
 - First-binary-frame WebSocket authentication at `GET /v1/relay`
 - Bounded opaque ciphertext routing with workspace/device sender binding
@@ -36,6 +36,7 @@ Configuration:
 |---|---|---|
 | `NM_ADDRESS` | `127.0.0.1:8080` | HTTP listen address |
 | `NM_DATABASE_PATH` | `data/syncnotifications.db` | SQLite registry and migration database |
+| `NM_AUTHORITY_KEY_DIR` | directory `authority-keys` beside the database | Owner-only directory for newly generated workspace authority PKCS#8 private keys; used by the admin CLI |
 | `NM_SHUTDOWN_TIMEOUT_SECONDS` | `10` | Graceful shutdown timeout |
 | `NM_TLS_CERT_FILE` | unset | PEM certificate chain for optional native HTTPS/WSS |
 | `NM_TLS_KEY_FILE` | unset | Matching PEM private key; must be configured with `NM_TLS_CERT_FILE` |
@@ -58,6 +59,8 @@ go run ./cmd/admin init-workspace
 NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
   issue-pairing-code --workspace <base64url-id> --type android --name Pixel --ttl 10m
 ```
+
+Workspace initialization stores only the authority public key in SQLite and writes the private key to an exclusive owner-only PKCS#8 file. The CLI prints its location and domain-separated public key ID, never private key material. Back up the database and exact key file separately; see [`docs/workspace-authority-key-lifecycle.md`](docs/workspace-authority-key-lifecycle.md). Existing pre-schema-v3 workspaces are not silently assigned an authority.
 
 The raw pairing code is printed once. SQLite stores only its SHA-256 hash. A successful registration returns a random 32-byte device credential once; only its SHA-256 hash is persisted.
 
