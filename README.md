@@ -4,7 +4,7 @@ Private self-hosted relay for Notification Mirroring. This is one of three indep
 
 Repository: <https://github.com/huaxianyan/SyncNotifications-Server>
 
-> Status: provisional private admission and authenticated ciphertext relay are implemented for synthetic test devices. ADR-005 now makes the server administrator the workspace membership authority; initial authority-key generation and separated private-key storage are implemented, while verified backup/restore, rotation, pending-device approval, authority-signed device certificates/rosters, offline delivery, and production security review are not complete yet. The existing bilateral client trust path is frozen and real third-party notification content remains blocked.
+> Status: provisional private admission and authenticated ciphertext relay are implemented for synthetic test devices. ADR-005 now makes the server administrator the workspace membership authority; initial authority-key custody plus the strict Workspace Membership v1 Server codec/vector are implemented, while Android/Chrome codecs, verified backup/restore, rotation, pending-device approval/persistence, roster delivery, offline delivery, and production security review are not complete yet. The existing bilateral client trust path is frozen and real third-party notification content remains blocked.
 
 ## Current functionality
 
@@ -15,7 +15,7 @@ Repository: <https://github.com/huaxianyan/SyncNotifications-Server>
 - First-binary-frame WebSocket authentication at `GET /v1/relay`
 - Bounded opaque ciphertext routing with workspace/device sender binding
 - Authentication/registration rate limits, five-second auth deadline, Ping/Pong liveness, and graceful shutdown
-- Canonical provisional protocol schema
+- Canonical provisional notification and Workspace Membership v1 schemas with cross-client test vectors
 
 The default bind address is `127.0.0.1:8080`; the service is not exposed publicly by default.
 
