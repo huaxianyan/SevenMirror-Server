@@ -1,8 +1,13 @@
 # ADR-004: Private instance admission and WebSocket transport authentication
 
-- Status: **Proposed — persistence, authentication, immediate revocation, and recoverable three-process transport rotation validated; administrator lifecycle, lost-device recovery, and security review pending**
+- Status: **Partially superseded by ADR-005 — transport admission and authentication retained; membership trust moves to the centralized workspace authority**
 - Date: 2026-08-18
 - Owners: Server, Android, and Chrome projects
+
+> ADR-005 is authoritative where this document says that trusted devices rather
+> than the server decide workspace membership or E2EE recipient eligibility.
+> `SNA1`/`SNO1`, transport credentials, TLS, immediate connection revocation,
+> and recoverable transport credential rotation remain in force.
 
 ## Context
 

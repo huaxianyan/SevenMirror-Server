@@ -1,8 +1,13 @@
 # ADR-002: Device identity, trust, and end-to-end encryption
 
-- Status: **Proposed — cryptography, identity persistence, pairing, ACK, transport revocation/rotation, and identity-transition protocol validated or specified; identity lifecycle implementation and security review pending**
+- Status: **Partially superseded by ADR-005 — Auth HPKE and per-recipient encryption retained; bilateral trust and per-peer identity lifecycle are no longer the target model**
 - Date: 2026-08-18
 - Owners: Server, Android, and Chrome projects
+
+> ADR-005 is authoritative for membership trust, device approval, roster, revocation,
+> and future identity rotation. Sections below describing bilateral safety-code
+> approval, local approved-peer directories, and all-peer transition completion
+> document the validated provisional implementation only.
 
 ## Context
 

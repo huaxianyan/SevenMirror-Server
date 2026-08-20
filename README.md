@@ -4,7 +4,7 @@ Private self-hosted relay for Notification Mirroring. This is one of three indep
 
 Repository: <https://github.com/huaxianyan/SyncNotifications-Server>
 
-> Status: provisional private admission and authenticated ciphertext relay are implemented for test devices. Client pairing UX, E2EE trust approval, revocation/rotation, offline delivery, and production security review are still incomplete; real notification content remains blocked.
+> Status: provisional private admission and authenticated ciphertext relay are implemented for synthetic test devices. ADR-005 now makes the server administrator the workspace membership authority; pending-device approval, authority-signed device certificates/rosters, authority-key lifecycle, offline delivery, and production security review are not implemented yet. The existing bilateral client trust path is frozen and real third-party notification content remains blocked.
 
 ## Current functionality
 
