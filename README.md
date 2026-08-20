@@ -64,7 +64,7 @@ Workspace initialization stores only the authority public key in SQLite and writ
 
 The raw pairing code is printed once. SQLite stores only its SHA-256 hash. A successful registration returns a random 32-byte device credential once; only its SHA-256 hash is persisted.
 
-The replacement pending/proof/state API is documented in [`docs/membership-http-v1.md`](docs/membership-http-v1.md). It returns a real RFC 9180 Base-HPKE identity challenge and keeps pending credentials outside relay authorization. The legacy endpoint remains unchanged until Android and Chrome persist authority pins and roster epochs.
+The replacement pending/proof/state API is documented in [`docs/membership-http-v1.md`](docs/membership-http-v1.md). It returns a real RFC 9180 Base-HPKE identity challenge and keeps pending credentials outside relay authorization. Current Android and Chrome enrollment entry points use this API and persist authority pins, roster epochs, and pending recovery journals. The legacy endpoint remains frozen for compatibility but is no longer used by those client entry points.
 
 List devices using redacted 96-bit administrative references, then revoke one exact device:
 
@@ -75,7 +75,7 @@ NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
   revoke-device --workspace <base64url-workspace-id> --device-ref <redacted-ref>
 ```
 
-The membership admin commands are available for pending records created through the new Store boundary; the public registration endpoint does not create those records yet:
+The membership admin commands operate on pending records created through `/v1/membership/register`; the frozen legacy `/v1/devices/register` endpoint continues to create only `legacy_active` records:
 
 ```sh
 NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
