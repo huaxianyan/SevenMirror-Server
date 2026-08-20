@@ -1,6 +1,6 @@
 # ADR-005: Centralized workspace membership authority
 
-- Status: **Accepted — authority-key custody, three-client membership v1 verification, and Server pending-proof/atomic approval persistence implemented; endpoint cutover, client persistence, verified recovery, rotation, and migration pending**
+- Status: **Accepted — authority-key custody, three-client membership v1 verification, Server pending-proof/atomic approval persistence, and isolated replacement HTTP endpoints implemented; client persistence, signed revocation, cutover, verified recovery, rotation, and migration pending**
 - Date: 2026-08-19
 - Owners: Server, Android, and Chrome projects
 
@@ -181,7 +181,7 @@ rotation, and recovery behavior.
 1. Complete the authority-key lifecycle contract in
    [`../workspace-authority-key-lifecycle.md`](../workspace-authority-key-lifecycle.md), including verified backup/restore tooling and signed rotation; initial generation, separated PKCS#8 custody, public-key persistence, and fail-closed loading are implemented.
 2. Vendor and independently verify the canonical pending proof, device certificate, signed roster, revocation, and fixed vector from [`../../protocol/workspace-membership-v1.md`](../../protocol/workspace-membership-v1.md) in Android and Chrome; the Server schema, strict codec, signatures, roster chaining, Base-HPKE challenge vector, and canonical vector are implemented.
-3. Connect the implemented Server pending-proof state, local administrator approval command, atomic certificate/roster persistence, and approved-only authorization to the replacement registration/proof/roster HTTP flow; the frozen public registration endpoint still creates explicitly `legacy_active` devices until clients can consume the replacement.
+3. Implement client consumption of the isolated [`../membership-http-v1.md`](../membership-http-v1.md) registration/proof/state flow, authority pinning, certificate storage, and contiguous roster persistence; the Server endpoints and approved-only authorization are implemented, while the frozen legacy endpoint still creates explicit `legacy_active` devices until cutover.
 4. Implement client authority-key pinning, highest-roster-epoch storage, and
    role enforcement.
 5. Replace pairwise recipient discovery in notification fanout.

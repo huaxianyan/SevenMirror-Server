@@ -11,7 +11,7 @@ Repository: <https://github.com/huaxianyan/SyncNotifications-Server>
 - `GET /healthz` and `GET /readyz`
 - SQLite/WAL schema migration and durable private device registry with explicit `legacy_active`, pending-proof, pending-approval, approved, and revoked membership states
 - Local admin CLI for workspace initialization with a unique Ed25519 authority and 192-bit, short-lived, one-time pairing codes
-- Code-gated `POST /v1/devices/register`; no open registration mode
+- Frozen code-gated `POST /v1/devices/register` plus isolated ADR-005 `/v1/membership/register|prove|state` replacement flow; no open registration mode
 - First-binary-frame WebSocket authentication at `GET /v1/relay`
 - Bounded opaque ciphertext routing with workspace/device sender binding
 - Authentication/registration rate limits, five-second auth deadline, Ping/Pong liveness, and graceful shutdown
@@ -21,7 +21,7 @@ The default bind address is `127.0.0.1:8080`; the service is not exposed publicl
 
 ## Requirements
 
-- Go 1.21 or newer
+- Go 1.24 or newer
 - Docker is optional
 
 ## Run
@@ -63,6 +63,8 @@ NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
 Workspace initialization stores only the authority public key in SQLite and writes the private key to an exclusive owner-only PKCS#8 file. The CLI prints its location and domain-separated public key ID, never private key material. Back up the database and exact key file separately; see [`docs/workspace-authority-key-lifecycle.md`](docs/workspace-authority-key-lifecycle.md). Existing pre-schema-v3 workspaces are not silently assigned an authority.
 
 The raw pairing code is printed once. SQLite stores only its SHA-256 hash. A successful registration returns a random 32-byte device credential once; only its SHA-256 hash is persisted.
+
+The replacement pending/proof/state API is documented in [`docs/membership-http-v1.md`](docs/membership-http-v1.md). It returns a real RFC 9180 Base-HPKE identity challenge and keeps pending credentials outside relay authorization. The legacy endpoint remains unchanged until Android and Chrome persist authority pins and roster epochs.
 
 List devices using redacted 96-bit administrative references, then revoke one exact device:
 

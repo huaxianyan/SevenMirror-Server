@@ -31,6 +31,7 @@ const (
 )
 
 const (
+	possessionHPKEInfoDomain   = "SyncNotifications-membership-possession-hpke-info-v1\x00"
 	challengeDigestDomain      = "SyncNotifications-membership-possession-challenge-digest-v1\x00"
 	certificateIDDomain        = "SyncNotifications-membership-device-certificate-id-v1\x00"
 	certificateSignatureDomain = "SyncNotifications-membership-device-certificate-signature-v1\x00"
@@ -74,6 +75,18 @@ func DecodePendingIdentityProof(encoded []byte) (*membershipv1.PendingIdentityPr
 		return nil, err
 	}
 	return value, nil
+}
+
+func PossessionHPKEInfo(workspaceID, deviceID, identityKeyID []byte) ([]byte, error) {
+	if err := validateBinding(workspaceID, deviceID, identityKeyID); err != nil {
+		return nil, err
+	}
+	info := make([]byte, 0, len(possessionHPKEInfoDomain)+len(workspaceID)+len(deviceID)+len(identityKeyID))
+	info = append(info, possessionHPKEInfoDomain...)
+	info = append(info, workspaceID...)
+	info = append(info, deviceID...)
+	info = append(info, identityKeyID...)
+	return info, nil
 }
 
 func ChallengeDigest(challenge *membershipv1.IdentityPossessionChallenge) ([DigestSize]byte, error) {

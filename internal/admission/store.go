@@ -42,6 +42,7 @@ var (
 	ErrWorkspaceAuthorityUnavailable  = errors.New("workspace authority is unavailable")
 	ErrInvalidMembershipProof         = errors.New("membership identity proof denied")
 	ErrMembershipRosterUpdateRequired = errors.New("certified device revocation requires a signed roster update")
+	ErrMembershipStateUnavailable     = errors.New("membership state is unavailable")
 )
 
 type WorkspaceID [16]byte
@@ -132,6 +133,14 @@ type PendingDeviceSummary struct {
 	Reference  string
 	DeviceType DeviceType
 	DeviceName string
+}
+
+type MembershipStateView struct {
+	State              string
+	AuthorityPublicKey authority.AuthorityPublicKey
+	SignedCertificate  []byte
+	Rosters            [][]byte
+	LatestRosterEpoch  int64
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -563,6 +572,67 @@ func (s *Store) ListPendingDevices(
 		return nil, fmt.Errorf("list pending devices: %w", err)
 	}
 	return result, nil
+}
+
+func (s *Store) ReadMembershipState(
+	ctx context.Context,
+	workspaceID WorkspaceID,
+	deviceID DeviceID,
+	authToken []byte,
+	afterRosterEpoch int64,
+) (MembershipStateView, error) {
+	if len(authToken) != authTokenBytes || afterRosterEpoch < 0 {
+		return MembershipStateView{}, ErrMembershipStateUnavailable
+	}
+	authHash := sha256.Sum256(authToken)
+	var state string
+	var authorityPublicKey, signedCertificate []byte
+	err := s.db.QueryRowContext(ctx, `
+		SELECT d.membership_state, w.authority_public_key, d.signed_certificate
+		FROM devices d JOIN workspaces w ON w.id = d.workspace_id
+		WHERE d.workspace_id = ? AND d.id = ? AND d.auth_token_hash = ?
+			AND d.revoked_at_ms IS NULL
+			AND d.membership_state IN ('pending_proof', 'pending_approval', 'approved')`,
+		workspaceID[:], deviceID[:], authHash[:]).Scan(&state, &authorityPublicKey, &signedCertificate)
+	if err != nil || len(authorityPublicKey) != ed25519.PublicKeySize {
+		return MembershipStateView{}, ErrMembershipStateUnavailable
+	}
+	view := MembershipStateView{State: state, SignedCertificate: append([]byte(nil), signedCertificate...)}
+	copy(view.AuthorityPublicKey[:], authorityPublicKey)
+	if state != "approved" {
+		return view, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT epoch, signed_roster FROM workspace_rosters
+		WHERE workspace_id = ? AND epoch > ? ORDER BY epoch LIMIT 256`,
+		workspaceID[:], afterRosterEpoch)
+	if err != nil {
+		return MembershipStateView{}, fmt.Errorf("read workspace roster chain: %w", err)
+	}
+	defer rows.Close()
+	expectedEpoch := afterRosterEpoch + 1
+	for rows.Next() {
+		var epoch int64
+		var signedRoster []byte
+		if err := rows.Scan(&epoch, &signedRoster); err != nil {
+			return MembershipStateView{}, fmt.Errorf("read workspace roster chain: %w", err)
+		}
+		if epoch != expectedEpoch {
+			return MembershipStateView{}, errors.New("workspace roster chain is not contiguous")
+		}
+		view.Rosters = append(view.Rosters, append([]byte(nil), signedRoster...))
+		view.LatestRosterEpoch = epoch
+		expectedEpoch++
+	}
+	if err := rows.Err(); err != nil {
+		return MembershipStateView{}, fmt.Errorf("read workspace roster chain: %w", err)
+	}
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(epoch), 0) FROM workspace_rosters WHERE workspace_id = ?`,
+		workspaceID[:]).Scan(&view.LatestRosterEpoch); err != nil {
+		return MembershipStateView{}, fmt.Errorf("read latest workspace roster epoch: %w", err)
+	}
+	return view, nil
 }
 
 func (s *Store) ListDevices(ctx context.Context, workspaceID WorkspaceID) ([]DeviceSummary, error) {
