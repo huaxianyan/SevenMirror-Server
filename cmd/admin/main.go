@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/base64"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -66,7 +68,7 @@ func main() {
 	case "approve-device":
 		approveDevice(store, databasePath, os.Args[2:])
 	case "revoke-device":
-		revokeDevice(store, os.Args[2:])
+		revokeDevice(store, databasePath, os.Args[2:])
 	case "issue-rotation-code":
 		issueRotationCode(store, os.Args[2:])
 	default:
@@ -148,13 +150,7 @@ func approveDevice(store *admission.Store, databasePath string, args []string) {
 		os.Exit(2)
 	}
 	workspace := parseWorkspaceID(*workspaceText)
-	publicKey, err := store.WorkspaceAuthorityPublicKey(context.Background(), workspace)
-	if err != nil {
-		fatal("load workspace authority", err)
-	}
-	privateKeyPath := filepath.Join(authorityKeyDirectory(databasePath),
-		"workspace-authority-"+membership.AuthorityKeyID(publicKey)+".pk8")
-	privateKey, err := membership.LoadAuthorityPrivateKey(privateKeyPath, publicKey)
+	privateKey, err := loadWorkspaceAuthorityPrivateKey(store, databasePath, workspace)
 	if err != nil {
 		fatal("load workspace authority", err)
 	}
@@ -204,7 +200,21 @@ func authorityKeyDirectory(databasePath string) string {
 	return filepath.Join(filepath.Dir(databasePath), "authority-keys")
 }
 
-func revokeDevice(store *admission.Store, args []string) {
+func loadWorkspaceAuthorityPrivateKey(
+	store *admission.Store,
+	databasePath string,
+	workspace admission.WorkspaceID,
+) (ed25519.PrivateKey, error) {
+	publicKey, err := store.WorkspaceAuthorityPublicKey(context.Background(), workspace)
+	if err != nil {
+		return nil, err
+	}
+	privateKeyPath := filepath.Join(authorityKeyDirectory(databasePath),
+		"workspace-authority-"+membership.AuthorityKeyID(publicKey)+".pk8")
+	return membership.LoadAuthorityPrivateKey(privateKeyPath, publicKey)
+}
+
+func revokeDevice(store *admission.Store, databasePath string, args []string) {
 	flags := flag.NewFlagSet("revoke-device", flag.ExitOnError)
 	workspaceText := flags.String("workspace", "", "base64url workspace ID")
 	reference := flags.String("device-ref", "", "redacted device reference from list-devices")
@@ -213,14 +223,27 @@ func revokeDevice(store *admission.Store, args []string) {
 		flags.Usage()
 		os.Exit(2)
 	}
-	changed, err := store.RevokeDevice(
-		context.Background(), parseWorkspaceID(*workspaceText), *reference, time.Now())
+	workspace := parseWorkspaceID(*workspaceText)
+	privateKey, err := loadWorkspaceAuthorityPrivateKey(store, databasePath, workspace)
+	if err != nil && !errors.Is(err, admission.ErrWorkspaceAuthorityUnavailable) {
+		fatal("load workspace authority", err)
+	}
+	defer clear(privateKey)
+	revoked, err := store.RevokeDevice(context.Background(), admission.RevokeDeviceInput{
+		WorkspaceID: workspace, DeviceReference: *reference,
+		AuthorityPrivateKey: privateKey, Now: time.Now(),
+	})
 	if err != nil {
 		fatal("revoke device", err)
 	}
 	result := "already-revoked"
-	if changed {
+	if revoked.Changed {
 		result = "revoked"
+	}
+	if revoked.RosterEpoch > 0 {
+		fmt.Printf("device_ref=%s result=%s roster_epoch=%d\n",
+			*reference, result, revoked.RosterEpoch)
+		return
 	}
 	fmt.Printf("device_ref=%s result=%s\n", *reference, result)
 }

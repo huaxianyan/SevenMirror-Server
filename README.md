@@ -85,7 +85,7 @@ NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
   --roles receive,invoke
 ```
 
-Approval loads the exact workspace authority key from `NM_AUTHORITY_KEY_DIR`, signs the device certificate, advances and signs the roster, and commits the certificate, device state, and roster in one SQLite transaction. It prints only the redacted device reference and roster epoch. The legacy `revoke-device` path refuses certified devices because revoking one without atomically signing the next roster would create conflicting authorization state; certified revocation is the next persistence slice.
+Approval loads the exact workspace authority key from `NM_AUTHORITY_KEY_DIR`, signs the device certificate, advances and signs the roster, and commits the certificate, device state, and roster in one SQLite transaction. It prints only the redacted device reference and roster epoch. `revoke-device` uses the same authority custody path for certified members: one SQLite transaction removes the exact certificate from the active set, appends its revocation, advances and signs the roster, and marks the device revoked. Legacy devices remain revocable without creating a roster entry.
 
 The list and revoke commands never print a full device ID, transport credential, or E2EE public key. Revocation is durable and idempotent. New authentication fails immediately; the running server revalidates active peers every 250 ms, atomically removes a revoked peer from ciphertext routing, and closes its WebSocket with a fixed policy response. Authorization lookup failures disconnect only the affected peer fail-closed.
 

@@ -36,15 +36,14 @@ const (
 )
 
 var (
-	ErrInvalidPairingCode             = errors.New("invalid or expired pairing code")
-	ErrInvalidRegistration            = errors.New("invalid device registration")
-	ErrUnauthorized                   = errors.New("device authentication failed")
-	ErrInvalidRotation                = errors.New("credential rotation denied")
-	ErrDeviceNotFound                 = errors.New("device not found")
-	ErrWorkspaceAuthorityUnavailable  = errors.New("workspace authority is unavailable")
-	ErrInvalidMembershipProof         = errors.New("membership identity proof denied")
-	ErrMembershipRosterUpdateRequired = errors.New("certified device revocation requires a signed roster update")
-	ErrMembershipStateUnavailable     = errors.New("membership state is unavailable")
+	ErrInvalidPairingCode            = errors.New("invalid or expired pairing code")
+	ErrInvalidRegistration           = errors.New("invalid device registration")
+	ErrUnauthorized                  = errors.New("device authentication failed")
+	ErrInvalidRotation               = errors.New("credential rotation denied")
+	ErrDeviceNotFound                = errors.New("device not found")
+	ErrWorkspaceAuthorityUnavailable = errors.New("workspace authority is unavailable")
+	ErrInvalidMembershipProof        = errors.New("membership identity proof denied")
+	ErrMembershipStateUnavailable    = errors.New("membership state is unavailable")
 )
 
 type WorkspaceID [16]byte
@@ -103,6 +102,20 @@ type ApprovePendingDevice struct {
 type ApprovedMembership struct {
 	DeviceReference string
 	CertificateID   [sha256.Size]byte
+	RosterEpoch     int64
+	RosterDigest    [sha256.Size]byte
+}
+
+type RevokeDeviceInput struct {
+	WorkspaceID         WorkspaceID
+	DeviceReference     string
+	AuthorityPrivateKey ed25519.PrivateKey
+	Now                 time.Time
+}
+
+type RevokedDevice struct {
+	DeviceReference string
+	Changed         bool
 	RosterEpoch     int64
 	RosterDigest    [sha256.Size]byte
 }
@@ -431,37 +444,15 @@ func (s *Store) ApprovePendingMembership(
 		return ApprovedMembership{}, ErrDeviceNotFound
 	}
 
-	var previousRoster *membershipv1.SignedWorkspaceRoster
-	var previousEncoded []byte
-	err = tx.QueryRowContext(ctx, `
-		SELECT signed_roster FROM workspace_rosters
-		WHERE workspace_id = ? ORDER BY epoch DESC LIMIT 1`, input.WorkspaceID[:]).Scan(&previousEncoded)
-	if err == nil {
-		previousRoster, err = membershipcodec.DecodeSignedWorkspaceRoster(previousEncoded, authorityPublicKey)
-		if err != nil {
-			return ApprovedMembership{}, fmt.Errorf("read current workspace roster: %w", err)
-		}
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return ApprovedMembership{}, fmt.Errorf("read current workspace roster: %w", err)
+	nextRoster, err := prepareNextWorkspaceRoster(
+		ctx, tx, input.WorkspaceID, authorityPublicKey)
+	if err != nil {
+		return ApprovedMembership{}, err
 	}
-
-	rosterEpoch := int64(1)
-	previousDigest := make([]byte, sha256.Size)
-	activeCertificates := make([]*membershipv1.SignedDeviceCertificate, 0, 1)
-	revocations := make([]*membershipv1.RevokedCertificate, 0)
-	if previousRoster != nil {
-		if previousRoster.GetRoster().GetRosterEpoch() >= uint64(math.MaxInt64) {
-			return ApprovedMembership{}, errors.New("workspace roster epoch exhausted")
-		}
-		rosterEpoch = int64(previousRoster.GetRoster().GetRosterEpoch()) + 1
-		previousDigest = append([]byte(nil), previousRoster.GetRosterDigest()...)
-		for _, certificate := range previousRoster.GetRoster().GetActiveCertificates() {
-			activeCertificates = append(activeCertificates, proto.Clone(certificate).(*membershipv1.SignedDeviceCertificate))
-		}
-		for _, revocation := range previousRoster.GetRoster().GetRevocations() {
-			revocations = append(revocations, proto.Clone(revocation).(*membershipv1.RevokedCertificate))
-		}
-	}
+	rosterEpoch := nextRoster.Epoch
+	previousDigest := nextRoster.PreviousDigest
+	activeCertificates := nextRoster.ActiveCertificates
+	revocations := nextRoster.Revocations
 	identityKeyID := sha256.Sum256(identityPublicKey)
 	certificate, err := membershipcodec.SignDeviceCertificate(&membershipv1.DeviceCertificate{
 		ProtocolVersion:   membershipcodec.ProtocolVersion,
@@ -516,12 +507,9 @@ func (s *Store) ApprovePendingMembership(
 	if rows, rowsErr := result.RowsAffected(); rowsErr != nil || rows != 1 {
 		return ApprovedMembership{}, ErrDeviceNotFound
 	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO workspace_rosters
-		(workspace_id, epoch, digest, previous_digest, signed_roster, created_at_ms)
-		VALUES (?, ?, ?, ?, ?, ?)`, input.WorkspaceID[:], rosterEpoch,
-		roster.GetRosterDigest(), previousDigest, rosterEncoded, unixMillis(input.Now)); err != nil {
-		return ApprovedMembership{}, fmt.Errorf("store workspace roster: %w", err)
+	if err := insertWorkspaceRoster(ctx, tx, input.WorkspaceID, rosterEpoch,
+		previousDigest, roster, rosterEncoded, input.Now); err != nil {
+		return ApprovedMembership{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return ApprovedMembership{}, fmt.Errorf("commit membership approval: %w", err)
@@ -531,6 +519,79 @@ func (s *Store) ApprovePendingMembership(
 	copy(rosterDigest[:], roster.GetRosterDigest())
 	return ApprovedMembership{DeviceReference: input.DeviceReference, CertificateID: certificateID,
 		RosterEpoch: rosterEpoch, RosterDigest: rosterDigest}, nil
+}
+
+type workspaceRosterDraft struct {
+	Epoch              int64
+	PreviousDigest     []byte
+	ActiveCertificates []*membershipv1.SignedDeviceCertificate
+	Revocations        []*membershipv1.RevokedCertificate
+}
+
+func prepareNextWorkspaceRoster(
+	ctx context.Context,
+	tx *sql.Tx,
+	workspaceID WorkspaceID,
+	authorityPublicKey ed25519.PublicKey,
+) (workspaceRosterDraft, error) {
+	var previousEncoded []byte
+	err := tx.QueryRowContext(ctx, `
+		SELECT signed_roster FROM workspace_rosters
+		WHERE workspace_id = ? ORDER BY epoch DESC LIMIT 1`, workspaceID[:]).Scan(&previousEncoded)
+	if errors.Is(err, sql.ErrNoRows) {
+		return workspaceRosterDraft{
+			Epoch:              1,
+			PreviousDigest:     make([]byte, sha256.Size),
+			ActiveCertificates: make([]*membershipv1.SignedDeviceCertificate, 0),
+			Revocations:        make([]*membershipv1.RevokedCertificate, 0),
+		}, nil
+	}
+	if err != nil {
+		return workspaceRosterDraft{}, fmt.Errorf("read current workspace roster: %w", err)
+	}
+	previous, err := membershipcodec.DecodeSignedWorkspaceRoster(
+		previousEncoded, authorityPublicKey)
+	if err != nil {
+		return workspaceRosterDraft{}, fmt.Errorf("read current workspace roster: %w", err)
+	}
+	if previous.GetRoster().GetRosterEpoch() >= uint64(math.MaxInt64) {
+		return workspaceRosterDraft{}, errors.New("workspace roster epoch exhausted")
+	}
+	draft := workspaceRosterDraft{
+		Epoch:              int64(previous.GetRoster().GetRosterEpoch()) + 1,
+		PreviousDigest:     append([]byte(nil), previous.GetRosterDigest()...),
+		ActiveCertificates: make([]*membershipv1.SignedDeviceCertificate, 0, len(previous.GetRoster().GetActiveCertificates())),
+		Revocations:        make([]*membershipv1.RevokedCertificate, 0, len(previous.GetRoster().GetRevocations())),
+	}
+	for _, certificate := range previous.GetRoster().GetActiveCertificates() {
+		draft.ActiveCertificates = append(draft.ActiveCertificates,
+			proto.Clone(certificate).(*membershipv1.SignedDeviceCertificate))
+	}
+	for _, revocation := range previous.GetRoster().GetRevocations() {
+		draft.Revocations = append(draft.Revocations,
+			proto.Clone(revocation).(*membershipv1.RevokedCertificate))
+	}
+	return draft, nil
+}
+
+func insertWorkspaceRoster(
+	ctx context.Context,
+	tx *sql.Tx,
+	workspaceID WorkspaceID,
+	epoch int64,
+	previousDigest []byte,
+	roster *membershipv1.SignedWorkspaceRoster,
+	encoded []byte,
+	now time.Time,
+) error {
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO workspace_rosters
+		(workspace_id, epoch, digest, previous_digest, signed_roster, created_at_ms)
+		VALUES (?, ?, ?, ?, ?, ?)`, workspaceID[:], epoch,
+		roster.GetRosterDigest(), previousDigest, encoded, unixMillis(now)); err != nil {
+		return fmt.Errorf("store workspace roster: %w", err)
+	}
+	return nil
 }
 
 func membershipDeviceType(value DeviceType) membershipv1.DeviceType {
@@ -695,34 +756,146 @@ func (s *Store) ListDevices(ctx context.Context, workspaceID WorkspaceID) ([]Dev
 
 func (s *Store) RevokeDevice(
 	ctx context.Context,
-	workspaceID WorkspaceID,
-	reference string,
-	now time.Time,
-) (bool, error) {
-	deviceID, err := s.resolveDeviceReference(ctx, workspaceID, reference)
+	input RevokeDeviceInput,
+) (RevokedDevice, error) {
+	deviceID, err := s.resolveDeviceReference(ctx, input.WorkspaceID, input.DeviceReference)
 	if err != nil {
-		return false, err
+		return RevokedDevice{}, err
 	}
-	result, err := s.db.ExecContext(ctx, `
-		UPDATE devices SET revoked_at_ms = ?, membership_state = 'revoked'
-		WHERE workspace_id = ? AND id = ? AND revoked_at_ms IS NULL
-			AND membership_state != 'approved'`,
-		unixMillis(now), workspaceID[:], deviceID[:])
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return false, fmt.Errorf("revoke device: %w", err)
+		return RevokedDevice{}, fmt.Errorf("begin device revocation: %w", err)
 	}
-	updated, err := result.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("revoke device: %w", err)
+	defer tx.Rollback()
+
+	var state string
+	var certificateID, signedCertificate []byte
+	var alreadyRevoked bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT membership_state, certificate_id, signed_certificate, revoked_at_ms IS NOT NULL
+		FROM devices WHERE workspace_id = ? AND id = ?`,
+		input.WorkspaceID[:], deviceID[:]).Scan(
+		&state, &certificateID, &signedCertificate, &alreadyRevoked); err != nil {
+		return RevokedDevice{}, ErrDeviceNotFound
 	}
-	if updated == 0 {
-		var state string
-		if err := s.db.QueryRowContext(ctx, `SELECT membership_state FROM devices
-			WHERE workspace_id = ? AND id = ?`, workspaceID[:], deviceID[:]).Scan(&state); err == nil && state == "approved" {
-			return false, ErrMembershipRosterUpdateRequired
+	result := RevokedDevice{DeviceReference: input.DeviceReference}
+	if alreadyRevoked {
+		return result, nil
+	}
+	if state != "approved" {
+		updated, err := tx.ExecContext(ctx, `
+			UPDATE devices SET revoked_at_ms = ?, membership_state = 'revoked'
+			WHERE workspace_id = ? AND id = ? AND revoked_at_ms IS NULL
+				AND membership_state != 'approved'`,
+			unixMillis(input.Now), input.WorkspaceID[:], deviceID[:])
+		if err != nil {
+			return RevokedDevice{}, fmt.Errorf("revoke device: %w", err)
 		}
+		rows, err := updated.RowsAffected()
+		if err != nil || rows != 1 {
+			return RevokedDevice{}, ErrDeviceNotFound
+		}
+		if err := tx.Commit(); err != nil {
+			return RevokedDevice{}, fmt.Errorf("commit device revocation: %w", err)
+		}
+		result.Changed = true
+		return result, nil
 	}
-	return updated == 1, nil
+
+	if len(input.AuthorityPrivateKey) != ed25519.PrivateKeySize ||
+		len(certificateID) != sha256.Size || len(signedCertificate) == 0 {
+		return RevokedDevice{}, ErrWorkspaceAuthorityUnavailable
+	}
+	var authorityPublicKey []byte
+	if err := tx.QueryRowContext(ctx,
+		`SELECT authority_public_key FROM workspaces WHERE id = ?`, input.WorkspaceID[:]).Scan(
+		&authorityPublicKey); err != nil || len(authorityPublicKey) != ed25519.PublicKeySize ||
+		!bytes.Equal(input.AuthorityPrivateKey.Public().(ed25519.PublicKey), authorityPublicKey) {
+		return RevokedDevice{}, ErrWorkspaceAuthorityUnavailable
+	}
+	nextRoster, err := prepareNextWorkspaceRoster(
+		ctx, tx, input.WorkspaceID, authorityPublicKey)
+	if err != nil {
+		return RevokedDevice{}, err
+	}
+	if nextRoster.Epoch == 1 {
+		return RevokedDevice{}, errors.New("approved device has no workspace roster")
+	}
+	storedCertificate, err := membershipcodec.DecodeSignedDeviceCertificate(
+		signedCertificate, authorityPublicKey)
+	if err != nil || !bytes.Equal(storedCertificate.GetCertificateId(), certificateID) ||
+		!bytes.Equal(storedCertificate.GetCertificate().GetWorkspaceId(), input.WorkspaceID[:]) ||
+		!bytes.Equal(storedCertificate.GetCertificate().GetDeviceId(), deviceID[:]) {
+		return RevokedDevice{}, errors.New("stored device certificate is invalid")
+	}
+
+	activeCertificates := make([]*membershipv1.SignedDeviceCertificate, 0,
+		len(nextRoster.ActiveCertificates))
+	found := false
+	for _, certificate := range nextRoster.ActiveCertificates {
+		if bytes.Equal(certificate.GetCertificate().GetDeviceId(), deviceID[:]) {
+			encoded, encodeErr := membershipcodec.EncodeSignedDeviceCertificate(
+				certificate, authorityPublicKey)
+			if encodeErr != nil || !bytes.Equal(encoded, signedCertificate) {
+				return RevokedDevice{}, errors.New("active roster certificate does not match the device record")
+			}
+			found = true
+			continue
+		}
+		activeCertificates = append(activeCertificates,
+			proto.Clone(certificate).(*membershipv1.SignedDeviceCertificate))
+	}
+	if !found {
+		return RevokedDevice{}, errors.New("approved device certificate is not active in the workspace roster")
+	}
+	revocations := nextRoster.Revocations
+	revocations = append(revocations, &membershipv1.RevokedCertificate{
+		CertificateId:   append([]byte(nil), certificateID...),
+		DeviceId:        append([]byte(nil), deviceID[:]...),
+		RevokedAtUnixMs: uint64(unixMillis(input.Now)),
+	})
+	sort.Slice(revocations, func(left, right int) bool {
+		return bytes.Compare(revocations[left].GetCertificateId(),
+			revocations[right].GetCertificateId()) < 0
+	})
+	rosterEpoch := nextRoster.Epoch
+	previousDigest := nextRoster.PreviousDigest
+	roster, err := membershipcodec.SignWorkspaceRoster(&membershipv1.WorkspaceRoster{
+		ProtocolVersion:      membershipcodec.ProtocolVersion,
+		WorkspaceId:          append([]byte(nil), input.WorkspaceID[:]...),
+		RosterEpoch:          uint64(rosterEpoch),
+		PreviousRosterDigest: previousDigest,
+		ActiveCertificates:   activeCertificates,
+		Revocations:          revocations,
+	}, input.AuthorityPrivateKey)
+	if err != nil {
+		return RevokedDevice{}, fmt.Errorf("sign workspace revocation roster: %w", err)
+	}
+	rosterEncoded, err := membershipcodec.EncodeSignedWorkspaceRoster(roster, authorityPublicKey)
+	if err != nil {
+		return RevokedDevice{}, err
+	}
+	updated, err := tx.ExecContext(ctx, `
+		UPDATE devices SET revoked_at_ms = ?, membership_state = 'revoked'
+		WHERE workspace_id = ? AND id = ? AND membership_state = 'approved'
+			AND revoked_at_ms IS NULL`, unixMillis(input.Now), input.WorkspaceID[:], deviceID[:])
+	if err != nil {
+		return RevokedDevice{}, fmt.Errorf("revoke certified device: %w", err)
+	}
+	if rows, rowsErr := updated.RowsAffected(); rowsErr != nil || rows != 1 {
+		return RevokedDevice{}, ErrDeviceNotFound
+	}
+	if err := insertWorkspaceRoster(ctx, tx, input.WorkspaceID, rosterEpoch,
+		previousDigest, roster, rosterEncoded, input.Now); err != nil {
+		return RevokedDevice{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return RevokedDevice{}, fmt.Errorf("commit certified device revocation: %w", err)
+	}
+	result.Changed = true
+	result.RosterEpoch = rosterEpoch
+	copy(result.RosterDigest[:], roster.GetRosterDigest())
+	return result, nil
 }
 
 func (s *Store) IssueCredentialRotationCode(

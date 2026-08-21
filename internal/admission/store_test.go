@@ -257,10 +257,59 @@ func TestPendingRegistrationRequiresExactIdentityProofBeforeApproval(t *testing.
 	}); !errors.Is(err, ErrDeviceNotFound) {
 		t.Fatalf("repeated approval error=%v", err)
 	}
-	if _, err := store.RevokeDevice(
-		ctx, workspace, deviceReference(workspace, device.DeviceID), now.Add(5*time.Minute),
-	); !errors.Is(err, ErrMembershipRosterUpdateRequired) {
-		t.Fatalf("certified device legacy revocation error=%v", err)
+	if _, err := store.RevokeDevice(ctx, RevokeDeviceInput{
+		WorkspaceID: workspace, DeviceReference: deviceReference(workspace, device.DeviceID),
+		Now: now.Add(6 * time.Minute),
+	}); !errors.Is(err, ErrWorkspaceAuthorityUnavailable) {
+		t.Fatalf("certified revocation without authority error=%v", err)
+	}
+	if authorized, err := store.IsDeviceAuthorized(ctx, workspace, device.DeviceID); err != nil || !authorized {
+		t.Fatalf("failed revocation changed authorization=%v error=%v", authorized, err)
+	}
+	revoked, err := store.RevokeDevice(ctx, RevokeDeviceInput{
+		WorkspaceID: workspace, DeviceReference: deviceReference(workspace, device.DeviceID),
+		AuthorityPrivateKey: authorityPrivateKey, Now: now.Add(6 * time.Minute),
+	})
+	if err != nil || !revoked.Changed || revoked.RosterEpoch != 3 ||
+		revoked.RosterDigest == ([sha256.Size]byte{}) {
+		t.Fatalf("certified revocation=%+v error=%v", revoked, err)
+	}
+	var revocationRosterBytes []byte
+	if err := store.db.QueryRow(`SELECT signed_roster FROM workspace_rosters
+		WHERE workspace_id = ? AND epoch = 3`, workspace[:]).Scan(&revocationRosterBytes); err != nil {
+		t.Fatal(err)
+	}
+	revocationRoster, err := membershipcodec.DecodeSignedWorkspaceRoster(
+		revocationRosterBytes, authorityPrivateKey.Public().(ed25519.PublicKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(revocationRoster.GetRoster().GetPreviousRosterDigest(), bootstrapRoster.GetRosterDigest()) ||
+		len(revocationRoster.GetRoster().GetActiveCertificates()) != 1 ||
+		!bytes.Equal(revocationRoster.GetRoster().GetActiveCertificates()[0].GetCertificate().GetDeviceId(), second.DeviceID[:]) ||
+		len(revocationRoster.GetRoster().GetRevocations()) != 1 ||
+		!bytes.Equal(revocationRoster.GetRoster().GetRevocations()[0].GetCertificateId(), approved.CertificateID[:]) ||
+		!bytes.Equal(revocationRoster.GetRoster().GetRevocations()[0].GetDeviceId(), device.DeviceID[:]) {
+		t.Fatalf("unexpected revocation roster: %+v", revocationRoster)
+	}
+	if authorized, err := store.IsSessionAuthorized(ctx, workspace, device.DeviceID, 1); err != nil || authorized {
+		t.Fatalf("revoked certified session authorization=%v error=%v", authorized, err)
+	}
+	if authorized, err := store.IsSessionAuthorized(ctx, workspace, second.DeviceID, 1); err != nil || !authorized {
+		t.Fatalf("remaining certified session authorization=%v error=%v", authorized, err)
+	}
+	remainingState, err := store.ReadMembershipState(
+		ctx, workspace, second.DeviceID, second.AuthToken, 2)
+	if err != nil || remainingState.LatestRosterEpoch != 3 || len(remainingState.Rosters) != 1 ||
+		!bytes.Equal(remainingState.Rosters[0], revocationRosterBytes) {
+		t.Fatalf("remaining member revocation page=%+v error=%v", remainingState, err)
+	}
+	duplicate, err := store.RevokeDevice(ctx, RevokeDeviceInput{
+		WorkspaceID: workspace, DeviceReference: deviceReference(workspace, device.DeviceID),
+		AuthorityPrivateKey: authorityPrivateKey, Now: now.Add(7 * time.Minute),
+	})
+	if err != nil || duplicate.Changed {
+		t.Fatalf("duplicate certified revocation=%+v error=%v", duplicate, err)
 	}
 	for _, databaseFile := range []string{path, path + "-wal"} {
 		contents, readErr := os.ReadFile(databaseFile)
@@ -349,21 +398,31 @@ func TestDeviceRevocationIsIdempotentPersistentAndWorkspaceBound(t *testing.T) {
 	if reference == deviceReference(otherWorkspace, revokedDevice.DeviceID) {
 		t.Fatal("device reference was not workspace-bound")
 	}
-	if _, err := store.RevokeDevice(ctx, workspace, "not-canonical", now); !errors.Is(err, ErrDeviceNotFound) {
+	if _, err := store.RevokeDevice(ctx, RevokeDeviceInput{
+		WorkspaceID: workspace, DeviceReference: "not-canonical", Now: now,
+	}); !errors.Is(err, ErrDeviceNotFound) {
 		t.Fatalf("malformed reference error = %v", err)
 	}
 	unknownReference := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{9}, 12))
-	if _, err := store.RevokeDevice(ctx, workspace, unknownReference, now); !errors.Is(err, ErrDeviceNotFound) {
+	if _, err := store.RevokeDevice(ctx, RevokeDeviceInput{
+		WorkspaceID: workspace, DeviceReference: unknownReference, Now: now,
+	}); !errors.Is(err, ErrDeviceNotFound) {
 		t.Fatalf("unknown reference error = %v", err)
 	}
-	if _, err := store.RevokeDevice(ctx, otherWorkspace, reference, now); !errors.Is(err, ErrDeviceNotFound) {
+	if _, err := store.RevokeDevice(ctx, RevokeDeviceInput{
+		WorkspaceID: otherWorkspace, DeviceReference: reference, Now: now,
+	}); !errors.Is(err, ErrDeviceNotFound) {
 		t.Fatalf("cross-workspace revocation error = %v", err)
 	}
-	if changed, err := store.RevokeDevice(ctx, workspace, reference, now.Add(time.Second)); err != nil || !changed {
-		t.Fatalf("first revocation changed=%v error=%v", changed, err)
+	if revoked, err := store.RevokeDevice(ctx, RevokeDeviceInput{
+		WorkspaceID: workspace, DeviceReference: reference, Now: now.Add(time.Second),
+	}); err != nil || !revoked.Changed {
+		t.Fatalf("first revocation=%+v error=%v", revoked, err)
 	}
-	if changed, err := store.RevokeDevice(ctx, workspace, reference, now.Add(2*time.Second)); err != nil || changed {
-		t.Fatalf("duplicate revocation changed=%v error=%v", changed, err)
+	if revoked, err := store.RevokeDevice(ctx, RevokeDeviceInput{
+		WorkspaceID: workspace, DeviceReference: reference, Now: now.Add(2 * time.Second),
+	}); err != nil || revoked.Changed {
+		t.Fatalf("duplicate revocation=%+v error=%v", revoked, err)
 	}
 	if _, err := store.Authenticate(ctx, workspace, revokedDevice.DeviceID,
 		revokedDevice.AuthToken, now.Add(3*time.Second)); !errors.Is(err, ErrUnauthorized) {
@@ -607,10 +666,11 @@ func TestCredentialRotationCodeIsExactDeviceBoundAndExpires(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed, err := store.RevokeDevice(
-		ctx, workspace, deviceReference(workspace, otherDevice.DeviceID), now,
-	); err != nil || !changed {
-		t.Fatalf("revoke before rotation changed=%v error=%v", changed, err)
+	if revoked, err := store.RevokeDevice(ctx, RevokeDeviceInput{
+		WorkspaceID: workspace, DeviceReference: deviceReference(workspace, otherDevice.DeviceID),
+		Now: now,
+	}); err != nil || !revoked.Changed {
+		t.Fatalf("revoke before rotation=%+v error=%v", revoked, err)
 	}
 	if _, err := store.RotateCredential(ctx, CredentialRotation{
 		WorkspaceID: workspace, DeviceID: otherDevice.DeviceID,

@@ -109,9 +109,11 @@ func TestDurableRevocationClosesActiveRelayAndRejectsReconnect(t *testing.T) {
 	if _, message, err := connection.ReadMessage(); err != nil || string(message) != "SNO1" {
 		t.Fatalf("authentication acknowledgement = %q, error = %v", message, err)
 	}
-	if changed, err := store.RevokeDevice(ctx, workspace,
-		deviceReference(workspace, registered.DeviceID), now.Add(time.Second)); err != nil || !changed {
-		t.Fatalf("revocation changed=%v error=%v", changed, err)
+	if revoked, err := store.RevokeDevice(ctx, RevokeDeviceInput{
+		WorkspaceID: workspace, DeviceReference: deviceReference(workspace, registered.DeviceID),
+		Now: now.Add(time.Second),
+	}); err != nil || !revoked.Changed {
+		t.Fatalf("revocation=%+v error=%v", revoked, err)
 	}
 	if err := connection.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatal(err)
