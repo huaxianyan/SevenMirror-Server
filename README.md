@@ -2,7 +2,7 @@
 
 Private self-hosted relay for Notification Mirroring. This is one of three independent repositories.
 
-Repository: <https://github.com/huaxianyan/SyncNotifications-Server>
+Repository: <https://github.com/huaxianyan/SevenMirror-Server>
 
 > Status: provisional private admission and authenticated ciphertext relay are implemented for synthetic test devices. ADR-005 authority-key custody, strict three-client Workspace Membership v1 codecs/vectors, and the Server pending-proof/atomic approval persistence boundary are implemented. The public registration endpoint still uses the frozen legacy 1 × 1 path until clients can retrieve and persist certificates/rosters; verified backup/restore, authority rotation, roster delivery, offline delivery, and production security review remain incomplete. The existing bilateral client trust path is frozen and real third-party notification content remains blocked.
 
