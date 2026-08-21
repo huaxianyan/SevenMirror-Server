@@ -37,7 +37,7 @@ The response contains:
 
 For `after_roster_epoch = 0`, an approved device starts at its certificate's membership epoch rather than replaying rosters from before it joined; that first returned roster must contain the exact local certificate under the bootstrap rule. If a page does not reach the latest epoch, the client validates the returned chain, durably persists its last accepted epoch/digest, and requests the next page. A previously enrolled client must not skip epochs.
 
-The endpoint authenticates pending or approved membership credentials but does not make pending credentials valid for WebSocket relay authentication.
+The endpoint authenticates pending or approved membership credentials but does not make pending credentials valid for WebSocket relay authentication. A certified revoked device retains read-only access only through the exact signed roster epoch that revoked its certificate. The response is reported as `approved` so existing clients can verify and durably apply that terminal roster, but `latest_roster_epoch` and roster pages are clamped to the recorded revocation epoch. The credential cannot authenticate relay traffic and cannot observe later workspace membership changes.
 
 ## Legacy isolation
 

@@ -650,19 +650,25 @@ func (s *Store) ReadMembershipState(
 	authHash := sha256.Sum256(authToken)
 	var state string
 	var authorityPublicKey, signedCertificate []byte
+	var revokedMembershipEpoch sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `
-		SELECT d.membership_state, w.authority_public_key, d.signed_certificate
+		SELECT d.membership_state, w.authority_public_key, d.signed_certificate,
+			d.revoked_membership_epoch
 		FROM devices d JOIN workspaces w ON w.id = d.workspace_id
 		WHERE d.workspace_id = ? AND d.id = ? AND d.auth_token_hash = ?
-			AND d.revoked_at_ms IS NULL
-			AND d.membership_state IN ('pending_proof', 'pending_approval', 'approved')`,
-		workspaceID[:], deviceID[:], authHash[:]).Scan(&state, &authorityPublicKey, &signedCertificate)
+			AND ((d.revoked_at_ms IS NULL AND
+				d.membership_state IN ('pending_proof', 'pending_approval', 'approved'))
+				OR (d.membership_state = 'revoked' AND d.revoked_membership_epoch IS NOT NULL))`,
+		workspaceID[:], deviceID[:], authHash[:]).Scan(
+		&state, &authorityPublicKey, &signedCertificate, &revokedMembershipEpoch)
 	if err != nil || len(authorityPublicKey) != ed25519.PublicKeySize {
 		return MembershipStateView{}, ErrMembershipStateUnavailable
 	}
 	view := MembershipStateView{State: state, SignedCertificate: append([]byte(nil), signedCertificate...)}
 	copy(view.AuthorityPublicKey[:], authorityPublicKey)
-	if state != "approved" {
+	if state == "revoked" {
+		view.State = "approved"
+	} else if state != "approved" {
 		return view, nil
 	}
 	queryAfterEpoch := afterRosterEpoch
@@ -677,10 +683,14 @@ func (s *Store) ReadMembershipState(
 		}
 		queryAfterEpoch = int64(certificate.GetCertificate().GetMembershipEpoch()) - 1
 	}
+	maximumEpoch := int64(math.MaxInt64)
+	if revokedMembershipEpoch.Valid {
+		maximumEpoch = revokedMembershipEpoch.Int64
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT epoch, signed_roster FROM workspace_rosters
-		WHERE workspace_id = ? AND epoch > ? ORDER BY epoch LIMIT ?`,
-		workspaceID[:], queryAfterEpoch, maxMembershipRosterPage)
+		WHERE workspace_id = ? AND epoch > ? AND epoch <= ? ORDER BY epoch LIMIT ?`,
+		workspaceID[:], queryAfterEpoch, maximumEpoch, maxMembershipRosterPage)
 	if err != nil {
 		return MembershipStateView{}, fmt.Errorf("read workspace roster chain: %w", err)
 	}
@@ -706,7 +716,9 @@ func (s *Store) ReadMembershipState(
 	if err := rows.Err(); err != nil {
 		return MembershipStateView{}, fmt.Errorf("read workspace roster chain: %w", err)
 	}
-	if err := s.db.QueryRowContext(ctx,
+	if revokedMembershipEpoch.Valid {
+		view.LatestRosterEpoch = revokedMembershipEpoch.Int64
+	} else if err := s.db.QueryRowContext(ctx,
 		`SELECT COALESCE(MAX(epoch), 0) FROM workspace_rosters WHERE workspace_id = ?`,
 		workspaceID[:]).Scan(&view.LatestRosterEpoch); err != nil {
 		return MembershipStateView{}, fmt.Errorf("read latest workspace roster epoch: %w", err)
@@ -876,9 +888,11 @@ func (s *Store) RevokeDevice(
 		return RevokedDevice{}, err
 	}
 	updated, err := tx.ExecContext(ctx, `
-		UPDATE devices SET revoked_at_ms = ?, membership_state = 'revoked'
+		UPDATE devices SET revoked_at_ms = ?, membership_state = 'revoked',
+			revoked_membership_epoch = ?
 		WHERE workspace_id = ? AND id = ? AND membership_state = 'approved'
-			AND revoked_at_ms IS NULL`, unixMillis(input.Now), input.WorkspaceID[:], deviceID[:])
+			AND revoked_at_ms IS NULL`, unixMillis(input.Now), rosterEpoch,
+		input.WorkspaceID[:], deviceID[:])
 	if err != nil {
 		return RevokedDevice{}, fmt.Errorf("revoke certified device: %w", err)
 	}
@@ -1164,20 +1178,29 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if version > 4 {
-		return fmt.Errorf("database schema version %d is newer than supported version 4", version)
+	if version > 5 {
+		return fmt.Errorf("database schema version %d is newer than supported version 5", version)
 	}
-	if version == 4 {
+	if version == 5 {
 		return nil
 	}
+	if version == 4 {
+		return s.applySchemaVersion5(ctx)
+	}
 	if version == 3 {
-		return s.applySchemaVersion4(ctx)
+		if err := s.applySchemaVersion4(ctx); err != nil {
+			return err
+		}
+		return s.applySchemaVersion5(ctx)
 	}
 	if version == 2 {
 		if err := s.applySchemaVersion3(ctx); err != nil {
 			return err
 		}
-		return s.applySchemaVersion4(ctx)
+		if err := s.applySchemaVersion4(ctx); err != nil {
+			return err
+		}
+		return s.applySchemaVersion5(ctx)
 	}
 	if version == 1 {
 		if err := s.applySchemaVersion2(ctx); err != nil {
@@ -1186,7 +1209,10 @@ func (s *Store) initialize(ctx context.Context) error {
 		if err := s.applySchemaVersion3(ctx); err != nil {
 			return err
 		}
-		return s.applySchemaVersion4(ctx)
+		if err := s.applySchemaVersion4(ctx); err != nil {
+			return err
+		}
+		return s.applySchemaVersion5(ctx)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1240,7 +1266,10 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err := s.applySchemaVersion3(ctx); err != nil {
 		return err
 	}
-	return s.applySchemaVersion4(ctx)
+	if err := s.applySchemaVersion4(ctx); err != nil {
+		return err
+	}
+	return s.applySchemaVersion5(ctx)
 }
 
 func (s *Store) applySchemaVersion2(ctx context.Context) error {
@@ -1339,6 +1368,97 @@ func (s *Store) applySchemaVersion4(ctx context.Context) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit schema version 4: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) applySchemaVersion5(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin schema version 5: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE devices ADD COLUMN revoked_membership_epoch INTEGER
+		CHECK(revoked_membership_epoch IS NULL OR revoked_membership_epoch > 0)`); err != nil {
+		return fmt.Errorf("apply schema version 5: %w", err)
+	}
+	type revokedCertificate struct {
+		workspaceID, deviceID, certificateID, authorityPublicKey []byte
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT d.workspace_id, d.id, d.certificate_id, w.authority_public_key
+		FROM devices d JOIN workspaces w ON w.id = d.workspace_id
+		WHERE d.membership_state = 'revoked' AND d.certificate_id IS NOT NULL`)
+	if err != nil {
+		return fmt.Errorf("read certified revocations for schema version 5: %w", err)
+	}
+	var revoked []revokedCertificate
+	for rows.Next() {
+		var item revokedCertificate
+		if err := rows.Scan(&item.workspaceID, &item.deviceID, &item.certificateID,
+			&item.authorityPublicKey); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan certified revocation for schema version 5: %w", err)
+		}
+		revoked = append(revoked, item)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close certified revocations for schema version 5: %w", err)
+	}
+	for _, item := range revoked {
+		if len(item.workspaceID) != 16 || len(item.deviceID) != 16 ||
+			len(item.certificateID) != sha256.Size ||
+			len(item.authorityPublicKey) != ed25519.PublicKeySize {
+			return errors.New("invalid certified revocation during schema version 5")
+		}
+		rosterRows, queryErr := tx.QueryContext(ctx, `SELECT epoch, signed_roster
+			FROM workspace_rosters WHERE workspace_id = ? ORDER BY epoch`, item.workspaceID)
+		if queryErr != nil {
+			return fmt.Errorf("read revocation rosters for schema version 5: %w", queryErr)
+		}
+		var revocationEpoch int64
+		for rosterRows.Next() {
+			var epoch int64
+			var encoded []byte
+			if err := rosterRows.Scan(&epoch, &encoded); err != nil {
+				rosterRows.Close()
+				return fmt.Errorf("scan revocation roster for schema version 5: %w", err)
+			}
+			roster, decodeErr := membershipcodec.DecodeSignedWorkspaceRoster(
+				encoded, ed25519.PublicKey(item.authorityPublicKey))
+			if decodeErr != nil {
+				rosterRows.Close()
+				return fmt.Errorf("decode revocation roster for schema version 5: %w", decodeErr)
+			}
+			for _, entry := range roster.GetRoster().GetRevocations() {
+				if bytes.Equal(entry.GetCertificateId(), item.certificateID) &&
+					bytes.Equal(entry.GetDeviceId(), item.deviceID) {
+					revocationEpoch = epoch
+					break
+				}
+			}
+			if revocationEpoch != 0 {
+				break
+			}
+		}
+		if err := rosterRows.Close(); err != nil {
+			return fmt.Errorf("close revocation rosters for schema version 5: %w", err)
+		}
+		if revocationEpoch == 0 {
+			return errors.New("certified revocation roster is missing during schema version 5")
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE devices SET revoked_membership_epoch = ?
+			WHERE workspace_id = ? AND id = ?`, revocationEpoch, item.workspaceID, item.deviceID); err != nil {
+			return fmt.Errorf("backfill revocation epoch for schema version 5: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (5, ?)`,
+		time.Now().UnixMilli()); err != nil {
+		return fmt.Errorf("record schema version 5: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema version 5: %w", err)
 	}
 	return nil
 }

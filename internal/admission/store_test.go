@@ -304,12 +304,62 @@ func TestPendingRegistrationRequiresExactIdentityProofBeforeApproval(t *testing.
 		!bytes.Equal(remainingState.Rosters[0], revocationRosterBytes) {
 		t.Fatalf("remaining member revocation page=%+v error=%v", remainingState, err)
 	}
+	revokedState, err := store.ReadMembershipState(
+		ctx, workspace, device.DeviceID, device.AuthToken, 2)
+	if err != nil || revokedState.State != "approved" || revokedState.LatestRosterEpoch != 3 ||
+		len(revokedState.Rosters) != 1 ||
+		!bytes.Equal(revokedState.Rosters[0], revocationRosterBytes) {
+		t.Fatalf("revoked member terminal page=%+v error=%v", revokedState, err)
+	}
+	revokedTerminalState, err := store.ReadMembershipState(
+		ctx, workspace, device.DeviceID, device.AuthToken, 3)
+	if err != nil || revokedTerminalState.LatestRosterEpoch != 3 ||
+		len(revokedTerminalState.Rosters) != 0 {
+		t.Fatalf("revoked member state was not clamped=%+v error=%v", revokedTerminalState, err)
+	}
 	duplicate, err := store.RevokeDevice(ctx, RevokeDeviceInput{
 		WorkspaceID: workspace, DeviceReference: deviceReference(workspace, device.DeviceID),
 		AuthorityPrivateKey: authorityPrivateKey, Now: now.Add(7 * time.Minute),
 	})
 	if err != nil || duplicate.Changed {
 		t.Fatalf("duplicate certified revocation=%+v error=%v", duplicate, err)
+	}
+
+	// A schema-v4 installation may already contain certified revocations. The
+	// v5 migration must recover the exact terminal epoch from signed rosters.
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	legacyDB, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := legacyDB.Exec(`ALTER TABLE devices DROP COLUMN revoked_membership_epoch`); err != nil {
+		legacyDB.Close()
+		t.Fatal(err)
+	}
+	if _, err := legacyDB.Exec(`DELETE FROM schema_migrations WHERE version = 5`); err != nil {
+		legacyDB.Close()
+		t.Fatal(err)
+	}
+	if err := legacyDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	migrated, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = migrated.Close() })
+	var migratedEpoch int64
+	if err := migrated.db.QueryRow(`SELECT revoked_membership_epoch FROM devices
+		WHERE workspace_id = ? AND id = ?`, workspace[:], device.DeviceID[:]).Scan(
+		&migratedEpoch); err != nil || migratedEpoch != 3 {
+		t.Fatalf("migrated revocation epoch=%d error=%v", migratedEpoch, err)
+	}
+	migratedState, err := migrated.ReadMembershipState(
+		ctx, workspace, device.DeviceID, device.AuthToken, 2)
+	if err != nil || migratedState.LatestRosterEpoch != 3 || len(migratedState.Rosters) != 1 {
+		t.Fatalf("migrated revoked member page=%+v error=%v", migratedState, err)
 	}
 	for _, databaseFile := range []string{path, path + "-wal"} {
 		contents, readErr := os.ReadFile(databaseFile)
@@ -729,7 +779,7 @@ func TestOpenMigratesSchemaVersionOneWithoutChangingCredential(t *testing.T) {
 		t.Fatalf("migrated authentication identity=%+v error=%v", identity, err)
 	}
 	var version int
-	if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 4 {
+	if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 5 {
 		t.Fatalf("schema version=%d error=%v", version, err)
 	}
 	if _, err := store.WorkspaceAuthorityPublicKey(context.Background(), workspaceID); !errors.Is(err, ErrWorkspaceAuthorityUnavailable) {
@@ -746,7 +796,7 @@ func TestOpenRejectsNewerSchemaVersion(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (5, 0)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (6, 0)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
