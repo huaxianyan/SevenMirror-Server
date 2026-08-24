@@ -36,7 +36,7 @@ e2ee-identity-key-transition-v1.md SHA-256: 665e676d3ac0620cdb10d48a0e0c5ecc1d0f
 e2ee-identity-key-transition-v1.json SHA-256: f87f605480d320b622d3810a250f445b40ba0bc6aec27a2a6f5630f87d29c3d0
 membership.proto SHA-256: 926d1564a50fec9ee2b72966e6b017927744f6259cda99221c1a05189bf3ffcd
 workspace-membership-v1.md SHA-256: 79e2bdde0ee250b0df0607834a3f46b75dda598747acc935e9df46594acc144c
-workspace-membership-v1.json SHA-256: 111ac05ceaf7007a2c66e2c9a428f34595229f26c1cd5a1e1ce5b0bc2362474a
+workspace-membership-v1.json SHA-256: 03ef8ab0258e6ad608bff11df3418e62ab98f2b52c4b495c770c4a68a58ff806
 ```
 
 Generated code is committed for reproducible client builds. Regenerate the Go files with the pinned remote plugin:
