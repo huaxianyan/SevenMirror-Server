@@ -334,13 +334,17 @@ func TestPendingRegistrationRequiresExactIdentityProofBeforeApproval(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := legacyDB.Exec(`ALTER TABLE devices DROP COLUMN revoked_membership_epoch`); err != nil {
-		legacyDB.Close()
-		t.Fatal(err)
-	}
-	if _, err := legacyDB.Exec(`DELETE FROM schema_migrations WHERE version = 5`); err != nil {
-		legacyDB.Close()
-		t.Fatal(err)
+	for _, statement := range []string{
+		`DROP TABLE workspace_authority_transitions`,
+		`ALTER TABLE workspaces DROP COLUMN authority_transition_digest`,
+		`ALTER TABLE workspaces DROP COLUMN authority_epoch`,
+		`ALTER TABLE devices DROP COLUMN revoked_membership_epoch`,
+		`DELETE FROM schema_migrations WHERE version IN (5, 6)`,
+	} {
+		if _, err := legacyDB.Exec(statement); err != nil {
+			legacyDB.Close()
+			t.Fatal(err)
+		}
 	}
 	if err := legacyDB.Close(); err != nil {
 		t.Fatal(err)
@@ -369,6 +373,71 @@ func TestPendingRegistrationRequiresExactIdentityProofBeforeApproval(t *testing.
 		if bytes.Contains(contents, secret) {
 			t.Fatalf("raw challenge secret persisted in %s", databaseFile)
 		}
+	}
+}
+
+func TestWorkspaceAuthorityRotationReissuesRosterAtomically(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, tempDatabasePath(t))
+	now := time.UnixMilli(1_800_000_000_000)
+	oldKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x61}, ed25519.SeedSize))
+	newKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x62}, ed25519.SeedSize))
+	defer clear(oldKey)
+	defer clear(newKey)
+	var oldPublic membership.AuthorityPublicKey
+	copy(oldPublic[:], oldKey.Public().(ed25519.PublicKey))
+	workspace, err := store.CreateWorkspace(ctx, oldPublic, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := store.IssuePairingCode(ctx, workspace, DeviceChrome, "Browser", now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := bytes.Repeat([]byte{0x31}, sha256.Size)
+	secret := bytes.Repeat([]byte{0x32}, sha256.Size)
+	device, err := store.RegisterPending(ctx, Registration{PairingCode: code, DeviceType: DeviceChrome, DeviceName: "Browser", E2EEPublicKey: testPublicKey(), Now: now}, func(WorkspaceID, DeviceID) (PendingChallenge, error) {
+		return PendingChallenge{Digest: digest, Secret: secret, ExpiresAt: now.Add(time.Minute)}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompletePendingIdentityProof(ctx, PendingIdentityProof{WorkspaceID: workspace, DeviceID: device.DeviceID, AuthToken: device.AuthToken, ChallengeDigest: digest, ChallengeSecret: secret, Now: now.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	approved, err := store.ApprovePendingMembership(ctx, ApprovePendingDevice{WorkspaceID: workspace, DeviceReference: deviceReference(workspace, device.DeviceID), Roles: []membershipv1.DeviceRole{membershipv1.DeviceRole_DEVICE_ROLE_RECEIVE_NOTIFICATIONS}, AuthorityPrivateKey: oldKey, Now: now.Add(2 * time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rotated, err := store.RotateWorkspaceAuthority(ctx, RotateWorkspaceAuthorityInput{WorkspaceID: workspace, PreviousAuthorityPrivateKey: oldKey, NewAuthorityPrivateKey: newKey, Now: now.Add(3 * time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotated.AuthorityEpoch != 2 || rotated.RosterEpoch != approved.RosterEpoch+1 || rotated.TransitionDigest == ([sha256.Size]byte{}) {
+		t.Fatalf("unexpected rotation: %+v", rotated)
+	}
+	transition, err := membershipcodec.DecodeSignedAuthorityKeyTransition(rotated.SignedTransition)
+	if err != nil || transition.GetTransition().GetActivationRosterEpoch() != uint64(rotated.RosterEpoch) || !bytes.Equal(transition.GetTransition().GetPreviousRosterDigest(), approved.RosterDigest[:]) {
+		t.Fatalf("transition binding invalid: %v", err)
+	}
+	current, err := store.WorkspaceAuthorityPublicKey(ctx, workspace)
+	if err != nil || !bytes.Equal(current[:], newKey.Public().(ed25519.PublicKey)) {
+		t.Fatalf("current authority mismatch: %v", err)
+	}
+	state, err := store.ReadMembershipState(ctx, workspace, device.DeviceID, device.AuthToken, 1)
+	if err != nil || len(state.Rosters) != 1 || state.LatestRosterEpoch != 2 {
+		t.Fatalf("rotation roster state=%+v error=%v", state, err)
+	}
+	roster, err := membershipcodec.DecodeSignedWorkspaceRoster(state.Rosters[0], newKey.Public().(ed25519.PublicKey))
+	if err != nil || !bytes.Equal(roster.GetRosterDigest(), rotated.RosterDigest[:]) {
+		t.Fatalf("activation roster invalid: %v", err)
+	}
+	certificate, err := membershipcodec.DecodeSignedDeviceCertificate(state.SignedCertificate, newKey.Public().(ed25519.PublicKey))
+	if err != nil || certificate.GetCertificate().GetMembershipEpoch() != 2 {
+		t.Fatalf("replacement certificate invalid: %v", err)
+	}
+	if _, err := store.RotateWorkspaceAuthority(ctx, RotateWorkspaceAuthorityInput{WorkspaceID: workspace, PreviousAuthorityPrivateKey: oldKey, NewAuthorityPrivateKey: newKey, Now: now.Add(4 * time.Second)}); !errors.Is(err, ErrWorkspaceAuthorityUnavailable) {
+		t.Fatalf("stale authority rotation error=%v", err)
 	}
 }
 
@@ -779,7 +848,7 @@ func TestOpenMigratesSchemaVersionOneWithoutChangingCredential(t *testing.T) {
 		t.Fatalf("migrated authentication identity=%+v error=%v", identity, err)
 	}
 	var version int
-	if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 5 {
+	if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 6 {
 		t.Fatalf("schema version=%d error=%v", version, err)
 	}
 	if _, err := store.WorkspaceAuthorityPublicKey(context.Background(), workspaceID); !errors.Is(err, ErrWorkspaceAuthorityUnavailable) {
@@ -796,7 +865,7 @@ func TestOpenRejectsNewerSchemaVersion(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (6, 0)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (7, 0)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {

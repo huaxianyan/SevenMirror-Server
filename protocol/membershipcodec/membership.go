@@ -31,12 +31,15 @@ const (
 )
 
 const (
-	possessionHPKEInfoDomain   = "SyncNotifications-membership-possession-hpke-info-v1\x00"
-	challengeDigestDomain      = "SyncNotifications-membership-possession-challenge-digest-v1\x00"
-	certificateIDDomain        = "SyncNotifications-membership-device-certificate-id-v1\x00"
-	certificateSignatureDomain = "SyncNotifications-membership-device-certificate-signature-v1\x00"
-	rosterDigestDomain         = "SyncNotifications-membership-workspace-roster-digest-v1\x00"
-	rosterSignatureDomain      = "SyncNotifications-membership-workspace-roster-signature-v1\x00"
+	possessionHPKEInfoDomain              = "SyncNotifications-membership-possession-hpke-info-v1\x00"
+	challengeDigestDomain                 = "SyncNotifications-membership-possession-challenge-digest-v1\x00"
+	certificateIDDomain                   = "SyncNotifications-membership-device-certificate-id-v1\x00"
+	certificateSignatureDomain            = "SyncNotifications-membership-device-certificate-signature-v1\x00"
+	rosterDigestDomain                    = "SyncNotifications-membership-workspace-roster-digest-v1\x00"
+	rosterSignatureDomain                 = "SyncNotifications-membership-workspace-roster-signature-v1\x00"
+	authorityTransitionDigestDomain       = "SyncNotifications-membership-authority-transition-digest-v1\x00"
+	authorityTransitionOldSignatureDomain = "SyncNotifications-membership-authority-transition-old-signature-v1\x00"
+	authorityTransitionNewSignatureDomain = "SyncNotifications-membership-authority-transition-new-signature-v1\x00"
 )
 
 var deterministic = proto.MarshalOptions{Deterministic: true}
@@ -211,6 +214,111 @@ func DecodeSignedWorkspaceRoster(
 		return nil, err
 	}
 	return value, nil
+}
+
+func SignAuthorityKeyTransition(
+	transition *membershipv1.AuthorityKeyTransition,
+	previousAuthorityPrivateKey ed25519.PrivateKey,
+	newAuthorityPrivateKey ed25519.PrivateKey,
+) (*membershipv1.SignedAuthorityKeyTransition, error) {
+	if len(previousAuthorityPrivateKey) != ed25519.PrivateKeySize || len(newAuthorityPrivateKey) != ed25519.PrivateKeySize {
+		return nil, errors.New("authority transition private keys must be Ed25519")
+	}
+	previousPublicKey := previousAuthorityPrivateKey.Public().(ed25519.PublicKey)
+	newPublicKey := newAuthorityPrivateKey.Public().(ed25519.PublicKey)
+	if err := validateAuthorityKeyTransition(transition, previousPublicKey, newPublicKey); err != nil {
+		return nil, err
+	}
+	encoded, err := encode(transition)
+	if err != nil {
+		return nil, err
+	}
+	digest := domainHash(authorityTransitionDigestDomain, encoded)
+	return &membershipv1.SignedAuthorityKeyTransition{
+		Transition:                 proto.Clone(transition).(*membershipv1.AuthorityKeyTransition),
+		TransitionDigest:           digest[:],
+		PreviousAuthoritySignature: ed25519.Sign(previousAuthorityPrivateKey, domainBytes(authorityTransitionOldSignatureDomain, encoded)),
+		NewAuthoritySignature:      ed25519.Sign(newAuthorityPrivateKey, domainBytes(authorityTransitionNewSignatureDomain, encoded)),
+	}, nil
+}
+
+func EncodeSignedAuthorityKeyTransition(value *membershipv1.SignedAuthorityKeyTransition) ([]byte, error) {
+	if err := validateSignedAuthorityKeyTransition(value); err != nil {
+		return nil, err
+	}
+	return encode(value)
+}
+
+func DecodeSignedAuthorityKeyTransition(encoded []byte) (*membershipv1.SignedAuthorityKeyTransition, error) {
+	value := &membershipv1.SignedAuthorityKeyTransition{}
+	if err := decodeCanonical(encoded, value); err != nil {
+		return nil, err
+	}
+	if err := validateSignedAuthorityKeyTransition(value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+func validateSignedAuthorityKeyTransition(value *membershipv1.SignedAuthorityKeyTransition) error {
+	if value == nil || len(value.ProtoReflect().GetUnknown()) != 0 {
+		return errors.New("signed authority transition is missing or contains unknown fields")
+	}
+	transition := value.GetTransition()
+	if transition == nil {
+		return errors.New("authority transition is missing")
+	}
+	previousKey := ed25519.PublicKey(transition.GetPreviousAuthorityPublicKey())
+	newKey := ed25519.PublicKey(transition.GetNewAuthorityPublicKey())
+	if err := validateAuthorityKeyTransition(transition, previousKey, newKey); err != nil {
+		return err
+	}
+	encoded, err := encode(transition)
+	if err != nil {
+		return err
+	}
+	expectedDigest := domainHash(authorityTransitionDigestDomain, encoded)
+	if subtle.ConstantTimeCompare(value.GetTransitionDigest(), expectedDigest[:]) != 1 {
+		return errors.New("authority transition digest does not match canonical transition")
+	}
+	if len(value.GetPreviousAuthoritySignature()) != Ed25519SignatureSize ||
+		!ed25519.Verify(previousKey, domainBytes(authorityTransitionOldSignatureDomain, encoded), value.GetPreviousAuthoritySignature()) {
+		return errors.New("previous authority transition signature is invalid")
+	}
+	if len(value.GetNewAuthoritySignature()) != Ed25519SignatureSize ||
+		!ed25519.Verify(newKey, domainBytes(authorityTransitionNewSignatureDomain, encoded), value.GetNewAuthoritySignature()) {
+		return errors.New("new authority transition signature is invalid")
+	}
+	return nil
+}
+
+func validateAuthorityKeyTransition(value *membershipv1.AuthorityKeyTransition, previousKey, newKey ed25519.PublicKey) error {
+	if value == nil || len(value.ProtoReflect().GetUnknown()) != 0 {
+		return errors.New("authority transition is missing or contains unknown fields")
+	}
+	if value.GetProtocolVersion() != ProtocolVersion || len(value.GetWorkspaceId()) != IdentifierSize || allZero(value.GetWorkspaceId()) {
+		return errors.New("authority transition version or workspace is invalid")
+	}
+	if value.GetTransitionEpoch() < 2 || value.GetTransitionEpoch() > math.MaxInt64 {
+		return errors.New("authority transition epoch is invalid")
+	}
+	previousDigest := value.GetPreviousTransitionDigest()
+	if len(previousDigest) != DigestSize || (value.GetTransitionEpoch() == 2 && !allZero(previousDigest)) ||
+		(value.GetTransitionEpoch() > 2 && allZero(previousDigest)) {
+		return errors.New("authority transition previous digest is invalid for its epoch")
+	}
+	if len(previousKey) != ed25519.PublicKeySize || len(newKey) != ed25519.PublicKeySize ||
+		!bytes.Equal(previousKey, value.GetPreviousAuthorityPublicKey()) ||
+		!bytes.Equal(newKey, value.GetNewAuthorityPublicKey()) || bytes.Equal(previousKey, newKey) ||
+		allZero(previousKey) || allZero(newKey) {
+		return errors.New("authority transition key binding is invalid")
+	}
+	if value.GetActivationRosterEpoch() < 2 || value.GetActivationRosterEpoch() > math.MaxInt64 ||
+		len(value.GetPreviousRosterDigest()) != DigestSize || allZero(value.GetPreviousRosterDigest()) ||
+		value.GetIssuedAtUnixMs() == 0 || value.GetIssuedAtUnixMs() > math.MaxInt64 {
+		return errors.New("authority transition roster binding or time is invalid")
+	}
+	return nil
 }
 
 func validateChallenge(value *membershipv1.IdentityPossessionChallenge) error {

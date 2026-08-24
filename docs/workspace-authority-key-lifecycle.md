@@ -66,7 +66,9 @@ NM_DATABASE_PATH=<restored-registry> NM_AUTHORITY_KEY_DIR=<live-key-directory> \
 
 ## Rotation
 
-Normal rotation will require an old-authority-signed transition binding the exact old key, new key, workspace, transition epoch, and activation rules. Clients must accept the new key only through that protocol and retain rollback protection. This wire protocol is not implemented yet.
+The canonical authority-transition wire message and Server transactional rotation core are implemented. A transition binds the exact workspace, old and new keys, monotonic transition epoch, previous transition digest, activation roster epoch, previous roster digest, and issue time. It is signed independently by both the old and new authorities. The same SQLite transaction stores the transition, reissues every active certificate, inserts the new-authority-signed activation roster, and advances the current authority pointer.
+
+The operational admin command and client transition-chain reconciliation remain intentionally disabled until Android and Chrome can durably apply the transition and activation roster atomically. Therefore this implementation cannot yet rotate a production workspace through supported CLI paths; direct unsigned replacement remains forbidden.
 
 The private-key file must never be overwritten in place. A rotation creates a new file and retains the old key until every supported client has accepted the signed transition and the rollback window has closed.
 

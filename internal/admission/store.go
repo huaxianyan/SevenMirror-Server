@@ -120,6 +120,21 @@ type RevokedDevice struct {
 	RosterDigest    [sha256.Size]byte
 }
 
+type RotateWorkspaceAuthorityInput struct {
+	WorkspaceID                 WorkspaceID
+	PreviousAuthorityPrivateKey ed25519.PrivateKey
+	NewAuthorityPrivateKey      ed25519.PrivateKey
+	Now                         time.Time
+}
+
+type RotatedWorkspaceAuthority struct {
+	AuthorityEpoch   int64
+	TransitionDigest [sha256.Size]byte
+	RosterEpoch      int64
+	RosterDigest     [sha256.Size]byte
+	SignedTransition []byte
+}
+
 type DeviceIdentity struct {
 	WorkspaceID       WorkspaceID
 	DeviceID          DeviceID
@@ -222,6 +237,130 @@ func (s *Store) WorkspaceAuthorityPublicKey(
 	var publicKey authority.AuthorityPublicKey
 	copy(publicKey[:], stored)
 	return publicKey, nil
+}
+
+func (s *Store) RotateWorkspaceAuthority(ctx context.Context, input RotateWorkspaceAuthorityInput) (RotatedWorkspaceAuthority, error) {
+	if len(input.PreviousAuthorityPrivateKey) != ed25519.PrivateKeySize || len(input.NewAuthorityPrivateKey) != ed25519.PrivateKeySize || input.Now.IsZero() {
+		return RotatedWorkspaceAuthority{}, errors.New("previous and new authority private keys and rotation time are required")
+	}
+	previousPublicKey := input.PreviousAuthorityPrivateKey.Public().(ed25519.PublicKey)
+	newPublicKey := input.NewAuthorityPrivateKey.Public().(ed25519.PublicKey)
+	if bytes.Equal(previousPublicKey, newPublicKey) {
+		return RotatedWorkspaceAuthority{}, errors.New("new workspace authority must differ from current authority")
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RotatedWorkspaceAuthority{}, fmt.Errorf("begin workspace authority rotation: %w", err)
+	}
+	defer tx.Rollback()
+	var storedPublicKey, previousTransitionDigest []byte
+	var authorityEpoch int64
+	if err := tx.QueryRowContext(ctx, `SELECT authority_public_key, authority_epoch, authority_transition_digest FROM workspaces WHERE id = ?`, input.WorkspaceID[:]).Scan(&storedPublicKey, &authorityEpoch, &previousTransitionDigest); err != nil ||
+		len(storedPublicKey) != ed25519.PublicKeySize || !bytes.Equal(storedPublicKey, previousPublicKey) || authorityEpoch < 1 || len(previousTransitionDigest) != sha256.Size {
+		return RotatedWorkspaceAuthority{}, ErrWorkspaceAuthorityUnavailable
+	}
+	if authorityEpoch == math.MaxInt64 {
+		return RotatedWorkspaceAuthority{}, errors.New("workspace authority epoch exhausted")
+	}
+	var previousRosterEncoded []byte
+	if err := tx.QueryRowContext(ctx, `SELECT signed_roster FROM workspace_rosters WHERE workspace_id = ? ORDER BY epoch DESC LIMIT 1`, input.WorkspaceID[:]).Scan(&previousRosterEncoded); err != nil {
+		return RotatedWorkspaceAuthority{}, errors.New("workspace authority rotation requires an existing roster")
+	}
+	previousRoster, err := membershipcodec.DecodeSignedWorkspaceRoster(previousRosterEncoded, previousPublicKey)
+	if err != nil {
+		return RotatedWorkspaceAuthority{}, fmt.Errorf("read activation predecessor roster: %w", err)
+	}
+	if previousRoster.GetRoster().GetRosterEpoch() >= uint64(math.MaxInt64) {
+		return RotatedWorkspaceAuthority{}, errors.New("workspace roster epoch exhausted")
+	}
+	activationEpoch := int64(previousRoster.GetRoster().GetRosterEpoch()) + 1
+	transitionEpoch := authorityEpoch + 1
+	transition, err := membershipcodec.SignAuthorityKeyTransition(&membershipv1.AuthorityKeyTransition{
+		ProtocolVersion:            membershipcodec.ProtocolVersion,
+		WorkspaceId:                append([]byte(nil), input.WorkspaceID[:]...),
+		TransitionEpoch:            uint64(transitionEpoch),
+		PreviousTransitionDigest:   append([]byte(nil), previousTransitionDigest...),
+		PreviousAuthorityPublicKey: append([]byte(nil), previousPublicKey...),
+		NewAuthorityPublicKey:      append([]byte(nil), newPublicKey...),
+		ActivationRosterEpoch:      uint64(activationEpoch),
+		PreviousRosterDigest:       append([]byte(nil), previousRoster.GetRosterDigest()...),
+		IssuedAtUnixMs:             uint64(unixMillis(input.Now)),
+	}, input.PreviousAuthorityPrivateKey, input.NewAuthorityPrivateKey)
+	if err != nil {
+		return RotatedWorkspaceAuthority{}, fmt.Errorf("sign workspace authority transition: %w", err)
+	}
+	transitionEncoded, err := membershipcodec.EncodeSignedAuthorityKeyTransition(transition)
+	if err != nil {
+		return RotatedWorkspaceAuthority{}, err
+	}
+	active := make([]*membershipv1.SignedDeviceCertificate, 0, len(previousRoster.GetRoster().GetActiveCertificates()))
+	for _, oldSigned := range previousRoster.GetRoster().GetActiveCertificates() {
+		certificate := proto.Clone(oldSigned.GetCertificate()).(*membershipv1.DeviceCertificate)
+		certificate.IssuedAtUnixMs = uint64(unixMillis(input.Now))
+		certificate.MembershipEpoch = uint64(activationEpoch)
+		newSigned, signErr := membershipcodec.SignDeviceCertificate(certificate, input.NewAuthorityPrivateKey)
+		if signErr != nil {
+			return RotatedWorkspaceAuthority{}, fmt.Errorf("reissue device certificate: %w", signErr)
+		}
+		encoded, encodeErr := membershipcodec.EncodeSignedDeviceCertificate(newSigned, newPublicKey)
+		if encodeErr != nil {
+			return RotatedWorkspaceAuthority{}, encodeErr
+		}
+		result, updateErr := tx.ExecContext(ctx, `UPDATE devices SET certificate_id = ?, signed_certificate = ?, approved_at_ms = ? WHERE workspace_id = ? AND id = ? AND certificate_id = ? AND membership_state = 'approved' AND revoked_at_ms IS NULL`,
+			newSigned.GetCertificateId(), encoded, unixMillis(input.Now), input.WorkspaceID[:], certificate.GetDeviceId(), oldSigned.GetCertificateId())
+		if updateErr != nil {
+			return RotatedWorkspaceAuthority{}, fmt.Errorf("replace device certificate during authority rotation: %w", updateErr)
+		}
+		if rows, rowsErr := result.RowsAffected(); rowsErr != nil || rows != 1 {
+			return RotatedWorkspaceAuthority{}, errors.New("active roster certificate does not match the device record")
+		}
+		active = append(active, newSigned)
+	}
+	activationRoster, err := membershipcodec.SignWorkspaceRoster(&membershipv1.WorkspaceRoster{
+		ProtocolVersion:      membershipcodec.ProtocolVersion,
+		WorkspaceId:          append([]byte(nil), input.WorkspaceID[:]...),
+		RosterEpoch:          uint64(activationEpoch),
+		PreviousRosterDigest: append([]byte(nil), previousRoster.GetRosterDigest()...),
+		ActiveCertificates:   active,
+		Revocations:          cloneRevocations(previousRoster.GetRoster().GetRevocations()),
+	}, input.NewAuthorityPrivateKey)
+	if err != nil {
+		return RotatedWorkspaceAuthority{}, fmt.Errorf("sign authority activation roster: %w", err)
+	}
+	activationEncoded, err := membershipcodec.EncodeSignedWorkspaceRoster(activationRoster, newPublicKey)
+	if err != nil {
+		return RotatedWorkspaceAuthority{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO workspace_authority_transitions (workspace_id, epoch, digest, previous_digest, previous_authority_public_key, new_authority_public_key, activation_roster_epoch, signed_transition, created_at_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		input.WorkspaceID[:], transitionEpoch, transition.GetTransitionDigest(), previousTransitionDigest, previousPublicKey, newPublicKey, activationEpoch, transitionEncoded, unixMillis(input.Now)); err != nil {
+		return RotatedWorkspaceAuthority{}, fmt.Errorf("store workspace authority transition: %w", err)
+	}
+	if err := insertWorkspaceRoster(ctx, tx, input.WorkspaceID, activationEpoch, previousRoster.GetRosterDigest(), activationRoster, activationEncoded, input.Now); err != nil {
+		return RotatedWorkspaceAuthority{}, err
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE workspaces SET authority_public_key = ?, authority_epoch = ?, authority_transition_digest = ? WHERE id = ? AND authority_public_key = ? AND authority_epoch = ? AND authority_transition_digest = ?`,
+		newPublicKey, transitionEpoch, transition.GetTransitionDigest(), input.WorkspaceID[:], previousPublicKey, authorityEpoch, previousTransitionDigest)
+	if err != nil {
+		return RotatedWorkspaceAuthority{}, fmt.Errorf("activate workspace authority: %w", err)
+	}
+	if rows, rowsErr := result.RowsAffected(); rowsErr != nil || rows != 1 {
+		return RotatedWorkspaceAuthority{}, errors.New("workspace authority changed during rotation")
+	}
+	if err := tx.Commit(); err != nil {
+		return RotatedWorkspaceAuthority{}, fmt.Errorf("commit workspace authority rotation: %w", err)
+	}
+	var transitionDigest, rosterDigest [sha256.Size]byte
+	copy(transitionDigest[:], transition.GetTransitionDigest())
+	copy(rosterDigest[:], activationRoster.GetRosterDigest())
+	return RotatedWorkspaceAuthority{AuthorityEpoch: transitionEpoch, TransitionDigest: transitionDigest, RosterEpoch: activationEpoch, RosterDigest: rosterDigest, SignedTransition: transitionEncoded}, nil
+}
+
+func cloneRevocations(values []*membershipv1.RevokedCertificate) []*membershipv1.RevokedCertificate {
+	result := make([]*membershipv1.RevokedCertificate, 0, len(values))
+	for _, value := range values {
+		result = append(result, proto.Clone(value).(*membershipv1.RevokedCertificate))
+	}
+	return result
 }
 
 func (s *Store) IssuePairingCode(
@@ -671,21 +810,28 @@ func (s *Store) ReadMembershipState(
 	} else if state != "approved" {
 		return view, nil
 	}
-	queryAfterEpoch := afterRosterEpoch
-	if afterRosterEpoch == 0 {
-		certificate, decodeErr := membershipcodec.DecodeSignedDeviceCertificate(
-			signedCertificate,
-			ed25519.PublicKey(authorityPublicKey),
-		)
-		if decodeErr != nil || certificate.GetCertificate().GetMembershipEpoch() < 1 ||
-			certificate.GetCertificate().GetMembershipEpoch() > math.MaxInt64 {
-			return MembershipStateView{}, errors.New("stored device certificate is invalid")
-		}
-		queryAfterEpoch = int64(certificate.GetCertificate().GetMembershipEpoch()) - 1
-	}
 	maximumEpoch := int64(math.MaxInt64)
 	if revokedMembershipEpoch.Valid {
 		maximumEpoch = revokedMembershipEpoch.Int64
+		var effectiveKey []byte
+		err := s.db.QueryRowContext(ctx, `SELECT new_authority_public_key FROM workspace_authority_transitions WHERE workspace_id = ? AND activation_roster_epoch <= ? ORDER BY activation_roster_epoch DESC LIMIT 1`, workspaceID[:], maximumEpoch).Scan(&effectiveKey)
+		if errors.Is(err, sql.ErrNoRows) {
+			err = s.db.QueryRowContext(ctx, `SELECT previous_authority_public_key FROM workspace_authority_transitions WHERE workspace_id = ? ORDER BY activation_roster_epoch LIMIT 1`, workspaceID[:]).Scan(&effectiveKey)
+		}
+		if err == nil && len(effectiveKey) == ed25519.PublicKeySize {
+			authorityPublicKey = effectiveKey
+			copy(view.AuthorityPublicKey[:], effectiveKey)
+		} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return MembershipStateView{}, fmt.Errorf("read terminal roster authority: %w", err)
+		}
+	}
+	queryAfterEpoch := afterRosterEpoch
+	if afterRosterEpoch == 0 {
+		certificate, decodeErr := membershipcodec.DecodeSignedDeviceCertificate(signedCertificate, ed25519.PublicKey(authorityPublicKey))
+		if decodeErr != nil || certificate.GetCertificate().GetMembershipEpoch() < 1 || certificate.GetCertificate().GetMembershipEpoch() > math.MaxInt64 {
+			return MembershipStateView{}, errors.New("stored device certificate is invalid")
+		}
+		queryAfterEpoch = int64(certificate.GetCertificate().GetMembershipEpoch()) - 1
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT epoch, signed_roster FROM workspace_rosters
@@ -1178,20 +1324,29 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if version > 5 {
-		return fmt.Errorf("database schema version %d is newer than supported version 5", version)
+	if version > 6 {
+		return fmt.Errorf("database schema version %d is newer than supported version 6", version)
 	}
-	if version == 5 {
+	if version == 6 {
 		return nil
 	}
+	if version == 5 {
+		return s.applySchemaVersion6(ctx)
+	}
 	if version == 4 {
-		return s.applySchemaVersion5(ctx)
+		if err := s.applySchemaVersion5(ctx); err != nil {
+			return err
+		}
+		return s.applySchemaVersion6(ctx)
 	}
 	if version == 3 {
 		if err := s.applySchemaVersion4(ctx); err != nil {
 			return err
 		}
-		return s.applySchemaVersion5(ctx)
+		if err := s.applySchemaVersion5(ctx); err != nil {
+			return err
+		}
+		return s.applySchemaVersion6(ctx)
 	}
 	if version == 2 {
 		if err := s.applySchemaVersion3(ctx); err != nil {
@@ -1200,7 +1355,10 @@ func (s *Store) initialize(ctx context.Context) error {
 		if err := s.applySchemaVersion4(ctx); err != nil {
 			return err
 		}
-		return s.applySchemaVersion5(ctx)
+		if err := s.applySchemaVersion5(ctx); err != nil {
+			return err
+		}
+		return s.applySchemaVersion6(ctx)
 	}
 	if version == 1 {
 		if err := s.applySchemaVersion2(ctx); err != nil {
@@ -1212,7 +1370,10 @@ func (s *Store) initialize(ctx context.Context) error {
 		if err := s.applySchemaVersion4(ctx); err != nil {
 			return err
 		}
-		return s.applySchemaVersion5(ctx)
+		if err := s.applySchemaVersion5(ctx); err != nil {
+			return err
+		}
+		return s.applySchemaVersion6(ctx)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1269,7 +1430,10 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err := s.applySchemaVersion4(ctx); err != nil {
 		return err
 	}
-	return s.applySchemaVersion5(ctx)
+	if err := s.applySchemaVersion5(ctx); err != nil {
+		return err
+	}
+	return s.applySchemaVersion6(ctx)
 }
 
 func (s *Store) applySchemaVersion2(ctx context.Context) error {
@@ -1459,6 +1623,42 @@ func (s *Store) applySchemaVersion5(ctx context.Context) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit schema version 5: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) applySchemaVersion6(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin schema version 6: %w", err)
+	}
+	defer tx.Rollback()
+	statements := []string{
+		`ALTER TABLE workspaces ADD COLUMN authority_epoch INTEGER NOT NULL DEFAULT 1 CHECK(authority_epoch > 0)`,
+		`ALTER TABLE workspaces ADD COLUMN authority_transition_digest BLOB NOT NULL DEFAULT X'0000000000000000000000000000000000000000000000000000000000000000' CHECK(length(authority_transition_digest) = 32)`,
+		`CREATE TABLE workspace_authority_transitions (
+			workspace_id BLOB NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+			epoch INTEGER NOT NULL CHECK(epoch > 1),
+			digest BLOB NOT NULL CHECK(length(digest) = 32),
+			previous_digest BLOB NOT NULL CHECK(length(previous_digest) = 32),
+			previous_authority_public_key BLOB NOT NULL CHECK(length(previous_authority_public_key) = 32),
+			new_authority_public_key BLOB NOT NULL CHECK(length(new_authority_public_key) = 32),
+			activation_roster_epoch INTEGER NOT NULL CHECK(activation_roster_epoch > 1),
+			signed_transition BLOB NOT NULL,
+			created_at_ms INTEGER NOT NULL,
+			PRIMARY KEY(workspace_id, epoch), UNIQUE(workspace_id, digest)
+		) STRICT`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("apply schema version 6: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at_ms) VALUES (6, ?)`, time.Now().UnixMilli()); err != nil {
+		return fmt.Errorf("record schema version 6: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema version 6: %w", err)
 	}
 	return nil
 }

@@ -103,6 +103,59 @@ func TestWorkspaceMembershipCanonicalVector(t *testing.T) {
 	assertEncoded(t, revokedBytes, encodedRevoked, encodeErr)
 }
 
+func TestAuthorityKeyTransitionRequiresBothAuthoritiesAndRejectsForks(t *testing.T) {
+	oldSeed := bytes.Repeat([]byte{0x41}, ed25519.SeedSize)
+	newSeed := bytes.Repeat([]byte{0x42}, ed25519.SeedSize)
+	oldKey := ed25519.NewKeyFromSeed(oldSeed)
+	newKey := ed25519.NewKeyFromSeed(newSeed)
+	defer clear(oldKey)
+	defer clear(newKey)
+	transition := &membershipv1.AuthorityKeyTransition{
+		ProtocolVersion:            ProtocolVersion,
+		WorkspaceId:                bytes.Repeat([]byte{0x11}, IdentifierSize),
+		TransitionEpoch:            2,
+		PreviousTransitionDigest:   make([]byte, DigestSize),
+		PreviousAuthorityPublicKey: append([]byte(nil), oldKey.Public().(ed25519.PublicKey)...),
+		NewAuthorityPublicKey:      append([]byte(nil), newKey.Public().(ed25519.PublicKey)...),
+		ActivationRosterEpoch:      7,
+		PreviousRosterDigest:       bytes.Repeat([]byte{0x33}, DigestSize),
+		IssuedAtUnixMs:             1_800_000_000_000,
+	}
+	signed, err := SignAuthorityKeyTransition(transition, oldKey, newKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := EncodeSignedAuthorityKeyTransition(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeSignedAuthorityKeyTransition(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(decoded.GetTransitionDigest(), signed.GetTransitionDigest()) {
+		t.Fatal("transition digest changed")
+	}
+
+	tampered := append([]byte(nil), encoded...)
+	tampered[len(tampered)-1] ^= 1
+	if _, err := DecodeSignedAuthorityKeyTransition(tampered); err == nil {
+		t.Fatal("tampered new-authority proof accepted")
+	}
+
+	fork := proto.Clone(transition).(*membershipv1.AuthorityKeyTransition)
+	fork.NewAuthorityPublicKey = append([]byte(nil), oldKey.Public().(ed25519.PublicKey)...)
+	if _, err := SignAuthorityKeyTransition(fork, oldKey, oldKey); err == nil {
+		t.Fatal("same-key transition accepted")
+	}
+
+	nonInitial := proto.Clone(transition).(*membershipv1.AuthorityKeyTransition)
+	nonInitial.TransitionEpoch = 3
+	if _, err := SignAuthorityKeyTransition(nonInitial, oldKey, newKey); err == nil {
+		t.Fatal("missing previous transition digest accepted")
+	}
+}
+
 func TestWorkspaceMembershipRejectsCanonicalAndAuthorizationBoundaryViolations(t *testing.T) {
 	vector := readMembershipVector(t)
 	publicKey := ed25519.PublicKey(decodeVectorHex(t, vector.AuthorityPublicKeyHex))
