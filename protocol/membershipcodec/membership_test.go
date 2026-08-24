@@ -13,17 +13,21 @@ import (
 )
 
 type membershipVector struct {
-	AuthoritySeedHex        string `json:"authoritySeedHex"`
-	AuthorityPublicKeyHex   string `json:"authorityPublicKeyHex"`
-	ChallengeEncodedHex     string `json:"challengeEncodedHex"`
-	ChallengeDigestHex      string `json:"challengeDigestHex"`
-	ProofEncodedHex         string `json:"proofEncodedHex"`
-	CertificateEncodedHex   string `json:"certificateEncodedHex"`
-	CertificateIDHex        string `json:"certificateIdHex"`
-	InitialRosterEncodedHex string `json:"initialRosterEncodedHex"`
-	InitialRosterDigestHex  string `json:"initialRosterDigestHex"`
-	RevokedRosterEncodedHex string `json:"revokedRosterEncodedHex"`
-	RevokedRosterDigestHex  string `json:"revokedRosterDigestHex"`
+	AuthoritySeedHex                    string `json:"authoritySeedHex"`
+	AuthorityPublicKeyHex               string `json:"authorityPublicKeyHex"`
+	ChallengeEncodedHex                 string `json:"challengeEncodedHex"`
+	ChallengeDigestHex                  string `json:"challengeDigestHex"`
+	ProofEncodedHex                     string `json:"proofEncodedHex"`
+	CertificateEncodedHex               string `json:"certificateEncodedHex"`
+	CertificateIDHex                    string `json:"certificateIdHex"`
+	InitialRosterEncodedHex             string `json:"initialRosterEncodedHex"`
+	InitialRosterDigestHex              string `json:"initialRosterDigestHex"`
+	RevokedRosterEncodedHex             string `json:"revokedRosterEncodedHex"`
+	RevokedRosterDigestHex              string `json:"revokedRosterDigestHex"`
+	NewAuthorityPublicKeyHex            string `json:"newAuthorityPublicKeyHex"`
+	AuthorityTransitionEncodedHex       string `json:"authorityTransitionEncodedHex"`
+	AuthorityTransitionDigestHex        string `json:"authorityTransitionDigestHex"`
+	AuthorityActivationRosterEncodedHex string `json:"authorityActivationRosterEncodedHex"`
 }
 
 func TestWorkspaceMembershipCanonicalVector(t *testing.T) {
@@ -101,6 +105,22 @@ func TestWorkspaceMembershipCanonicalVector(t *testing.T) {
 	}
 	encodedRevoked, encodeErr := EncodeSignedWorkspaceRoster(revoked, publicKey)
 	assertEncoded(t, revokedBytes, encodedRevoked, encodeErr)
+
+	transitionBytes := decodeVectorHex(t, vector.AuthorityTransitionEncodedHex)
+	transition, err := DecodeSignedAuthorityKeyTransition(transitionBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(transition.GetTransitionDigest(), decodeVectorHex(t, vector.AuthorityTransitionDigestHex)) ||
+		!bytes.Equal(transition.GetTransition().GetPreviousAuthorityPublicKey(), publicKey) ||
+		!bytes.Equal(transition.GetTransition().GetNewAuthorityPublicKey(), decodeVectorHex(t, vector.NewAuthorityPublicKeyHex)) {
+		t.Fatal("authority transition differs from vector")
+	}
+	encodedTransition, encodeErr := EncodeSignedAuthorityKeyTransition(transition)
+	assertEncoded(t, transitionBytes, encodedTransition, encodeErr)
+	if _, err := DecodeSignedWorkspaceRoster(decodeVectorHex(t, vector.AuthorityActivationRosterEncodedHex), ed25519.PublicKey(decodeVectorHex(t, vector.NewAuthorityPublicKeyHex))); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestAuthorityKeyTransitionRequiresBothAuthoritiesAndRejectsForks(t *testing.T) {

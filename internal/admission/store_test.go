@@ -420,12 +420,22 @@ func TestWorkspaceAuthorityRotationReissuesRosterAtomically(t *testing.T) {
 	if err != nil || transition.GetTransition().GetActivationRosterEpoch() != uint64(rotated.RosterEpoch) || !bytes.Equal(transition.GetTransition().GetPreviousRosterDigest(), approved.RosterDigest[:]) {
 		t.Fatalf("transition binding invalid: %v", err)
 	}
+	var newPublic membership.AuthorityPublicKey
+	copy(newPublic[:], newKey.Public().(ed25519.PublicKey))
+	completed, ok, err := store.CompletedWorkspaceAuthorityRotation(ctx, workspace, newPublic)
+	if err != nil || !ok || completed.TransitionDigest != rotated.TransitionDigest || completed.RosterDigest != rotated.RosterDigest {
+		t.Fatalf("completed rotation recovery=%+v ok=%t error=%v", completed, ok, err)
+	}
+	wrongPublic := membership.AuthorityPublicKey{1}
+	if _, ok, err := store.CompletedWorkspaceAuthorityRotation(ctx, workspace, wrongPublic); err != nil || ok {
+		t.Fatalf("wrong rotation recovery ok=%t error=%v", ok, err)
+	}
 	current, err := store.WorkspaceAuthorityPublicKey(ctx, workspace)
 	if err != nil || !bytes.Equal(current[:], newKey.Public().(ed25519.PublicKey)) {
 		t.Fatalf("current authority mismatch: %v", err)
 	}
 	state, err := store.ReadMembershipState(ctx, workspace, device.DeviceID, device.AuthToken, 1)
-	if err != nil || len(state.Rosters) != 1 || state.LatestRosterEpoch != 2 {
+	if err != nil || len(state.AuthorityTransitions) != 1 || len(state.Rosters) != 1 || state.LatestRosterEpoch != 2 {
 		t.Fatalf("rotation roster state=%+v error=%v", state, err)
 	}
 	roster, err := membershipcodec.DecodeSignedWorkspaceRoster(state.Rosters[0], newKey.Public().(ed25519.PublicKey))

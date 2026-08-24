@@ -22,7 +22,7 @@ Client repositories vendor a tagged copy of these files and record schema integr
 
 `transport-credential-rotation-v1.md` defines client-generated pending credentials, exact device-bound single-use administrator authorization, atomic credential-version replacement, and lost-response recovery. Rotation changes relay admission only and leaves the device tuple and E2EE identity unchanged.
 
-`workspace-membership-v1.md` and `proto/membership/v1/membership.proto` define the ADR-005 pending identity-possession proof, authority-signed device certificate, monotonic signed roster, roles, revocation, and dual-signed authority-key transition contract. `test-vectors/workspace-membership-v1.json` fixes canonical proof/certificate/initial-roster/revoked-roster bytes, digests, and Ed25519 signatures using public test material only.
+`workspace-membership-v1.md` and `proto/membership/v1/membership.proto` define the ADR-005 pending identity-possession proof, authority-signed device certificate, monotonic signed roster, roles, revocation, and dual-signed authority-key transition contract. `test-vectors/workspace-membership-v1.json` fixes canonical proof/certificate/initial-roster/revoked-roster and authority-transition/activation-roster bytes, digests, and Ed25519 signatures using public test material only.
 
 `trusted-device-pairing-v1.md` defines the older server-independent bidirectional QR and 60-bit safety-code transcript. It remains only as a frozen provisional 1 × 1 spike artifact while ADR-005 replacement is implemented; it must not be expanded into the production membership trust source.
 
@@ -36,7 +36,7 @@ e2ee-identity-key-transition-v1.md SHA-256: 665e676d3ac0620cdb10d48a0e0c5ecc1d0f
 e2ee-identity-key-transition-v1.json SHA-256: f87f605480d320b622d3810a250f445b40ba0bc6aec27a2a6f5630f87d29c3d0
 membership.proto SHA-256: 926d1564a50fec9ee2b72966e6b017927744f6259cda99221c1a05189bf3ffcd
 workspace-membership-v1.md SHA-256: 79e2bdde0ee250b0df0607834a3f46b75dda598747acc935e9df46594acc144c
-workspace-membership-v1.json SHA-256: 63531283fde5fe440a78137936508bf188f199365c9dae2f9d3a9d398d18f3d9
+workspace-membership-v1.json SHA-256: 111ac05ceaf7007a2c66e2c9a428f34595229f26c1cd5a1e1ce5b0bc2362474a
 ```
 
 Generated code is committed for reproducible client builds. Regenerate the Go files with the pinned remote plugin:

@@ -94,6 +94,24 @@ func LoadAuthorityPrivateKey(path string, expected AuthorityPublicKey) (ed25519.
 	return private, err
 }
 
+// LoadAuthorityKey loads protected PKCS#8 material and derives its public key.
+// The caller must still bind that key through a pinned workspace or a signed
+// authority transition before trusting it.
+func LoadAuthorityKey(path string) (AuthorityPublicKey, ed25519.PrivateKey, error) {
+	encoded, err := readProtectedRegularFile(path, 4096, "workspace authority key")
+	if err != nil {
+		return AuthorityPublicKey{}, nil, err
+	}
+	defer clear(encoded)
+	private, err := parseAuthorityPrivateKey(encoded)
+	if err != nil {
+		return AuthorityPublicKey{}, nil, err
+	}
+	var public AuthorityPublicKey
+	copy(public[:], private.Public().(ed25519.PublicKey))
+	return public, private, nil
+}
+
 func loadAuthorityPrivateKeyFile(
 	path string,
 	expected AuthorityPublicKey,
@@ -102,15 +120,10 @@ func loadAuthorityPrivateKeyFile(
 	if err != nil {
 		return nil, nil, err
 	}
-	parsed, err := x509.ParsePKCS8PrivateKey(encoded)
+	private, err := parseAuthorityPrivateKey(encoded)
 	if err != nil {
 		clear(encoded)
-		return nil, nil, fmt.Errorf("parse workspace authority key: %w", err)
-	}
-	private, ok := parsed.(ed25519.PrivateKey)
-	if !ok || len(private) != ed25519.PrivateKeySize {
-		clear(encoded)
-		return nil, nil, errors.New("workspace authority key is not Ed25519")
+		return nil, nil, err
 	}
 	public, ok := private.Public().(ed25519.PublicKey)
 	if !ok || !bytes.Equal(public, expected[:]) {
@@ -119,6 +132,18 @@ func loadAuthorityPrivateKeyFile(
 		return nil, nil, errors.New("workspace authority private key does not match the pinned public key")
 	}
 	return private, encoded, nil
+}
+
+func parseAuthorityPrivateKey(encoded []byte) (ed25519.PrivateKey, error) {
+	parsed, err := x509.ParsePKCS8PrivateKey(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("parse workspace authority key: %w", err)
+	}
+	private, ok := parsed.(ed25519.PrivateKey)
+	if !ok || len(private) != ed25519.PrivateKeySize {
+		return nil, errors.New("workspace authority key is not Ed25519")
+	}
+	return private, nil
 }
 
 func AuthorityKeyID(publicKey AuthorityPublicKey) string {

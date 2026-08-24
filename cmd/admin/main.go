@@ -65,6 +65,10 @@ func main() {
 		verifyAuthorityBackup(store, os.Args[2:])
 	case "restore-authority":
 		restoreAuthority(store, databasePath, os.Args[2:])
+	case "prepare-authority-rotation":
+		prepareAuthorityRotation(databasePath, os.Args[2:])
+	case "rotate-authority":
+		rotateAuthority(store, databasePath, os.Args[2:])
 	case "issue-pairing-code":
 		issuePairingCode(store, os.Args[2:])
 	case "list-devices":
@@ -174,6 +178,67 @@ func restoreAuthority(store *admission.Store, databasePath string, args []string
 	fmt.Printf("workspace_id=%s\n", base64.RawURLEncoding.EncodeToString(workspace[:]))
 	fmt.Printf("authority_key_id=%s\n", membership.AuthorityKeyID(publicKey))
 	fmt.Printf("authority_private_key_file=%s\n", restored.PrivateKeyPath)
+	fmt.Printf("result=%s\n", result)
+}
+
+func prepareAuthorityRotation(databasePath string, args []string) {
+	flags := flag.NewFlagSet("prepare-authority-rotation", flag.ExitOnError)
+	flags.Parse(args)
+	if flags.NArg() != 0 {
+		flags.Usage()
+		os.Exit(2)
+	}
+	generated, err := membership.GenerateAuthority(authorityKeyDirectory(databasePath))
+	if err != nil {
+		fatal("prepare workspace authority rotation", err)
+	}
+	fmt.Printf("new_authority_key_id=%s\n", generated.KeyID)
+	fmt.Printf("new_authority_private_key_file=%s\n", generated.Path)
+	fmt.Println("result=prepared")
+}
+
+func rotateAuthority(store *admission.Store, databasePath string, args []string) {
+	flags := flag.NewFlagSet("rotate-authority", flag.ExitOnError)
+	workspaceText := flags.String("workspace", "", "base64url workspace ID")
+	newKeyFile := flags.String("new-key-file", "", "prepared protected Ed25519 PKCS#8 key file")
+	flags.Parse(args)
+	if flags.NArg() != 0 || strings.TrimSpace(*newKeyFile) == "" {
+		flags.Usage()
+		os.Exit(2)
+	}
+	workspace := parseWorkspaceID(*workspaceText)
+	newPublicKey, newPrivateKey, err := membership.LoadAuthorityKey(*newKeyFile)
+	if err != nil {
+		fatal("load prepared workspace authority", err)
+	}
+	defer clear(newPrivateKey)
+	if completed, ok, err := store.CompletedWorkspaceAuthorityRotation(context.Background(), workspace, newPublicKey); err != nil {
+		fatal("recover workspace authority rotation", err)
+	} else if ok {
+		printAuthorityRotation(workspace, newPublicKey, completed, "already-rotated")
+		return
+	}
+	previousPrivateKey, err := loadWorkspaceAuthorityPrivateKey(store, databasePath, workspace)
+	if err != nil {
+		fatal("load current workspace authority", err)
+	}
+	defer clear(previousPrivateKey)
+	rotated, err := store.RotateWorkspaceAuthority(context.Background(), admission.RotateWorkspaceAuthorityInput{
+		WorkspaceID: workspace, PreviousAuthorityPrivateKey: previousPrivateKey,
+		NewAuthorityPrivateKey: newPrivateKey, Now: time.Now(),
+	})
+	if err != nil {
+		fatal("rotate workspace authority", err)
+	}
+	printAuthorityRotation(workspace, newPublicKey, rotated, "rotated")
+}
+
+func printAuthorityRotation(workspace admission.WorkspaceID, publicKey membership.AuthorityPublicKey, rotated admission.RotatedWorkspaceAuthority, result string) {
+	fmt.Printf("workspace_id=%s\n", base64.RawURLEncoding.EncodeToString(workspace[:]))
+	fmt.Printf("authority_key_id=%s\n", membership.AuthorityKeyID(publicKey))
+	fmt.Printf("authority_epoch=%d\n", rotated.AuthorityEpoch)
+	fmt.Printf("activation_roster_epoch=%d\n", rotated.RosterEpoch)
+	fmt.Printf("transition_digest=%s\n", base64.RawURLEncoding.EncodeToString(rotated.TransitionDigest[:]))
 	fmt.Printf("result=%s\n", result)
 }
 
@@ -384,6 +449,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin backup-authority --workspace <id> --output <new-directory>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin verify-authority-backup --workspace <id> --backup <directory>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin restore-authority --workspace <id> --backup <directory>")
+	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin prepare-authority-rotation")
+	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin rotate-authority --workspace <id> --new-key-file <path>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin issue-pairing-code --workspace <id> --type android|chrome [--name name] [--ttl 10m]")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin list-devices --workspace <id>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin list-pending-devices --workspace <id>")

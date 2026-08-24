@@ -33,6 +33,7 @@ const (
 	maxDeviceNameBytes         = 100
 	maxMembershipRosterPage    = 256
 	maxMembershipRosterPageRaw = 1 << 20
+	maxAuthorityTransitions    = 256
 )
 
 var (
@@ -166,11 +167,12 @@ type PendingDeviceSummary struct {
 }
 
 type MembershipStateView struct {
-	State              string
-	AuthorityPublicKey authority.AuthorityPublicKey
-	SignedCertificate  []byte
-	Rosters            [][]byte
-	LatestRosterEpoch  int64
+	State                string
+	AuthorityPublicKey   authority.AuthorityPublicKey
+	SignedCertificate    []byte
+	AuthorityTransitions [][]byte
+	Rosters              [][]byte
+	LatestRosterEpoch    int64
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -353,6 +355,44 @@ func (s *Store) RotateWorkspaceAuthority(ctx context.Context, input RotateWorksp
 	copy(transitionDigest[:], transition.GetTransitionDigest())
 	copy(rosterDigest[:], activationRoster.GetRosterDigest())
 	return RotatedWorkspaceAuthority{AuthorityEpoch: transitionEpoch, TransitionDigest: transitionDigest, RosterEpoch: activationEpoch, RosterDigest: rosterDigest, SignedTransition: transitionEncoded}, nil
+}
+
+func (s *Store) CompletedWorkspaceAuthorityRotation(
+	ctx context.Context,
+	workspaceID WorkspaceID,
+	expectedNewAuthority authority.AuthorityPublicKey,
+) (RotatedWorkspaceAuthority, bool, error) {
+	var currentPublicKey, transitionEncoded []byte
+	var authorityEpoch int64
+	err := s.db.QueryRowContext(ctx, `SELECT w.authority_public_key, w.authority_epoch, t.signed_transition
+		FROM workspaces w JOIN workspace_authority_transitions t
+		ON t.workspace_id = w.id AND t.epoch = w.authority_epoch
+		WHERE w.id = ?`, workspaceID[:]).Scan(&currentPublicKey, &authorityEpoch, &transitionEncoded)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RotatedWorkspaceAuthority{}, false, nil
+	}
+	if err != nil {
+		return RotatedWorkspaceAuthority{}, false, fmt.Errorf("read completed workspace authority rotation: %w", err)
+	}
+	if !bytes.Equal(currentPublicKey, expectedNewAuthority[:]) {
+		return RotatedWorkspaceAuthority{}, false, nil
+	}
+	transition, err := membershipcodec.DecodeSignedAuthorityKeyTransition(transitionEncoded)
+	if err != nil || transition.GetTransition().GetTransitionEpoch() != uint64(authorityEpoch) ||
+		!bytes.Equal(transition.GetTransition().GetNewAuthorityPublicKey(), expectedNewAuthority[:]) {
+		return RotatedWorkspaceAuthority{}, false, errors.New("stored workspace authority transition is invalid")
+	}
+	var rosterDigest []byte
+	if err := s.db.QueryRowContext(ctx, `SELECT digest FROM workspace_rosters WHERE workspace_id = ? AND epoch = ?`, workspaceID[:], transition.GetTransition().GetActivationRosterEpoch()).Scan(&rosterDigest); err != nil || len(rosterDigest) != sha256.Size {
+		return RotatedWorkspaceAuthority{}, false, errors.New("stored authority activation roster is missing")
+	}
+	var result RotatedWorkspaceAuthority
+	result.AuthorityEpoch = authorityEpoch
+	result.RosterEpoch = int64(transition.GetTransition().GetActivationRosterEpoch())
+	copy(result.TransitionDigest[:], transition.GetTransitionDigest())
+	copy(result.RosterDigest[:], rosterDigest)
+	result.SignedTransition = append([]byte(nil), transitionEncoded...)
+	return result, true, nil
 }
 
 func cloneRevocations(values []*membershipv1.RevokedCertificate) []*membershipv1.RevokedCertificate {
@@ -832,6 +872,25 @@ func (s *Store) ReadMembershipState(
 			return MembershipStateView{}, errors.New("stored device certificate is invalid")
 		}
 		queryAfterEpoch = int64(certificate.GetCertificate().GetMembershipEpoch()) - 1
+	}
+	transitionRows, err := s.db.QueryContext(ctx, `SELECT signed_transition FROM workspace_authority_transitions WHERE workspace_id = ? AND activation_roster_epoch > ? AND activation_roster_epoch <= ? ORDER BY epoch LIMIT ?`, workspaceID[:], queryAfterEpoch, maximumEpoch, maxAuthorityTransitions+1)
+	if err != nil {
+		return MembershipStateView{}, fmt.Errorf("read workspace authority transitions: %w", err)
+	}
+	for transitionRows.Next() {
+		var encoded []byte
+		if err := transitionRows.Scan(&encoded); err != nil {
+			transitionRows.Close()
+			return MembershipStateView{}, fmt.Errorf("scan workspace authority transition: %w", err)
+		}
+		if len(view.AuthorityTransitions) == maxAuthorityTransitions {
+			transitionRows.Close()
+			return MembershipStateView{}, errors.New("workspace authority transition chain exceeds response limit")
+		}
+		view.AuthorityTransitions = append(view.AuthorityTransitions, append([]byte(nil), encoded...))
+	}
+	if err := transitionRows.Close(); err != nil {
+		return MembershipStateView{}, fmt.Errorf("close workspace authority transitions: %w", err)
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT epoch, signed_roster FROM workspace_rosters

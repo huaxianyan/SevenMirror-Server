@@ -1,6 +1,6 @@
 # Membership HTTP v1
 
-Status: provisional ADR-005 replacement API. These endpoints coexist with the frozen legacy `/v1/devices/register` path until Android and Chrome persist authority pins and signed roster rollback state.
+Status: provisional ADR-005 membership API. Android and Chrome persist authority and roster rollback floors; the frozen legacy `/v1/devices/register` path remains isolated from this trust source.
 
 All requests use `POST`, `Content-Type: application/json`, no redirects, no credentials in URLs, an 8192-byte body limit, unknown-field rejection, and canonical unpadded base64url binary values. Non-loopback use requires HTTPS.
 
@@ -32,8 +32,11 @@ The response contains:
 - current internal membership state;
 - the pinned authority public key;
 - the device's signed certificate when approved;
+- the canonical authority-transition chain applicable through the device's visible roster ceiling;
 - up to 256 contiguous signed rosters after the requested epoch, additionally bounded to 1 MiB of raw signed-roster bytes per page;
 - the latest server roster epoch as a decimal string.
+
+An existing member validates any next dual-signed authority transition and its activation roster together, then atomically advances both durable rollback floors before comparing the response authority key with its resulting pin. A pending or newly registered device receives an empty transition chain because it already pins the current authority. A certified revoked device sees only transitions activated no later than its terminal roster epoch.
 
 For `after_roster_epoch = 0`, an approved device starts at its certificate's membership epoch rather than replaying rosters from before it joined; that first returned roster must contain the exact local certificate under the bootstrap rule. If a page does not reach the latest epoch, the client validates the returned chain, durably persists its last accepted epoch/digest, and requests the next page. A previously enrolled client must not skip epochs.
 

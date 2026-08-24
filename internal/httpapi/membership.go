@@ -47,11 +47,12 @@ type membershipStateRequest struct {
 }
 
 type membershipStateResponse struct {
-	State              string   `json:"state"`
-	AuthorityPublicKey string   `json:"authority_public_key"`
-	SignedCertificate  string   `json:"signed_certificate,omitempty"`
-	Rosters            []string `json:"rosters"`
-	LatestRosterEpoch  string   `json:"latest_roster_epoch"`
+	State                string   `json:"state"`
+	AuthorityPublicKey   string   `json:"authority_public_key"`
+	SignedCertificate    string   `json:"signed_certificate,omitempty"`
+	AuthorityTransitions []string `json:"authority_transitions"`
+	Rosters              []string `json:"rosters"`
+	LatestRosterEpoch    string   `json:"latest_roster_epoch"`
 }
 
 func newMembershipHandler(store *admission.Store) *membershipHandler {
@@ -178,11 +179,15 @@ func (h *membershipHandler) state(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := membershipStateResponse{State: view.State,
-		AuthorityPublicKey: base64.RawURLEncoding.EncodeToString(view.AuthorityPublicKey[:]),
-		LatestRosterEpoch:  strconv.FormatInt(view.LatestRosterEpoch, 10),
-		Rosters:            make([]string, len(view.Rosters))}
+		AuthorityPublicKey:   base64.RawURLEncoding.EncodeToString(view.AuthorityPublicKey[:]),
+		LatestRosterEpoch:    strconv.FormatInt(view.LatestRosterEpoch, 10),
+		AuthorityTransitions: make([]string, len(view.AuthorityTransitions)),
+		Rosters:              make([]string, len(view.Rosters))}
 	if len(view.SignedCertificate) != 0 {
 		response.SignedCertificate = base64.RawURLEncoding.EncodeToString(view.SignedCertificate)
+	}
+	for index, transition := range view.AuthorityTransitions {
+		response.AuthorityTransitions[index] = base64.RawURLEncoding.EncodeToString(transition)
 	}
 	for index, roster := range view.Rosters {
 		response.Rosters[index] = base64.RawURLEncoding.EncodeToString(roster)

@@ -33,6 +33,14 @@ func TestGenerateAuthorityCreatesExclusiveProtectedMatchingPKCS8(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer clear(private)
+	derivedPublic, derivedPrivate, err := LoadAuthorityKey(generated.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clear(derivedPrivate)
+	if derivedPublic != generated.PublicKey || !bytes.Equal(derivedPrivate, private) {
+		t.Fatal("unpinned authority load did not derive the generated key")
+	}
 	message := []byte("authority-key-self-test")
 	signature := ed25519.Sign(private, message)
 	if !ed25519.Verify(generated.PublicKey[:], message, signature) {

@@ -68,7 +68,14 @@ NM_DATABASE_PATH=<restored-registry> NM_AUTHORITY_KEY_DIR=<live-key-directory> \
 
 The canonical authority-transition wire message and Server transactional rotation core are implemented. A transition binds the exact workspace, old and new keys, monotonic transition epoch, previous transition digest, activation roster epoch, previous roster digest, and issue time. It is signed independently by both the old and new authorities. The same SQLite transaction stores the transition, reissues every active certificate, inserts the new-authority-signed activation roster, and advances the current authority pointer.
 
-The operational admin command and client transition-chain reconciliation remain intentionally disabled until Android and Chrome can durably apply the transition and activation roster atomically. Therefore this implementation cannot yet rotate a production workspace through supported CLI paths; direct unsigned replacement remains forbidden.
+Android and Chrome durably apply each missing transition together with its activation roster before accepting the response authority pin. Operational rotation is therefore split into two explicit commands:
+
+```text
+notification-mirroring-admin prepare-authority-rotation
+notification-mirroring-admin rotate-authority --workspace <id> --new-key-file <prepared-path>
+```
+
+Preparation exclusive-creates a protected PKCS#8 file without changing SQLite. Rotation loads that exact file, signs the transition with both authorities, and commits all durable membership changes atomically. Retrying `rotate-authority` with the same workspace and prepared file returns `result=already-rotated` only after re-reading and validating the committed transition and activation roster. A different new key is a new rotation intent. Direct unsigned replacement remains forbidden.
 
 The private-key file must never be overwritten in place. A rotation creates a new file and retains the old key until every supported client has accepted the signed transition and the rollback window has closed.
 

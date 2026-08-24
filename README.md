@@ -4,7 +4,7 @@ Private self-hosted relay for Notification Mirroring. This is one of three indep
 
 Repository: <https://github.com/huaxianyan/SevenMirror-Server>
 
-> Status: provisional private admission and authenticated ciphertext relay are implemented for synthetic test devices. ADR-005 authority-key custody, verified authority-key backup/restore, strict three-client Workspace Membership v1 codecs/vectors, and the Server pending-proof/atomic approval persistence boundary are implemented. Authority rotation, offline delivery, and production security review remain incomplete. Real third-party notification content remains blocked.
+> Status: provisional private admission and authenticated ciphertext relay are implemented for synthetic test devices. ADR-005 authority-key custody, verified authority-key backup/restore, strict three-client Workspace Membership v1 codecs/vectors, and the Server pending-proof/atomic approval persistence boundary are implemented. Dual-signed authority rotation is implemented; offline delivery and production security review remain incomplete. Real third-party notification content remains blocked.
 
 ## Current functionality
 
@@ -71,7 +71,17 @@ NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
   verify-authority-backup --workspace <base64url-workspace-id> --backup <directory>
 ```
 
-The protected backup directory contains the exact PKCS#8 file and a canonical manifest bound to the authority public key read from SQLite. SevenMirror does not encrypt this directory; store it in an encrypted backup system together with a consistent SQLite registry backup. After restoring the registry, `restore-authority` verifies every binding before exclusively creating the missing live key file. It never overwrites a file or changes SQLite. See [`docs/workspace-authority-key-lifecycle.md`](docs/workspace-authority-key-lifecycle.md) for the complete procedure.
+The protected backup directory contains the exact PKCS#8 file and a canonical manifest bound to the authority public key read from SQLite. SevenMirror does not encrypt this directory; store it in an encrypted backup system together with a consistent SQLite registry backup. After restoring the registry, `restore-authority` verifies every binding before exclusively creating the missing live key file. It never overwrites a file or changes SQLite.
+
+Prepare a new protected key, then rotate with that exact path:
+
+```sh
+NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin prepare-authority-rotation
+NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
+  rotate-authority --workspace <base64url-workspace-id> --new-key-file <prepared-path>
+```
+
+The old and new authorities jointly sign a canonical transition. Transition storage, active-certificate reissue, the activation roster, and the current authority pointer commit atomically. Retrying with the same prepared key verifies the committed result and returns `already-rotated`. Keep the old key and consistent backups until every supported client has accepted the transition. See [`docs/workspace-authority-key-lifecycle.md`](docs/workspace-authority-key-lifecycle.md) for the complete backup, restore, and rotation procedure.
 
 The raw pairing code is printed once. SQLite stores only its SHA-256 hash. A successful registration returns a random 32-byte device credential once; only its SHA-256 hash is persisted.
 
