@@ -4,7 +4,7 @@ Private self-hosted relay for Notification Mirroring. This is one of three indep
 
 Repository: <https://github.com/huaxianyan/SevenMirror-Server>
 
-> Status: provisional private admission and authenticated ciphertext relay are implemented for synthetic test devices. ADR-005 authority-key custody, strict three-client Workspace Membership v1 codecs/vectors, and the Server pending-proof/atomic approval persistence boundary are implemented. The public registration endpoint still uses the frozen legacy 1 × 1 path until clients can retrieve and persist certificates/rosters; verified backup/restore, authority rotation, roster delivery, offline delivery, and production security review remain incomplete. The existing bilateral client trust path is frozen and real third-party notification content remains blocked.
+> Status: provisional private admission and authenticated ciphertext relay are implemented for synthetic test devices. ADR-005 authority-key custody, verified authority-key backup/restore, strict three-client Workspace Membership v1 codecs/vectors, and the Server pending-proof/atomic approval persistence boundary are implemented. Authority rotation, offline delivery, and production security review remain incomplete. Real third-party notification content remains blocked.
 
 ## Current functionality
 
@@ -60,7 +60,18 @@ NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
   issue-pairing-code --workspace <base64url-id> --type android --name Pixel --ttl 10m
 ```
 
-Workspace initialization stores only the authority public key in SQLite and writes the private key to an exclusive owner-only PKCS#8 file. The CLI prints its location and domain-separated public key ID, never private key material. Back up the database and exact key file separately; see [`docs/workspace-authority-key-lifecycle.md`](docs/workspace-authority-key-lifecycle.md). Existing pre-schema-v3 workspaces are not silently assigned an authority.
+Workspace initialization stores only the authority public key in SQLite and writes the private key to an exclusive owner-only PKCS#8 file. The CLI prints its location and domain-separated public key ID, never private key material. Existing pre-schema-v3 workspaces are not silently assigned an authority.
+
+Create and verify an authority-key backup before approving real devices:
+
+```sh
+NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
+  backup-authority --workspace <base64url-workspace-id> --output <new-directory>
+NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
+  verify-authority-backup --workspace <base64url-workspace-id> --backup <directory>
+```
+
+The protected backup directory contains the exact PKCS#8 file and a canonical manifest bound to the authority public key read from SQLite. SevenMirror does not encrypt this directory; store it in an encrypted backup system together with a consistent SQLite registry backup. After restoring the registry, `restore-authority` verifies every binding before exclusively creating the missing live key file. It never overwrites a file or changes SQLite. See [`docs/workspace-authority-key-lifecycle.md`](docs/workspace-authority-key-lifecycle.md) for the complete procedure.
 
 The raw pairing code is printed once. SQLite stores only its SHA-256 hash. A successful registration returns a random 32-byte device credential once; only its SHA-256 hash is persisted.
 

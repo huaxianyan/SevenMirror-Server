@@ -12,7 +12,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 )
 
 const authorityKeyIDDomain = "SyncNotifications-workspace-authority-key-id-v1\x00"
@@ -90,50 +89,36 @@ func GenerateAuthority(directory string) (GeneratedAuthority, error) {
 // LoadAuthorityPrivateKey loads an exact authority key and rejects unsafe Unix
 // permissions, malformed PKCS#8, non-Ed25519 keys, and public-key mismatches.
 func LoadAuthorityPrivateKey(path string, expected AuthorityPublicKey) (ed25519.PrivateKey, error) {
-	pathInfo, err := os.Lstat(path)
+	private, encoded, err := loadAuthorityPrivateKeyFile(path, expected)
+	clear(encoded)
+	return private, err
+}
+
+func loadAuthorityPrivateKeyFile(
+	path string,
+	expected AuthorityPublicKey,
+) (ed25519.PrivateKey, []byte, error) {
+	encoded, err := readProtectedRegularFile(path, 4096, "workspace authority key")
 	if err != nil {
-		return nil, fmt.Errorf("stat workspace authority key: %w", err)
-	}
-	if pathInfo.Mode()&os.ModeSymlink != 0 {
-		return nil, errors.New("workspace authority key must not be a symbolic link")
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open workspace authority key: %w", err)
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("stat opened workspace authority key: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, errors.New("workspace authority key must be a regular file")
-	}
-	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
-		return nil, fmt.Errorf("workspace authority key permissions are %o, want 600", info.Mode().Perm())
-	}
-	encoded, err := io.ReadAll(io.LimitReader(file, 4097))
-	if err != nil {
-		return nil, fmt.Errorf("read workspace authority key: %w", err)
-	}
-	defer clear(encoded)
-	if len(encoded) > 4096 {
-		return nil, errors.New("workspace authority key file is too large")
+		return nil, nil, err
 	}
 	parsed, err := x509.ParsePKCS8PrivateKey(encoded)
 	if err != nil {
-		return nil, fmt.Errorf("parse workspace authority key: %w", err)
+		clear(encoded)
+		return nil, nil, fmt.Errorf("parse workspace authority key: %w", err)
 	}
 	private, ok := parsed.(ed25519.PrivateKey)
 	if !ok || len(private) != ed25519.PrivateKeySize {
-		return nil, errors.New("workspace authority key is not Ed25519")
+		clear(encoded)
+		return nil, nil, errors.New("workspace authority key is not Ed25519")
 	}
 	public, ok := private.Public().(ed25519.PublicKey)
 	if !ok || !bytes.Equal(public, expected[:]) {
 		clear(private)
-		return nil, errors.New("workspace authority private key does not match the pinned public key")
+		clear(encoded)
+		return nil, nil, errors.New("workspace authority private key does not match the pinned public key")
 	}
-	return private, nil
+	return private, encoded, nil
 }
 
 func AuthorityKeyID(publicKey AuthorityPublicKey) string {

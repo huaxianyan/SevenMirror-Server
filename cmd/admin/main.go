@@ -59,6 +59,12 @@ func main() {
 		fmt.Printf("workspace_id=%s\n", base64.RawURLEncoding.EncodeToString(workspace[:]))
 		fmt.Printf("authority_key_id=%s\n", authority.KeyID)
 		fmt.Printf("authority_private_key_file=%s\n", authority.Path)
+	case "backup-authority":
+		backupAuthority(store, databasePath, os.Args[2:])
+	case "verify-authority-backup":
+		verifyAuthorityBackup(store, os.Args[2:])
+	case "restore-authority":
+		restoreAuthority(store, databasePath, os.Args[2:])
 	case "issue-pairing-code":
 		issuePairingCode(store, os.Args[2:])
 	case "list-devices":
@@ -76,6 +82,99 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
+}
+
+func backupAuthority(store *admission.Store, databasePath string, args []string) {
+	flags := flag.NewFlagSet("backup-authority", flag.ExitOnError)
+	workspaceText := flags.String("workspace", "", "base64url workspace ID")
+	outputDirectory := flags.String("output", "", "new protected backup directory")
+	flags.Parse(args)
+	if flags.NArg() != 0 {
+		flags.Usage()
+		os.Exit(2)
+	}
+	workspace := parseWorkspaceID(*workspaceText)
+	publicKey, err := store.WorkspaceAuthorityPublicKey(context.Background(), workspace)
+	if err != nil {
+		fatal("load workspace authority", err)
+	}
+	keyID := membership.AuthorityKeyID(publicKey)
+	sourcePath := filepath.Join(
+		authorityKeyDirectory(databasePath),
+		"workspace-authority-"+keyID+".pk8",
+	)
+	backup, err := membership.CreateAuthorityBackup(
+		*outputDirectory,
+		workspace[:],
+		sourcePath,
+		publicKey,
+	)
+	if err != nil {
+		fatal("back up workspace authority", err)
+	}
+	fmt.Printf("workspace_id=%s\n", base64.RawURLEncoding.EncodeToString(workspace[:]))
+	fmt.Printf("authority_key_id=%s\n", backup.KeyID)
+	fmt.Printf("authority_backup_directory=%s\n", backup.Directory)
+}
+
+func verifyAuthorityBackup(store *admission.Store, args []string) {
+	flags := flag.NewFlagSet("verify-authority-backup", flag.ExitOnError)
+	workspaceText := flags.String("workspace", "", "base64url workspace ID")
+	backupDirectory := flags.String("backup", "", "authority backup directory")
+	flags.Parse(args)
+	if flags.NArg() != 0 {
+		flags.Usage()
+		os.Exit(2)
+	}
+	workspace := parseWorkspaceID(*workspaceText)
+	publicKey, err := store.WorkspaceAuthorityPublicKey(context.Background(), workspace)
+	if err != nil {
+		fatal("load workspace authority", err)
+	}
+	verified, err := membership.VerifyAuthorityBackup(
+		*backupDirectory,
+		workspace[:],
+		publicKey,
+	)
+	if err != nil {
+		fatal("verify workspace authority backup", err)
+	}
+	fmt.Printf("workspace_id=%s\n", base64.RawURLEncoding.EncodeToString(workspace[:]))
+	fmt.Printf("authority_key_id=%s\n", verified.KeyID)
+	fmt.Println("result=verified")
+}
+
+func restoreAuthority(store *admission.Store, databasePath string, args []string) {
+	flags := flag.NewFlagSet("restore-authority", flag.ExitOnError)
+	workspaceText := flags.String("workspace", "", "base64url workspace ID")
+	backupDirectory := flags.String("backup", "", "authority backup directory")
+	flags.Parse(args)
+	if flags.NArg() != 0 {
+		flags.Usage()
+		os.Exit(2)
+	}
+	workspace := parseWorkspaceID(*workspaceText)
+	publicKey, err := store.WorkspaceAuthorityPublicKey(context.Background(), workspace)
+	if err != nil {
+		fatal("load workspace authority", err)
+	}
+	restored, err := membership.RestoreAuthorityBackup(
+		*backupDirectory,
+		authorityKeyDirectory(databasePath),
+		workspace[:],
+		publicKey,
+	)
+	if err != nil {
+		fatal("restore workspace authority", err)
+	}
+	result := "restored"
+	if restored.AlreadyPresent {
+		result = "already-present"
+	}
+	fmt.Printf("workspace_id=%s\n", base64.RawURLEncoding.EncodeToString(workspace[:]))
+	fmt.Printf("authority_key_id=%s\n", membership.AuthorityKeyID(publicKey))
+	fmt.Printf("authority_private_key_file=%s\n", restored.PrivateKeyPath)
+	fmt.Printf("result=%s\n", result)
 }
 
 func issuePairingCode(store *admission.Store, args []string) {
@@ -282,6 +381,9 @@ func parseWorkspaceID(value string) admission.WorkspaceID {
 func usage() {
 	fmt.Fprintln(os.Stderr, "Usage:")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin init-workspace")
+	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin backup-authority --workspace <id> --output <new-directory>")
+	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin verify-authority-backup --workspace <id> --backup <directory>")
+	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin restore-authority --workspace <id> --backup <directory>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin issue-pairing-code --workspace <id> --type android|chrome [--name name] [--ttl 10m]")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin list-devices --workspace <id>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin list-pending-devices --workspace <id>")
