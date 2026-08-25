@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strings"
 	"unicode/utf8"
 
 	notificationv1 "github.com/huaxianyan/SyncNotifications-Server/protocol/generated/notification/v1"
@@ -15,11 +16,13 @@ import (
 const (
 	SchemaVersion                  = 1
 	IdentityLifecycleSchemaVersion = 2
-	NotificationSchemaVersion      = 3
+	NotificationSchemaVersion      = 4
 	MaxPlaintextSize               = 524272
 	MaxNotificationIDBytes         = 512
 	MaxNotificationTitleBytes      = 512
 	MaxNotificationBodyBytes       = 4000
+	MaxNotificationMediaBytes      = 128 * 1024
+	MaxNotificationMediaDimension  = 256
 	MaxSnapshotEntries             = 200
 	MaxReplyTextBytes              = 4000
 	MaxResultDetailBytes           = 256
@@ -119,8 +122,56 @@ func validateNotificationUpsert(notification *notificationv1.NotificationUpsert)
 			return errors.New("notification body must be valid UTF-8 within size limit")
 		}
 	}
+	if notification.GetContainsContentImage() &&
+		(notification.Body == nil || !strings.Contains(notification.GetBody(), "[图片]")) {
+		return errors.New("notification content image requires a body placeholder")
+	}
+	if notification.AppIcon != nil {
+		if err := validateNotificationMedia(notification.AppIcon); err != nil {
+			return fmt.Errorf("notification app icon: %w", err)
+		}
+	}
+	if notification.Avatar != nil {
+		if err := validateNotificationMedia(notification.Avatar); err != nil {
+			return fmt.Errorf("notification avatar: %w", err)
+		}
+	}
 	return nil
 }
+
+func validateNotificationMedia(media *notificationv1.NotificationMedia) error {
+	if media == nil || len(media.ProtoReflect().GetUnknown()) != 0 {
+		return errors.New("media contains unknown fields")
+	}
+	encoded := media.GetEncodedBytes()
+	if len(encoded) < 1 || len(encoded) > MaxNotificationMediaBytes {
+		return errors.New("media bytes are out of range")
+	}
+	if media.GetWidth() < 1 || media.GetWidth() > MaxNotificationMediaDimension ||
+		media.GetHeight() < 1 || media.GetHeight() > MaxNotificationMediaDimension {
+		return errors.New("media dimensions are out of range")
+	}
+	digest := sha256.Sum256(encoded)
+	if !bytes.Equal(media.GetContentSha256(), digest[:]) {
+		return errors.New("media content digest does not match encoded bytes")
+	}
+	switch media.GetMimeType() {
+	case notificationv1.NotificationMediaMimeType_NOTIFICATION_MEDIA_MIME_TYPE_PNG:
+		if len(encoded) < len(pngSignature) || string(encoded[:len(pngSignature)]) != pngSignature {
+			return errors.New("media bytes do not have a PNG signature")
+		}
+	case notificationv1.NotificationMediaMimeType_NOTIFICATION_MEDIA_MIME_TYPE_WEBP:
+		if len(encoded) < 12 || !bytes.Equal(encoded[:4], []byte("RIFF")) ||
+			!bytes.Equal(encoded[8:12], []byte("WEBP")) {
+			return errors.New("media bytes do not have a WebP signature")
+		}
+	default:
+		return errors.New("media MIME type is unsupported")
+	}
+	return nil
+}
+
+const pngSignature = "\x89PNG\r\n\x1a\n"
 
 func validateNotificationRemoved(notification *notificationv1.NotificationRemoved) error {
 	if notification == nil || len(notification.ProtoReflect().GetUnknown()) != 0 {

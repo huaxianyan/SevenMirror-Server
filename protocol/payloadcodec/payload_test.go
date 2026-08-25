@@ -181,11 +181,24 @@ func TestNotificationCanonicalVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	var vector struct {
-		NotificationID                        string `json:"notificationPayloadId"`
-		NotificationUpsertRevision            uint64 `json:"notificationUpsertRevision,string"`
-		NotificationRemovedRevision           uint64 `json:"notificationRemovedRevision,string"`
-		NotificationTitle                     string `json:"notificationTitle"`
-		NotificationBody                      string `json:"notificationBody"`
+		NotificationID                   string `json:"notificationPayloadId"`
+		NotificationUpsertRevision       uint64 `json:"notificationUpsertRevision,string"`
+		NotificationRemovedRevision      uint64 `json:"notificationRemovedRevision,string"`
+		NotificationTitle                string `json:"notificationTitle"`
+		NotificationBody                 string `json:"notificationBody"`
+		NotificationContainsContentImage bool   `json:"notificationContainsContentImage"`
+		NotificationAppIcon              struct {
+			ContentSHA256Hex string `json:"contentSha256Hex"`
+			Width            uint32 `json:"width"`
+			Height           uint32 `json:"height"`
+			EncodedHex       string `json:"encodedHex"`
+		} `json:"notificationAppIcon"`
+		NotificationAvatar struct {
+			ContentSHA256Hex string `json:"contentSha256Hex"`
+			Width            uint32 `json:"width"`
+			Height           uint32 `json:"height"`
+			EncodedHex       string `json:"encodedHex"`
+		} `json:"notificationAvatar"`
 		NotificationUpsertEncodedHex          string `json:"notificationUpsertEncodedHex"`
 		NotificationRemovedEncodedHex         string `json:"notificationRemovedEncodedHex"`
 		NotificationSnapshotHighWaterRevision uint64 `json:"notificationSnapshotHighWaterRevision,string"`
@@ -205,6 +218,15 @@ func TestNotificationCanonicalVectors(t *testing.T) {
 		}
 		return decoded
 	}
+	media := func(contentSHA256Hex string, width, height uint32, encodedHex string) *notificationv1.NotificationMedia {
+		return &notificationv1.NotificationMedia{
+			ContentSha256: decodeHex(contentSHA256Hex),
+			MimeType:      notificationv1.NotificationMediaMimeType_NOTIFICATION_MEDIA_MIME_TYPE_PNG,
+			Width:         width,
+			Height:        height,
+			EncodedBytes:  decodeHex(encodedHex),
+		}
+	}
 	upsert := &notificationv1.EncryptedPayload{
 		SchemaVersion: NotificationSchemaVersion,
 		Body: &notificationv1.EncryptedPayload_NotificationUpsert{
@@ -213,6 +235,19 @@ func TestNotificationCanonicalVectors(t *testing.T) {
 				NotificationRevision: vector.NotificationUpsertRevision,
 				Title:                &vector.NotificationTitle,
 				Body:                 &vector.NotificationBody,
+				AppIcon: media(
+					vector.NotificationAppIcon.ContentSHA256Hex,
+					vector.NotificationAppIcon.Width,
+					vector.NotificationAppIcon.Height,
+					vector.NotificationAppIcon.EncodedHex,
+				),
+				Avatar: media(
+					vector.NotificationAvatar.ContentSHA256Hex,
+					vector.NotificationAvatar.Width,
+					vector.NotificationAvatar.Height,
+					vector.NotificationAvatar.EncodedHex,
+				),
+				ContainsContentImage: vector.NotificationContainsContentImage,
 			},
 		},
 	}
@@ -326,6 +361,9 @@ func TestRejectsInvalidNotificationFieldsAndSchema(t *testing.T) {
 		{"zero revision", func(p *notificationv1.EncryptedPayload) { p.GetNotificationUpsert().NotificationRevision = 0 }},
 		{"missing text", func(p *notificationv1.EncryptedPayload) { p.GetNotificationUpsert().Title = nil }},
 		{"empty title", func(p *notificationv1.EncryptedPayload) { empty := ""; p.GetNotificationUpsert().Title = &empty }},
+		{"content image without placeholder", func(p *notificationv1.EncryptedPayload) {
+			p.GetNotificationUpsert().ContainsContentImage = true
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -336,6 +374,66 @@ func TestRejectsInvalidNotificationFieldsAndSchema(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRejectsInvalidNotificationMedia(t *testing.T) {
+	png := append([]byte(pngSignature), []byte("bounded-png-test")...)
+	digest := decodeTestHex("eda5ff88e35d671aeab8bb05ba83cdd505b647263f12e3feb8211e84672f56f0")
+	valid := func() *notificationv1.EncryptedPayload {
+		title := "Synthetic notification"
+		return &notificationv1.EncryptedPayload{
+			SchemaVersion: NotificationSchemaVersion,
+			Body: &notificationv1.EncryptedPayload_NotificationUpsert{
+				NotificationUpsert: &notificationv1.NotificationUpsert{
+					NotificationId:       "synthetic.notification/42",
+					NotificationRevision: 7,
+					Title:                &title,
+					AppIcon: &notificationv1.NotificationMedia{
+						ContentSha256: append([]byte(nil), digest...),
+						MimeType:      notificationv1.NotificationMediaMimeType_NOTIFICATION_MEDIA_MIME_TYPE_PNG,
+						Width:         1, Height: 1, EncodedBytes: png,
+					},
+				},
+			},
+		}
+	}
+	tests := []struct {
+		name   string
+		change func(*notificationv1.NotificationMedia)
+	}{
+		{"wrong digest", func(media *notificationv1.NotificationMedia) { media.ContentSha256[0] ^= 1 }},
+		{"unsupported MIME", func(media *notificationv1.NotificationMedia) {
+			media.MimeType = notificationv1.NotificationMediaMimeType_NOTIFICATION_MEDIA_MIME_TYPE_UNSPECIFIED
+		}},
+		{"zero width", func(media *notificationv1.NotificationMedia) { media.Width = 0 }},
+		{"oversized height", func(media *notificationv1.NotificationMedia) {
+			media.Height = MaxNotificationMediaDimension + 1
+		}},
+		{"oversized bytes", func(media *notificationv1.NotificationMedia) {
+			media.EncodedBytes = make([]byte, MaxNotificationMediaBytes+1)
+		}},
+		{"wrong PNG signature", func(media *notificationv1.NotificationMedia) {
+			media.EncodedBytes[0] = 0
+			media.ContentSha256 = decodeTestHex("ba2e8d793c4a70da5038eee527b1fc383247bd2a1b01e5c34499097ee70f7358")
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload := valid()
+			test.change(payload.GetNotificationUpsert().GetAppIcon())
+			if _, err := Encode(payload); err == nil {
+				t.Fatal("invalid notification media accepted")
+			}
+		})
+	}
+}
+
+func decodeTestHex(value string) []byte {
+	decoded, err := hex.DecodeString(value)
+	if err != nil {
+		panic(err)
+	}
+	return decoded
 }
 
 func TestIdentityKeyTransitionCanonicalVector(t *testing.T) {
