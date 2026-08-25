@@ -10,7 +10,7 @@ Client repositories vendor a tagged copy of these files and record schema integr
 
 `routing-header-v1.md` defines the provisional fixed 160-byte routing header that is authenticated as the exact HPKE AAD. `test-vectors/routing-header-v1.json` is the canonical Go/Kotlin/TypeScript codec vector.
 
-`encrypted-payload-v1.md` and `proto/notification/v1/payload.proto` define the canonical protobuf plaintext carried inside HPKE. `test-vectors/encrypted-payload-v1.json` fixes action, bounded synthetic notification media, `notification_removed`, and active snapshot-manifest encodings; the same schema also defines bounded `action.result` messages and `OUTCOME_UNKNOWN` recovery semantics.
+`encrypted-payload-v1.md` and `proto/notification/v1/payload.proto` define the canonical protobuf plaintext carried inside HPKE. `test-vectors/encrypted-payload-v1.json` fixes action invocation, bounded notification action descriptors and media, `notification_removed`, and active snapshot-manifest encodings; the same schema also defines bounded `action.result` messages and `OUTCOME_UNKNOWN` recovery semantics.
 
 `e2ee-identity-key-transition-v1.md` defines old-key-authenticated transition, new-key-addressed peer ACK, new-key-authenticated commit, durable dual-key state, and the strict lost-identity recovery boundary. `test-vectors/e2ee-identity-key-transition-v1.json` fixes all three canonical schema-v2 payloads using public test keys only.
 

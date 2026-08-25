@@ -14,22 +14,24 @@ import (
 )
 
 const (
-	SchemaVersion                  = 1
-	IdentityLifecycleSchemaVersion = 2
-	NotificationSchemaVersion      = 4
-	MaxPlaintextSize               = 524272
-	MaxNotificationIDBytes         = 512
-	MaxNotificationTitleBytes      = 512
-	MaxNotificationBodyBytes       = 4000
-	MaxNotificationMediaBytes      = 128 * 1024
-	MaxNotificationMediaDimension  = 256
-	MaxSnapshotEntries             = 200
-	MaxReplyTextBytes              = 4000
-	MaxResultDetailBytes           = 256
-	IdentifierSize                 = 16
-	SHA256Size                     = 32
-	P256PublicKeySize              = 65
-	MaxNotificationRevision        = uint64(1<<63 - 1)
+	SchemaVersion                   = 1
+	IdentityLifecycleSchemaVersion  = 2
+	NotificationSchemaVersion       = 5
+	MaxPlaintextSize                = 524272
+	MaxNotificationIDBytes          = 512
+	MaxNotificationTitleBytes       = 512
+	MaxNotificationBodyBytes        = 4000
+	MaxNotificationActions          = 16
+	MaxNotificationActionTitleBytes = 256
+	MaxNotificationMediaBytes       = 128 * 1024
+	MaxNotificationMediaDimension   = 256
+	MaxSnapshotEntries              = 200
+	MaxReplyTextBytes               = 4000
+	MaxResultDetailBytes            = 256
+	IdentifierSize                  = 16
+	SHA256Size                      = 32
+	P256PublicKeySize               = 65
+	MaxNotificationRevision         = uint64(1<<63 - 1)
 )
 
 var deterministic = proto.MarshalOptions{Deterministic: true}
@@ -135,6 +137,37 @@ func validateNotificationUpsert(notification *notificationv1.NotificationUpsert)
 		if err := validateNotificationMedia(notification.Avatar); err != nil {
 			return fmt.Errorf("notification avatar: %w", err)
 		}
+	}
+	if len(notification.GetActions()) > MaxNotificationActions {
+		return errors.New("notification has too many actions")
+	}
+	actionIDs := make(map[string]struct{}, len(notification.GetActions()))
+	for _, action := range notification.GetActions() {
+		if err := validateNotificationActionDescriptor(action); err != nil {
+			return err
+		}
+		key := string(action.GetActionId())
+		if _, exists := actionIDs[key]; exists {
+			return errors.New("notification action ids must be unique")
+		}
+		actionIDs[key] = struct{}{}
+	}
+	return nil
+}
+
+func validateNotificationActionDescriptor(action *notificationv1.NotificationActionDescriptor) error {
+	if action == nil || len(action.ProtoReflect().GetUnknown()) != 0 {
+		return errors.New("notification action contains unknown fields")
+	}
+	if len(action.GetActionId()) != IdentifierSize {
+		return errors.New("notification action id must be 16 bytes")
+	}
+	title := action.GetTitle()
+	if !utf8.ValidString(title) || len(title) < 1 || len(title) > MaxNotificationActionTitleBytes {
+		return errors.New("notification action title must be valid UTF-8 within size limit")
+	}
+	if action.GetAllowsFreeFormInput() && !action.GetRequiresTextInput() {
+		return errors.New("notification action cannot allow text without requiring text input")
 	}
 	return nil
 }

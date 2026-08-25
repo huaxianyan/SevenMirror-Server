@@ -187,7 +187,13 @@ func TestNotificationCanonicalVectors(t *testing.T) {
 		NotificationTitle                string `json:"notificationTitle"`
 		NotificationBody                 string `json:"notificationBody"`
 		NotificationContainsContentImage bool   `json:"notificationContainsContentImage"`
-		NotificationAppIcon              struct {
+		NotificationActions              []struct {
+			ActionIDHex         string `json:"actionIdHex"`
+			Title               string `json:"title"`
+			RequiresTextInput   bool   `json:"requiresTextInput"`
+			AllowsFreeFormInput bool   `json:"allowsFreeFormInput"`
+		} `json:"notificationActions"`
+		NotificationAppIcon struct {
 			ContentSHA256Hex string `json:"contentSha256Hex"`
 			Width            uint32 `json:"width"`
 			Height           uint32 `json:"height"`
@@ -227,6 +233,15 @@ func TestNotificationCanonicalVectors(t *testing.T) {
 			EncodedBytes:  decodeHex(encodedHex),
 		}
 	}
+	actions := make([]*notificationv1.NotificationActionDescriptor, len(vector.NotificationActions))
+	for index, action := range vector.NotificationActions {
+		actions[index] = &notificationv1.NotificationActionDescriptor{
+			ActionId:            decodeHex(action.ActionIDHex),
+			Title:               action.Title,
+			RequiresTextInput:   action.RequiresTextInput,
+			AllowsFreeFormInput: action.AllowsFreeFormInput,
+		}
+	}
 	upsert := &notificationv1.EncryptedPayload{
 		SchemaVersion: NotificationSchemaVersion,
 		Body: &notificationv1.EncryptedPayload_NotificationUpsert{
@@ -248,6 +263,7 @@ func TestNotificationCanonicalVectors(t *testing.T) {
 					vector.NotificationAvatar.EncodedHex,
 				),
 				ContainsContentImage: vector.NotificationContainsContentImage,
+				Actions:              actions,
 			},
 		},
 	}
@@ -348,6 +364,9 @@ func TestRejectsInvalidNotificationFieldsAndSchema(t *testing.T) {
 					NotificationId:       "synthetic.notification/42",
 					NotificationRevision: 7,
 					Title:                &title,
+					Actions: []*notificationv1.NotificationActionDescriptor{
+						{ActionId: bytes.Repeat([]byte{1}, IdentifierSize), Title: "Mark handled"},
+					},
 				},
 			},
 		}
@@ -363,6 +382,28 @@ func TestRejectsInvalidNotificationFieldsAndSchema(t *testing.T) {
 		{"empty title", func(p *notificationv1.EncryptedPayload) { empty := ""; p.GetNotificationUpsert().Title = &empty }},
 		{"content image without placeholder", func(p *notificationv1.EncryptedPayload) {
 			p.GetNotificationUpsert().ContainsContentImage = true
+		}},
+		{"short action id", func(p *notificationv1.EncryptedPayload) {
+			p.GetNotificationUpsert().Actions[0].ActionId = make([]byte, IdentifierSize-1)
+		}},
+		{"empty action title", func(p *notificationv1.EncryptedPayload) {
+			p.GetNotificationUpsert().Actions[0].Title = ""
+		}},
+		{"free-form input without required text", func(p *notificationv1.EncryptedPayload) {
+			p.GetNotificationUpsert().Actions[0].AllowsFreeFormInput = true
+		}},
+		{"duplicate action id", func(p *notificationv1.EncryptedPayload) {
+			p.GetNotificationUpsert().Actions = append(
+				p.GetNotificationUpsert().Actions,
+				proto.Clone(p.GetNotificationUpsert().Actions[0]).(*notificationv1.NotificationActionDescriptor),
+			)
+		}},
+		{"too many actions", func(p *notificationv1.EncryptedPayload) {
+			action := p.GetNotificationUpsert().Actions[0]
+			p.GetNotificationUpsert().Actions = make([]*notificationv1.NotificationActionDescriptor, MaxNotificationActions+1)
+			for index := range p.GetNotificationUpsert().Actions {
+				p.GetNotificationUpsert().Actions[index] = action
+			}
 		}},
 	}
 	for _, test := range tests {
