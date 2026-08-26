@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	SchemaVersion                   = 1
+	SchemaVersion                   = 2
 	IdentityLifecycleSchemaVersion  = 2
 	NotificationSchemaVersion       = 5
 	MaxPlaintextSize                = 524272
@@ -260,11 +260,17 @@ func validateActionInvoke(action *notificationv1.ActionInvoke) error {
 	if err := validateNotificationBinding(action.GetNotificationId(), action.GetNotificationRevision()); err != nil {
 		return err
 	}
-	if len(action.GetActionId()) != IdentifierSize {
-		return errors.New("action id must be 16 bytes")
-	}
 	if len(action.GetIdempotencyKey()) != IdentifierSize || allZero(action.GetIdempotencyKey()) {
 		return errors.New("idempotency key must be a non-zero 16-byte value")
+	}
+	if action.GetDismissNotification() {
+		if len(action.GetActionId()) != 0 || action.ReplyText != nil {
+			return errors.New("dismiss invocation cannot include an action id or reply text")
+		}
+		return nil
+	}
+	if len(action.GetActionId()) != IdentifierSize {
+		return errors.New("action id must be 16 bytes")
 	}
 	if action.ReplyText != nil {
 		reply := action.GetReplyText()

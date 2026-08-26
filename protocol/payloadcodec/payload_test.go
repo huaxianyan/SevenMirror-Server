@@ -33,7 +33,8 @@ func TestCanonicalVector(t *testing.T) {
 		t.Fatal(err)
 	}
 	var vector struct {
-		EncodedHex string `json:"encodedHex"`
+		EncodedHex        string `json:"encodedHex"`
+		DismissEncodedHex string `json:"dismissEncodedHex"`
 	}
 	if err := json.Unmarshal(content, &vector); err != nil {
 		t.Fatal(err)
@@ -52,6 +53,23 @@ func TestCanonicalVector(t *testing.T) {
 	if _, err := Decode(expected); err != nil {
 		t.Fatal(err)
 	}
+
+	dismissExpected, err := hex.DecodeString(vector.DismissEncodedHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dismiss := &notificationv1.EncryptedPayload{
+		SchemaVersion: SchemaVersion,
+		Body: &notificationv1.EncryptedPayload_ActionInvoke{
+			ActionInvoke: &notificationv1.ActionInvoke{
+				NotificationId:       "test.notification/42",
+				NotificationRevision: 8,
+				IdempotencyKey:       bytes.Repeat([]byte{0xc3}, IdentifierSize),
+				DismissNotification:  true,
+			},
+		},
+	}
+	assertCanonicalPayload(t, dismiss, dismissExpected)
 }
 
 func TestCanonicalRoundTrip(t *testing.T) {
@@ -539,7 +557,7 @@ func TestRejectsInvalidIdentityKeyTransitionFields(t *testing.T) {
 		name   string
 		change func(*notificationv1.EncryptedPayload)
 	}{
-		{"schema v1", func(p *notificationv1.EncryptedPayload) { p.SchemaVersion = SchemaVersion }},
+		{"schema v1", func(p *notificationv1.EncryptedPayload) { p.SchemaVersion = 1 }},
 		{"zero transition id", func(p *notificationv1.EncryptedPayload) {
 			p.GetIdentityKeyTransition().TransitionId = make([]byte, IdentifierSize)
 		}},
@@ -577,15 +595,9 @@ func TestRejectsIdentityLifecycleDigestAndSchemaMismatch(t *testing.T) {
 		t.Fatal("zero transition digest accepted")
 	}
 	ack.GetIdentityKeyTransitionAck().TransitionSha256 = vector.transitionSHA256
-	ack.SchemaVersion = SchemaVersion
+	ack.SchemaVersion = 1
 	if _, err := Encode(ack); err == nil {
 		t.Fatal("identity lifecycle body accepted under schema v1")
-	}
-
-	action := validPayload()
-	action.SchemaVersion = IdentityLifecycleSchemaVersion
-	if _, err := Encode(action); err == nil {
-		t.Fatal("action body accepted under identity lifecycle schema")
 	}
 }
 
@@ -664,6 +676,12 @@ func TestRejectsInvalidActionFields(t *testing.T) {
 		{"zero revision", func(a *notificationv1.ActionInvoke) { a.NotificationRevision = 0 }},
 		{"large revision", func(a *notificationv1.ActionInvoke) { a.NotificationRevision = 1 << 63 }},
 		{"short action id", func(a *notificationv1.ActionInvoke) { a.ActionId = a.ActionId[:15] }},
+		{"missing action id", func(a *notificationv1.ActionInvoke) { a.ActionId = nil }},
+		{"dismiss with action", func(a *notificationv1.ActionInvoke) { a.DismissNotification = true }},
+		{"dismiss with reply", func(a *notificationv1.ActionInvoke) {
+			a.DismissNotification = true
+			a.ActionId = nil
+		}},
 		{"zero idempotency", func(a *notificationv1.ActionInvoke) { a.IdempotencyKey = make([]byte, 16) }},
 		{"empty reply", func(a *notificationv1.ActionInvoke) { empty := ""; a.ReplyText = &empty }},
 	}
