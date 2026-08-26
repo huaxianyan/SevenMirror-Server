@@ -58,7 +58,7 @@ func Decode(encoded []byte) (*notificationv1.EncryptedPayload, error) {
 	if err := (proto.UnmarshalOptions{DiscardUnknown: false}).Unmarshal(encoded, payload); err != nil {
 		return nil, fmt.Errorf("decode encrypted payload: %w", err)
 	}
-	if err := Validate(payload); err != nil {
+	if err := validate(payload, true); err != nil {
 		return nil, err
 	}
 	canonical, err := deterministic.Marshal(payload)
@@ -72,6 +72,10 @@ func Decode(encoded []byte) (*notificationv1.EncryptedPayload, error) {
 }
 
 func Validate(payload *notificationv1.EncryptedPayload) error {
+	return validate(payload, false)
+}
+
+func validate(payload *notificationv1.EncryptedPayload, allowLegacyActionSchema bool) error {
 	if payload == nil {
 		return errors.New("encrypted payload is required")
 	}
@@ -80,11 +84,16 @@ func Validate(payload *notificationv1.EncryptedPayload) error {
 	}
 	switch body := payload.GetBody().(type) {
 	case *notificationv1.EncryptedPayload_ActionInvoke:
-		return validateSchema(payload, SchemaVersion, validateActionInvoke(body.ActionInvoke))
+		return validateActionSchema(
+			payload,
+			allowLegacyActionSchema,
+			body.ActionInvoke.GetDismissNotification(),
+			validateActionInvoke(body.ActionInvoke),
+		)
 	case *notificationv1.EncryptedPayload_ActionResult:
-		return validateSchema(payload, SchemaVersion, validateActionResult(body.ActionResult))
+		return validateActionSchema(payload, allowLegacyActionSchema, false, validateActionResult(body.ActionResult))
 	case *notificationv1.EncryptedPayload_ActionResultAck:
-		return validateSchema(payload, SchemaVersion, validateActionResultAck(body.ActionResultAck))
+		return validateActionSchema(payload, allowLegacyActionSchema, false, validateActionResultAck(body.ActionResultAck))
 	case *notificationv1.EncryptedPayload_IdentityKeyTransition:
 		return validateSchema(payload, IdentityLifecycleSchemaVersion, validateIdentityKeyTransition(body.IdentityKeyTransition))
 	case *notificationv1.EncryptedPayload_IdentityKeyTransitionAck:
@@ -312,6 +321,21 @@ func validateActionResultAck(ack *notificationv1.ActionResultAck) error {
 		return errors.New("result SHA-256 must be a non-zero 32-byte value")
 	}
 	return nil
+}
+
+func validateActionSchema(
+	payload *notificationv1.EncryptedPayload,
+	allowLegacy bool,
+	dismissNotification bool,
+	bodyError error,
+) error {
+	if payload.GetSchemaVersion() == SchemaVersion {
+		return bodyError
+	}
+	if allowLegacy && payload.GetSchemaVersion() == 1 && !dismissNotification {
+		return bodyError
+	}
+	return errors.New("encrypted payload schema version does not match body")
 }
 
 func validateSchema(payload *notificationv1.EncryptedPayload, expected uint32, bodyError error) error {

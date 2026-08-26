@@ -72,6 +72,32 @@ func TestCanonicalVector(t *testing.T) {
 	assertCanonicalPayload(t, dismiss, dismissExpected)
 }
 
+func TestDecodeAcceptsLegacyDurableActionButNotLegacyDismiss(t *testing.T) {
+	legacy := proto.Clone(validPayload()).(*notificationv1.EncryptedPayload)
+	legacy.SchemaVersion = 1
+	encoded, err := (proto.MarshalOptions{Deterministic: true}).Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Decode(encoded); err != nil {
+		t.Fatalf("legacy durable action rejected: %v", err)
+	}
+	if _, err := Encode(legacy); err == nil {
+		t.Fatal("legacy action emitted by current encoder")
+	}
+
+	legacy.GetActionInvoke().ActionId = nil
+	legacy.GetActionInvoke().ReplyText = nil
+	legacy.GetActionInvoke().DismissNotification = true
+	encoded, err = (proto.MarshalOptions{Deterministic: true}).Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Decode(encoded); err == nil {
+		t.Fatal("dismiss accepted under legacy action schema")
+	}
+}
+
 func TestCanonicalRoundTrip(t *testing.T) {
 	encoded, err := Encode(validPayload())
 	if err != nil {
