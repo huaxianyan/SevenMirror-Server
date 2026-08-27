@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	notificationv1 "github.com/huaxianyan/SyncNotifications-Server/protocol/generated/notification/v1"
@@ -225,13 +226,15 @@ func TestNotificationCanonicalVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	var vector struct {
-		NotificationID                   string `json:"notificationPayloadId"`
-		NotificationUpsertRevision       uint64 `json:"notificationUpsertRevision,string"`
-		NotificationRemovedRevision      uint64 `json:"notificationRemovedRevision,string"`
-		NotificationTitle                string `json:"notificationTitle"`
-		NotificationBody                 string `json:"notificationBody"`
-		NotificationContainsContentImage bool   `json:"notificationContainsContentImage"`
-		NotificationActions              []struct {
+		NotificationID                    string `json:"notificationPayloadId"`
+		NotificationUpsertRevision        uint64 `json:"notificationUpsertRevision,string"`
+		NotificationRemovedRevision       uint64 `json:"notificationRemovedRevision,string"`
+		NotificationSourceApplicationID   string `json:"notificationSourceApplicationId"`
+		NotificationSourceApplicationName string `json:"notificationSourceApplicationName"`
+		NotificationTitle                 string `json:"notificationTitle"`
+		NotificationBody                  string `json:"notificationBody"`
+		NotificationContainsContentImage  bool   `json:"notificationContainsContentImage"`
+		NotificationActions               []struct {
 			ActionIDHex         string `json:"actionIdHex"`
 			Title               string `json:"title"`
 			RequiresTextInput   bool   `json:"requiresTextInput"`
@@ -290,10 +293,12 @@ func TestNotificationCanonicalVectors(t *testing.T) {
 		SchemaVersion: NotificationSchemaVersion,
 		Body: &notificationv1.EncryptedPayload_NotificationUpsert{
 			NotificationUpsert: &notificationv1.NotificationUpsert{
-				NotificationId:       vector.NotificationID,
-				NotificationRevision: vector.NotificationUpsertRevision,
-				Title:                &vector.NotificationTitle,
-				Body:                 &vector.NotificationBody,
+				NotificationId:        vector.NotificationID,
+				NotificationRevision:  vector.NotificationUpsertRevision,
+				SourceApplicationId:   vector.NotificationSourceApplicationID,
+				SourceApplicationName: vector.NotificationSourceApplicationName,
+				Title:                 &vector.NotificationTitle,
+				Body:                  &vector.NotificationBody,
 				AppIcon: media(
 					vector.NotificationAppIcon.ContentSHA256Hex,
 					vector.NotificationAppIcon.Width,
@@ -405,9 +410,11 @@ func TestRejectsInvalidNotificationFieldsAndSchema(t *testing.T) {
 			SchemaVersion: NotificationSchemaVersion,
 			Body: &notificationv1.EncryptedPayload_NotificationUpsert{
 				NotificationUpsert: &notificationv1.NotificationUpsert{
-					NotificationId:       "synthetic.notification/42",
-					NotificationRevision: 7,
-					Title:                &title,
+					NotificationId:        "synthetic.notification/42",
+					NotificationRevision:  7,
+					SourceApplicationId:   "dev.notificationmirroring.android",
+					SourceApplicationName: "SevenMirror",
+					Title:                 &title,
 					Actions: []*notificationv1.NotificationActionDescriptor{
 						{ActionId: bytes.Repeat([]byte{1}, IdentifierSize), Title: "Mark handled"},
 					},
@@ -422,6 +429,14 @@ func TestRejectsInvalidNotificationFieldsAndSchema(t *testing.T) {
 		{"action schema", func(p *notificationv1.EncryptedPayload) { p.SchemaVersion = SchemaVersion }},
 		{"empty notification id", func(p *notificationv1.EncryptedPayload) { p.GetNotificationUpsert().NotificationId = "" }},
 		{"zero revision", func(p *notificationv1.EncryptedPayload) { p.GetNotificationUpsert().NotificationRevision = 0 }},
+		{"empty source application id", func(p *notificationv1.EncryptedPayload) { p.GetNotificationUpsert().SourceApplicationId = "" }},
+		{"oversized source application id", func(p *notificationv1.EncryptedPayload) {
+			p.GetNotificationUpsert().SourceApplicationId = strings.Repeat("a", MaxNotificationAppIDBytes+1)
+		}},
+		{"empty source application name", func(p *notificationv1.EncryptedPayload) { p.GetNotificationUpsert().SourceApplicationName = "" }},
+		{"oversized source application name", func(p *notificationv1.EncryptedPayload) {
+			p.GetNotificationUpsert().SourceApplicationName = strings.Repeat("a", MaxNotificationAppNameBytes+1)
+		}},
 		{"missing text", func(p *notificationv1.EncryptedPayload) { p.GetNotificationUpsert().Title = nil }},
 		{"empty title", func(p *notificationv1.EncryptedPayload) { empty := ""; p.GetNotificationUpsert().Title = &empty }},
 		{"content image without placeholder", func(p *notificationv1.EncryptedPayload) {
@@ -470,9 +485,11 @@ func TestRejectsInvalidNotificationMedia(t *testing.T) {
 			SchemaVersion: NotificationSchemaVersion,
 			Body: &notificationv1.EncryptedPayload_NotificationUpsert{
 				NotificationUpsert: &notificationv1.NotificationUpsert{
-					NotificationId:       "synthetic.notification/42",
-					NotificationRevision: 7,
-					Title:                &title,
+					NotificationId:        "synthetic.notification/42",
+					NotificationRevision:  7,
+					SourceApplicationId:   "dev.notificationmirroring.android",
+					SourceApplicationName: "SevenMirror",
+					Title:                 &title,
 					AppIcon: &notificationv1.NotificationMedia{
 						ContentSha256: append([]byte(nil), digest...),
 						MimeType:      notificationv1.NotificationMediaMimeType_NOTIFICATION_MEDIA_MIME_TYPE_PNG,

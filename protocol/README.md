@@ -10,7 +10,7 @@ Client repositories vendor a tagged copy of these files and record schema integr
 
 `routing-header-v1.md` defines the provisional fixed 160-byte routing header that is authenticated as the exact HPKE AAD. `test-vectors/routing-header-v1.json` is the canonical Go/Kotlin/TypeScript codec vector.
 
-`encrypted-payload-v1.md` and `proto/notification/v1/payload.proto` define the canonical protobuf plaintext carried inside HPKE. `test-vectors/encrypted-payload-v1.json` fixes action invocation, bounded notification action descriptors and media, `notification_removed`, and active snapshot-manifest encodings; the same schema also defines bounded `action.result` messages and `OUTCOME_UNKNOWN` recovery semantics.
+`encrypted-payload-v1.md` and `proto/notification/v1/payload.proto` define the canonical protobuf plaintext carried inside HPKE. `test-vectors/encrypted-payload-v1.json` fixes action invocation, bounded notification application metadata, action descriptors and media, `notification_removed`, and active snapshot-manifest encodings; the same schema also defines bounded `action.result` messages and `OUTCOME_UNKNOWN` recovery semantics.
 
 `e2ee-identity-key-transition-v1.md` defines old-key-authenticated transition, new-key-addressed peer ACK, new-key-authenticated commit, durable dual-key state, and the strict lost-identity recovery boundary. `test-vectors/e2ee-identity-key-transition-v1.json` fixes all three canonical schema-v2 payloads using public test keys only.
 
@@ -37,9 +37,9 @@ e2ee-identity-key-transition-v1.json SHA-256: f87f605480d320b622d3810a250f445b40
 membership.proto SHA-256: 926d1564a50fec9ee2b72966e6b017927744f6259cda99221c1a05189bf3ffcd
 workspace-membership-v1.md SHA-256: 79e2bdde0ee250b0df0607834a3f46b75dda598747acc935e9df46594acc144c
 workspace-membership-v1.json SHA-256: 03ef8ab0258e6ad608bff11df3418e62ab98f2b52c4b495c770c4a68a58ff806
-payload.proto SHA-256: 82a4069ca9de181eb467f476bb53d593b10840abfba0d5c48398582006d704e3
-encrypted-payload-v1.md SHA-256: 33b7c120507e30f472906687f8171bf30745c236186a119d70973a37146019dd
-encrypted-payload-v1.json SHA-256: 01d366a5b5979682f697d5b171d6951e74ee1bfc96bb71ed28ade6ed419d05bf
+payload.proto SHA-256: 5bb97035dc758138b29a4aa3022f498aab74bd303d74f1b7a52236f39601428d
+encrypted-payload-v1.md SHA-256: 9588ca8e08b7ec9f7e58965f530d5863584861abefa8dff5f108cdf3e02ab8ad
+encrypted-payload-v1.json SHA-256: cd97e01545bc379c4d26917d568d4168f2c7a7289eb9e69ae0a360a3024be368
 ```
 
 Generated code is committed for reproducible client builds. Regenerate the Go files with the pinned remote plugin:

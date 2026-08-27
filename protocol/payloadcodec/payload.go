@@ -16,9 +16,11 @@ import (
 const (
 	SchemaVersion                   = 2
 	IdentityLifecycleSchemaVersion  = 2
-	NotificationSchemaVersion       = 5
+	NotificationSchemaVersion       = 6
 	MaxPlaintextSize                = 524272
 	MaxNotificationIDBytes          = 512
+	MaxNotificationAppIDBytes       = 255
+	MaxNotificationAppNameBytes     = 512
 	MaxNotificationTitleBytes       = 512
 	MaxNotificationBodyBytes        = 4000
 	MaxNotificationActions          = 16
@@ -116,6 +118,20 @@ func validateNotificationUpsert(notification *notificationv1.NotificationUpsert)
 		return errors.New("notification upsert contains unknown fields")
 	}
 	if err := validateNotificationBinding(notification.GetNotificationId(), notification.GetNotificationRevision()); err != nil {
+		return err
+	}
+	if err := validateRequiredText(
+		notification.GetSourceApplicationId(),
+		MaxNotificationAppIDBytes,
+		"notification source application id",
+	); err != nil {
+		return err
+	}
+	if err := validateRequiredText(
+		notification.GetSourceApplicationName(),
+		MaxNotificationAppNameBytes,
+		"notification source application name",
+	); err != nil {
 		return err
 	}
 	if notification.Title == nil && notification.Body == nil {
@@ -258,6 +274,13 @@ func validateNotificationBinding(notificationID string, revision uint64) error {
 	}
 	if revision < 1 || revision > MaxNotificationRevision {
 		return errors.New("notification revision is out of range")
+	}
+	return nil
+}
+
+func validateRequiredText(value string, maxBytes int, field string) error {
+	if !utf8.ValidString(value) || len(value) < 1 || len(value) > maxBytes {
+		return fmt.Errorf("%s must be valid UTF-8 within size limit", field)
 	}
 	return nil
 }
