@@ -16,7 +16,7 @@ import (
 const (
 	SchemaVersion                   = 2
 	IdentityLifecycleSchemaVersion  = 2
-	NotificationSchemaVersion       = 6
+	NotificationSchemaVersion       = 7
 	MaxPlaintextSize                = 524272
 	MaxNotificationIDBytes          = 512
 	MaxNotificationAppIDBytes       = 255
@@ -108,6 +108,8 @@ func validate(payload *notificationv1.EncryptedPayload, allowLegacyActionSchema 
 		return validateSchema(payload, NotificationSchemaVersion, validateNotificationRemoved(body.NotificationRemoved))
 	case *notificationv1.EncryptedPayload_NotificationSnapshotManifest:
 		return validateSchema(payload, NotificationSchemaVersion, validateNotificationSnapshotManifest(body.NotificationSnapshotManifest))
+	case *notificationv1.EncryptedPayload_NotificationSnapshotRequest:
+		return validateSchema(payload, NotificationSchemaVersion, validateNotificationSnapshotRequest(body.NotificationSnapshotRequest))
 	default:
 		return errors.New("exactly one supported encrypted payload body is required")
 	}
@@ -242,6 +244,10 @@ func validateNotificationSnapshotManifest(manifest *notificationv1.NotificationS
 	if manifest == nil || len(manifest.ProtoReflect().GetUnknown()) != 0 {
 		return errors.New("notification snapshot manifest contains unknown fields")
 	}
+	if manifest.RecoveryRequestId != nil &&
+		(len(manifest.GetRecoveryRequestId()) != IdentifierSize || allZero(manifest.GetRecoveryRequestId())) {
+		return errors.New("snapshot recovery request id must be a non-zero 16-byte value")
+	}
 	if manifest.GetHighWaterRevision() > MaxNotificationRevision {
 		return errors.New("notification snapshot high-water revision is out of range")
 	}
@@ -264,6 +270,19 @@ func validateNotificationSnapshotManifest(manifest *notificationv1.NotificationS
 			return errors.New("notification snapshot entries are not unique and strictly sorted")
 		}
 		previousID = entry.GetNotificationId()
+	}
+	return nil
+}
+
+func validateNotificationSnapshotRequest(request *notificationv1.NotificationSnapshotRequest) error {
+	if request == nil || len(request.ProtoReflect().GetUnknown()) != 0 {
+		return errors.New("notification snapshot request contains unknown fields")
+	}
+	if len(request.GetRecoveryRequestId()) != IdentifierSize || allZero(request.GetRecoveryRequestId()) {
+		return errors.New("snapshot recovery request id must be a non-zero 16-byte value")
+	}
+	if request.GetResetHighWaterDeliveryId() > MaxNotificationRevision {
+		return errors.New("snapshot reset high-water delivery id is out of range")
 	}
 	return nil
 }
