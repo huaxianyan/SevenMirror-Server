@@ -335,11 +335,13 @@ func TestPendingRegistrationRequiresExactIdentityProofBeforeApproval(t *testing.
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
+		`DROP TABLE relay_deliveries`,
+		`DROP TABLE relay_delivery_state`,
 		`DROP TABLE workspace_authority_transitions`,
 		`ALTER TABLE workspaces DROP COLUMN authority_transition_digest`,
 		`ALTER TABLE workspaces DROP COLUMN authority_epoch`,
 		`ALTER TABLE devices DROP COLUMN revoked_membership_epoch`,
-		`DELETE FROM schema_migrations WHERE version IN (5, 6)`,
+		`DELETE FROM schema_migrations WHERE version IN (5, 6, 7)`,
 	} {
 		if _, err := legacyDB.Exec(statement); err != nil {
 			legacyDB.Close()
@@ -858,7 +860,7 @@ func TestOpenMigratesSchemaVersionOneWithoutChangingCredential(t *testing.T) {
 		t.Fatalf("migrated authentication identity=%+v error=%v", identity, err)
 	}
 	var version int
-	if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 6 {
+	if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 7 {
 		t.Fatalf("schema version=%d error=%v", version, err)
 	}
 	if _, err := store.WorkspaceAuthorityPublicKey(context.Background(), workspaceID); !errors.Is(err, ErrWorkspaceAuthorityUnavailable) {
@@ -875,7 +877,7 @@ func TestOpenRejectsNewerSchemaVersion(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (7, 0)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (8, 0)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {

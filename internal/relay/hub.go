@@ -2,10 +2,13 @@ package relay
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/huaxianyan/SyncNotifications-Server/protocol/envelopeframe"
+	"github.com/huaxianyan/SyncNotifications-Server/protocol/routingheader"
 )
 
 var (
@@ -25,11 +28,12 @@ type PeerIdentity struct {
 	DeviceID    DeviceID
 }
 
-// Hub is an in-memory ciphertext router. It never receives decryption keys and
-// validates only the fixed clear framing required to route one recipient copy.
+// Hub routes online-only ciphertext in memory and durable ciphertext through
+// one recipient-specific DeliveryStore. It never receives decryption keys.
 type deviceSession struct {
 	credentialVersion int64
-	deliveries        chan []byte
+	immediate         chan []byte
+	durableWake       chan struct{}
 	disconnected      chan struct{}
 }
 
@@ -39,34 +43,44 @@ type ConnectedSession struct {
 }
 
 type Hub struct {
-	mu      sync.RWMutex
-	devices map[PeerIdentity]*deviceSession
+	mu         sync.RWMutex
+	devices    map[PeerIdentity]*deviceSession
+	deliveries DeliveryStore
+	authorizer RecipientAuthorizer
 }
 
-func NewHub() *Hub {
-	return &Hub{devices: make(map[PeerIdentity]*deviceSession)}
+func NewHub(deliveries DeliveryStore, authorizer RecipientAuthorizer) (*Hub, error) {
+	if deliveries == nil || authorizer == nil {
+		return nil, errors.New("delivery store and recipient authorizer are required")
+	}
+	return &Hub{
+		devices:    make(map[PeerIdentity]*deviceSession),
+		deliveries: deliveries,
+		authorizer: authorizer,
+	}, nil
 }
 
-// Register reserves one bounded queue for an already authenticated device.
+// Register reserves bounded live signals for an already authenticated device.
 func (h *Hub) Register(
 	identity PeerIdentity,
 	credentialVersion int64,
 	queueSize int,
-) (<-chan []byte, <-chan struct{}, func(), error) {
+) (<-chan []byte, <-chan struct{}, <-chan struct{}, func(), error) {
 	if credentialVersion < 1 {
-		return nil, nil, nil, errors.New("credential version must be positive")
+		return nil, nil, nil, nil, errors.New("credential version must be positive")
 	}
 	if queueSize < 1 {
-		return nil, nil, nil, errors.New("queue size must be positive")
+		return nil, nil, nil, nil, errors.New("queue size must be positive")
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if _, exists := h.devices[identity]; exists {
-		return nil, nil, nil, ErrAlreadyConnected
+		return nil, nil, nil, nil, ErrAlreadyConnected
 	}
 	session := &deviceSession{
 		credentialVersion: credentialVersion,
-		deliveries:        make(chan []byte, queueSize),
+		immediate:         make(chan []byte, queueSize),
+		durableWake:       make(chan struct{}, 1),
 		disconnected:      make(chan struct{}),
 	}
 	h.devices[identity] = session
@@ -80,7 +94,7 @@ func (h *Hub) Register(
 			h.mu.Unlock()
 		})
 	}
-	return session.deliveries, session.disconnected, unregister, nil
+	return session.immediate, session.durableWake, session.disconnected, unregister, nil
 }
 
 func (h *Hub) IsConnected(identity PeerIdentity) bool {
@@ -117,39 +131,117 @@ func (h *Hub) Disconnect(identity PeerIdentity) bool {
 	return true
 }
 
-// Route validates an envelope and delivers an unchanged ciphertext copy. The
-// authenticated sender identity comes from the future transport-auth layer,
-// never from an untrusted query parameter or payload field.
-func (h *Hub) Route(authenticatedSender PeerIdentity, encodedFrame []byte) error {
-	frame, err := envelopeframe.Decode(encodedFrame)
+// RouteOnline delivers an unchanged ciphertext only to a currently connected recipient.
+func (h *Hub) RouteOnline(authenticatedSender PeerIdentity, encodedFrame []byte) error {
+	recipient, _, err := validateRoutedEnvelope(authenticatedSender, encodedFrame)
 	if err != nil {
 		return err
 	}
-	if !bytes.Equal(frame.RoutingHeader[8:24], authenticatedSender.WorkspaceID[:]) ||
-		!bytes.Equal(frame.RoutingHeader[24:40], authenticatedSender.DeviceID[:]) {
-		return ErrSenderMismatch
-	}
-	var recipient PeerIdentity
-	copy(recipient.WorkspaceID[:], frame.RoutingHeader[8:24])
-	copy(recipient.DeviceID[:], frame.RoutingHeader[40:56])
-
 	h.mu.RLock()
+	defer h.mu.RUnlock()
 	if _, senderConnected := h.devices[authenticatedSender]; !senderConnected {
-		h.mu.RUnlock()
 		return ErrSenderOffline
 	}
 	session, exists := h.devices[recipient]
 	if !exists {
-		h.mu.RUnlock()
 		return ErrRecipientOffline
 	}
 	copyForRecipient := append([]byte(nil), encodedFrame...)
 	select {
-	case session.deliveries <- copyForRecipient:
-		h.mu.RUnlock()
+	case session.immediate <- copyForRecipient:
 		return nil
 	default:
-		h.mu.RUnlock()
 		return ErrRecipientBusy
 	}
+}
+
+// RouteDurable commits one exact ciphertext before waking a live recipient.
+func (h *Hub) RouteDurable(
+	ctx context.Context,
+	authenticatedSender PeerIdentity,
+	encodedFrame []byte,
+	now time.Time,
+) error {
+	recipient, header, err := validateRoutedEnvelope(authenticatedSender, encodedFrame)
+	if err != nil {
+		return err
+	}
+	h.mu.RLock()
+	_, senderConnected := h.devices[authenticatedSender]
+	h.mu.RUnlock()
+	if !senderConnected {
+		return ErrSenderOffline
+	}
+	authorized, err := h.authorizer.IsRecipientAuthorized(ctx, recipient)
+	if err != nil {
+		return err
+	}
+	if !authorized {
+		return ErrRecipientUnauthorized
+	}
+	expiresAt := time.UnixMilli(int64(header.ExpiresAtUnixMs))
+	if !expiresAt.After(now) {
+		return errors.New("durable encrypted envelope is already expired")
+	}
+	if _, err := h.deliveries.AppendDelivery(ctx, recipient, encodedFrame, expiresAt, now); err != nil {
+		return err
+	}
+	h.mu.RLock()
+	session := h.devices[recipient]
+	if session != nil {
+		select {
+		case session.durableWake <- struct{}{}:
+		default:
+		}
+	}
+	h.mu.RUnlock()
+	return nil
+}
+
+func (h *Hub) ResumeDeliveries(
+	ctx context.Context,
+	recipient PeerIdentity,
+	cursor uint64,
+	now time.Time,
+) (DeliveryBatch, error) {
+	return h.deliveries.ResumeDeliveries(ctx, recipient, cursor, now, deliveryBatchSize)
+}
+
+func (h *Hub) ReadDeliveries(
+	ctx context.Context,
+	recipient PeerIdentity,
+	after uint64,
+	now time.Time,
+) (DeliveryBatch, error) {
+	return h.deliveries.ReadDeliveries(ctx, recipient, after, now, deliveryBatchSize)
+}
+
+func (h *Hub) AcknowledgeDelivery(
+	ctx context.Context,
+	recipient PeerIdentity,
+	cursor uint64,
+) error {
+	return h.deliveries.AcknowledgeDelivery(ctx, recipient, cursor)
+}
+
+func validateRoutedEnvelope(
+	authenticatedSender PeerIdentity,
+	encodedFrame []byte,
+) (PeerIdentity, routingheader.Header, error) {
+	frame, err := envelopeframe.Decode(encodedFrame)
+	if err != nil {
+		return PeerIdentity{}, routingheader.Header{}, err
+	}
+	if !bytes.Equal(frame.RoutingHeader[8:24], authenticatedSender.WorkspaceID[:]) ||
+		!bytes.Equal(frame.RoutingHeader[24:40], authenticatedSender.DeviceID[:]) {
+		return PeerIdentity{}, routingheader.Header{}, ErrSenderMismatch
+	}
+	header, err := routingheader.Decode(frame.RoutingHeader[:])
+	if err != nil {
+		return PeerIdentity{}, routingheader.Header{}, err
+	}
+	var recipient PeerIdentity
+	copy(recipient.WorkspaceID[:], header.WorkspaceID[:])
+	copy(recipient.DeviceID[:], header.RecipientDeviceID[:])
+	return recipient, header, nil
 }

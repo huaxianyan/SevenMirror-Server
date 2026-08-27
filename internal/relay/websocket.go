@@ -3,12 +3,10 @@ package relay
 import (
 	"context"
 	"errors"
-	"fmt"
-	"io"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/huaxianyan/SyncNotifications-Server/protocol/envelopeframe"
+	"github.com/huaxianyan/SyncNotifications-Server/protocol/relaydelivery"
 )
 
 const (
@@ -24,8 +22,7 @@ var (
 )
 
 // ServeAuthenticatedConnection connects an identity already established by the
-// transport-auth layer to the ciphertext hub. It must not be exposed before
-// registration/authentication is implemented.
+// transport-auth layer to online and durable ciphertext delivery.
 func ServeAuthenticatedConnection(
 	ctx context.Context,
 	connection *websocket.Conn,
@@ -35,14 +32,14 @@ func ServeAuthenticatedConnection(
 ) error {
 	sessionContext, cancel := context.WithCancel(ctx)
 	defer cancel()
-	connection.SetReadLimit(int64(envelopeframe.MaxFrameSize))
+	connection.SetReadLimit(int64(relaydelivery.MaxClientMessageSize))
 	if err := connection.SetReadDeadline(time.Now().Add(pongTimeout)); err != nil {
 		return err
 	}
 	connection.SetPongHandler(func(string) error {
 		return connection.SetReadDeadline(time.Now().Add(pongTimeout))
 	})
-	deliveries, disconnected, unregister, err := hub.Register(
+	immediate, durableWake, disconnected, unregister, err := hub.Register(
 		authenticatedPeer, credentialVersion, 16)
 	if err != nil {
 		return err
@@ -51,21 +48,72 @@ func ServeAuthenticatedConnection(
 	if err := connection.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
 		return err
 	}
-	// This synchronous write occurs after Hub registration and before the sole
-	// writer goroutine starts, so SNO1 is always the first server data message.
+	// SNO1 remains the first server data message.
 	if err := connection.WriteMessage(websocket.BinaryMessage, authenticationSuccessAck[:]); err != nil {
 		return err
 	}
 
 	writerErrors := make(chan error, 1)
 	heartbeats := make(chan struct{}, 1)
+	resumeRequests := make(chan uint64, 1)
 	reportWriterError := func(err error) {
-		writerErrors <- err
-		_ = connection.Close() // unblock NextReader before the writer exits
+		select {
+		case writerErrors <- err:
+		default:
+		}
+		_ = connection.Close()
 	}
 	go func() {
 		pingTicker := time.NewTicker(pingInterval)
 		defer pingTicker.Stop()
+		cursorInitialized := false
+		var sentCursor uint64
+
+		writeBinary := func(encoded []byte) error {
+			if err := connection.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+				return err
+			}
+			return connection.WriteMessage(websocket.BinaryMessage, encoded)
+		}
+		drainBatch := func(batch DeliveryBatch) (bool, error) {
+			for {
+				if batch.ResetRequired {
+					reset, err := relaydelivery.EncodeResetRequired(batch.HighWater)
+					if err != nil {
+						return false, err
+					}
+					return true, writeBinary(reset)
+				}
+				for _, delivery := range batch.Deliveries {
+					encoded, err := relaydelivery.EncodeDelivery(delivery.ID, delivery.Envelope)
+					if err != nil {
+						return false, err
+					}
+					if err := writeBinary(encoded); err != nil {
+						return false, err
+					}
+					sentCursor = delivery.ID
+				}
+				if sentCursor >= batch.HighWater {
+					caughtUp, err := relaydelivery.EncodeCaughtUp(batch.HighWater)
+					if err != nil {
+						return false, err
+					}
+					return false, writeBinary(caughtUp)
+				}
+				next, err := hub.ReadDeliveries(
+					sessionContext, authenticatedPeer, sentCursor, time.Now())
+				if err != nil {
+					return false, err
+				}
+				if len(next.Deliveries) == 0 && next.HighWater > sentCursor &&
+					!next.ResetRequired {
+					return false, errors.New("relay delivery history contains an unreported gap")
+				}
+				batch = next
+			}
+		}
+
 		for {
 			select {
 			case <-sessionContext.Done():
@@ -80,31 +128,55 @@ func ServeAuthenticatedConnection(
 				reportWriterError(ErrDeviceDisconnected)
 				return
 			case <-pingTicker.C:
-				if err := connection.WriteControl(
-					websocket.PingMessage,
-					nil,
-					time.Now().Add(writeTimeout),
-				); err != nil {
+				if err := connection.WriteControl(websocket.PingMessage, nil,
+					time.Now().Add(writeTimeout)); err != nil {
 					reportWriterError(err)
 					return
 				}
 			case <-heartbeats:
-				if err := connection.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+				if err := writeBinary(heartbeatResponse[:]); err != nil {
 					reportWriterError(err)
 					return
 				}
-				if err := connection.WriteMessage(websocket.BinaryMessage, heartbeatResponse[:]); err != nil {
+			case frame := <-immediate:
+				if err := writeBinary(frame); err != nil {
 					reportWriterError(err)
 					return
 				}
-			case frame := <-deliveries:
-				if err := connection.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+			case cursor := <-resumeRequests:
+				batch, err := hub.ResumeDeliveries(
+					sessionContext, authenticatedPeer, cursor, time.Now())
+				if err != nil {
 					reportWriterError(err)
 					return
 				}
-				if err := connection.WriteMessage(websocket.BinaryMessage, frame); err != nil {
+				cursorInitialized = true
+				sentCursor = cursor
+				resetSent, err := drainBatch(batch)
+				if err != nil {
 					reportWriterError(err)
 					return
+				}
+				if resetSent {
+					cursorInitialized = false
+				}
+			case <-durableWake:
+				if !cursorInitialized {
+					continue
+				}
+				batch, err := hub.ReadDeliveries(
+					sessionContext, authenticatedPeer, sentCursor, time.Now())
+				if err != nil {
+					reportWriterError(err)
+					return
+				}
+				resetSent, err := drainBatch(batch)
+				if err != nil {
+					reportWriterError(err)
+					return
+				}
+				if resetSent {
+					cursorInitialized = false
 				}
 			}
 		}
@@ -116,7 +188,7 @@ func ServeAuthenticatedConnection(
 			return err
 		default:
 		}
-		frame, isHeartbeat, err := readBoundedEnvelopeOrHeartbeat(connection)
+		message, isHeartbeat, err := readBoundedClientMessage(connection)
 		if err != nil {
 			return err
 		}
@@ -128,33 +200,46 @@ func ServeAuthenticatedConnection(
 			}
 			continue
 		}
-		if err := hub.Route(authenticatedPeer, frame); err != nil {
-			return err
+		switch message.Kind {
+		case relaydelivery.ClientEnvelopeOnline:
+			if err := hub.RouteOnline(authenticatedPeer, message.Envelope); err != nil {
+				return err
+			}
+		case relaydelivery.ClientEnvelopeDurable:
+			if err := hub.RouteDurable(
+				sessionContext, authenticatedPeer, message.Envelope, time.Now()); err != nil {
+				return err
+			}
+		case relaydelivery.ClientResume:
+			select {
+			case resumeRequests <- message.Cursor:
+			case <-sessionContext.Done():
+				return sessionContext.Err()
+			}
+		case relaydelivery.ClientAcknowledge:
+			if err := hub.AcknowledgeDelivery(
+				sessionContext, authenticatedPeer, message.Cursor); err != nil {
+				return err
+			}
+		default:
+			return errors.New("unsupported relay delivery message")
 		}
 	}
 }
 
-func readBoundedEnvelopeOrHeartbeat(connection *websocket.Conn) ([]byte, bool, error) {
-	messageType, reader, err := connection.NextReader()
+func readBoundedClientMessage(
+	connection *websocket.Conn,
+) (relaydelivery.ClientMessage, bool, error) {
+	messageType, encoded, err := connection.ReadMessage()
 	if err != nil {
-		return nil, false, err
+		return relaydelivery.ClientMessage{}, false, err
 	}
 	if messageType != websocket.BinaryMessage {
-		return nil, false, errors.New("relay accepts binary messages only")
+		return relaydelivery.ClientMessage{}, false, errors.New("relay accepts binary messages only")
 	}
-	limited := io.LimitReader(reader, int64(envelopeframe.MaxFrameSize)+1)
-	frame, err := io.ReadAll(limited)
-	if err != nil {
-		return nil, false, fmt.Errorf("read encrypted envelope: %w", err)
+	if len(encoded) == len(heartbeatRequest) && string(encoded) == string(heartbeatRequest[:]) {
+		return relaydelivery.ClientMessage{}, true, nil
 	}
-	if len(frame) == len(heartbeatRequest) && string(frame) == string(heartbeatRequest[:]) {
-		return nil, true, nil
-	}
-	if len(frame) > envelopeframe.MaxFrameSize {
-		return nil, false, errors.New("encrypted envelope exceeds maximum frame size")
-	}
-	if _, err := envelopeframe.Decode(frame); err != nil {
-		return nil, false, err
-	}
-	return frame, false, nil
+	message, err := relaydelivery.DecodeClientMessage(encoded)
+	return message, false, err
 }

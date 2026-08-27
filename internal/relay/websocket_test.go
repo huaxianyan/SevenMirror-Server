@@ -95,7 +95,7 @@ func TestWebSocketRejectsOversizedMessageBeforeRouting(t *testing.T) {
 
 func newTestWebSocketServer(t *testing.T) (*Hub, *httptest.Server) {
 	t.Helper()
-	hub := NewHub()
+	hub := newTestHub(t)
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		deviceBytes, deviceErr := hex.DecodeString(r.URL.Query().Get("test_device_id"))

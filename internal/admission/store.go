@@ -1383,20 +1383,29 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if version > 6 {
-		return fmt.Errorf("database schema version %d is newer than supported version 6", version)
+	if version > 7 {
+		return fmt.Errorf("database schema version %d is newer than supported version 7", version)
 	}
-	if version == 6 {
+	if version == 7 {
 		return nil
 	}
+	if version == 6 {
+		return s.applySchemaVersion7(ctx)
+	}
 	if version == 5 {
-		return s.applySchemaVersion6(ctx)
+		if err := s.applySchemaVersion6(ctx); err != nil {
+			return err
+		}
+		return s.applySchemaVersion7(ctx)
 	}
 	if version == 4 {
 		if err := s.applySchemaVersion5(ctx); err != nil {
 			return err
 		}
-		return s.applySchemaVersion6(ctx)
+		if err := s.applySchemaVersion6(ctx); err != nil {
+			return err
+		}
+		return s.applySchemaVersion7(ctx)
 	}
 	if version == 3 {
 		if err := s.applySchemaVersion4(ctx); err != nil {
@@ -1405,7 +1414,10 @@ func (s *Store) initialize(ctx context.Context) error {
 		if err := s.applySchemaVersion5(ctx); err != nil {
 			return err
 		}
-		return s.applySchemaVersion6(ctx)
+		if err := s.applySchemaVersion6(ctx); err != nil {
+			return err
+		}
+		return s.applySchemaVersion7(ctx)
 	}
 	if version == 2 {
 		if err := s.applySchemaVersion3(ctx); err != nil {
@@ -1417,7 +1429,10 @@ func (s *Store) initialize(ctx context.Context) error {
 		if err := s.applySchemaVersion5(ctx); err != nil {
 			return err
 		}
-		return s.applySchemaVersion6(ctx)
+		if err := s.applySchemaVersion6(ctx); err != nil {
+			return err
+		}
+		return s.applySchemaVersion7(ctx)
 	}
 	if version == 1 {
 		if err := s.applySchemaVersion2(ctx); err != nil {
@@ -1432,7 +1447,10 @@ func (s *Store) initialize(ctx context.Context) error {
 		if err := s.applySchemaVersion5(ctx); err != nil {
 			return err
 		}
-		return s.applySchemaVersion6(ctx)
+		if err := s.applySchemaVersion6(ctx); err != nil {
+			return err
+		}
+		return s.applySchemaVersion7(ctx)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -1492,7 +1510,10 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err := s.applySchemaVersion5(ctx); err != nil {
 		return err
 	}
-	return s.applySchemaVersion6(ctx)
+	if err := s.applySchemaVersion6(ctx); err != nil {
+		return err
+	}
+	return s.applySchemaVersion7(ctx)
 }
 
 func (s *Store) applySchemaVersion2(ctx context.Context) error {
@@ -1718,6 +1739,52 @@ func (s *Store) applySchemaVersion6(ctx context.Context) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit schema version 6: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) applySchemaVersion7(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin schema version 7: %w", err)
+	}
+	defer tx.Rollback()
+	statements := []string{
+		`CREATE TABLE relay_delivery_state (
+			workspace_id BLOB NOT NULL,
+			recipient_device_id BLOB NOT NULL,
+			next_delivery_id INTEGER NOT NULL CHECK(next_delivery_id > 0),
+			acknowledged_delivery_id INTEGER NOT NULL CHECK(acknowledged_delivery_id >= 0),
+			unavailable_through_id INTEGER NOT NULL CHECK(unavailable_through_id >= 0),
+			PRIMARY KEY(workspace_id, recipient_device_id),
+			FOREIGN KEY(workspace_id, recipient_device_id)
+				REFERENCES devices(workspace_id, id) ON DELETE CASCADE
+		) STRICT`,
+		`CREATE TABLE relay_deliveries (
+			workspace_id BLOB NOT NULL,
+			recipient_device_id BLOB NOT NULL,
+			delivery_id INTEGER NOT NULL CHECK(delivery_id > 0),
+			envelope BLOB NOT NULL,
+			expires_at_ms INTEGER NOT NULL,
+			created_at_ms INTEGER NOT NULL,
+			PRIMARY KEY(workspace_id, recipient_device_id, delivery_id),
+			FOREIGN KEY(workspace_id, recipient_device_id)
+				REFERENCES relay_delivery_state(workspace_id, recipient_device_id) ON DELETE CASCADE
+		) STRICT`,
+		`CREATE INDEX relay_deliveries_expiry ON relay_deliveries(expires_at_ms)`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("apply schema version 7: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (7, ?)`,
+		time.Now().UnixMilli()); err != nil {
+		return fmt.Errorf("record schema version 7: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema version 7: %w", err)
 	}
 	return nil
 }

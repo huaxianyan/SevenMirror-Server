@@ -38,7 +38,11 @@ func main() {
 	}
 	defer store.Close()
 
-	hub := relay.NewHub()
+	hub, err := relay.NewHub(store, store)
+	if err != nil {
+		logger.Error("configure durable relay", "error", err)
+		os.Exit(1)
+	}
 	authenticator, err := admission.NewRelayAuthenticator(store)
 	if err != nil {
 		logger.Error("configure device authenticator", "error", err)

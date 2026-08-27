@@ -8,21 +8,21 @@ import (
 )
 
 func TestAuthorizationMonitorDisconnectsRevokedAndLookupFailureOnly(t *testing.T) {
-	hub := NewHub()
+	hub := newTestHub(t)
 	revoked := PeerIdentity{WorkspaceID: WorkspaceID{1}, DeviceID: DeviceID{1}}
 	active := PeerIdentity{WorkspaceID: WorkspaceID{1}, DeviceID: DeviceID{2}}
 	lookupFailure := PeerIdentity{WorkspaceID: WorkspaceID{1}, DeviceID: DeviceID{3}}
-	_, revokedSignal, revokedUnregister, err := hub.Register(revoked, 1, 1)
+	_, _, revokedSignal, revokedUnregister, err := hub.Register(revoked, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer revokedUnregister()
-	_, _, activeUnregister, err := hub.Register(active, 1, 1)
+	_, _, _, activeUnregister, err := hub.Register(active, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer activeUnregister()
-	_, failureSignal, failureUnregister, err := hub.Register(lookupFailure, 1, 1)
+	_, _, failureSignal, failureUnregister, err := hub.Register(lookupFailure, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}

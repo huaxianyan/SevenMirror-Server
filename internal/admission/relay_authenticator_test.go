@@ -29,7 +29,10 @@ func TestRegisteredCredentialAuthenticatesProductionRelayBoundary(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	hub := relay.NewHub()
+	hub, err := relay.NewHub(store, store)
+	if err != nil {
+		t.Fatal(err)
+	}
 	handler, err := relay.NewAuthenticatedWebSocketHandler(hub, authenticator)
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +83,10 @@ func TestDurableRevocationClosesActiveRelayAndRejectsReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	hub := relay.NewHub()
+	hub, err := relay.NewHub(store, store)
+	if err != nil {
+		t.Fatal(err)
+	}
 	handler, err := relay.NewAuthenticatedWebSocketHandler(hub, authenticator)
 	if err != nil {
 		t.Fatal(err)
@@ -159,7 +165,10 @@ func TestCredentialRotationClosesOldSessionAndAuthenticatesPendingCredential(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	hub := relay.NewHub()
+	hub, err := relay.NewHub(store, store)
+	if err != nil {
+		t.Fatal(err)
+	}
 	handler, err := relay.NewAuthenticatedWebSocketHandler(hub, authenticator)
 	if err != nil {
 		t.Fatal(err)

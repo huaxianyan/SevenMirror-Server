@@ -4,7 +4,7 @@ Private self-hosted relay for Notification Mirroring. This is one of three indep
 
 Repository: <https://github.com/huaxianyan/SevenMirror-Server>
 
-> Status: provisional private admission and authenticated ciphertext relay are implemented for synthetic test devices. ADR-005 authority-key custody, verified authority-key backup/restore, strict three-client Workspace Membership v1 codecs/vectors, and the Server pending-proof/atomic approval persistence boundary are implemented. Dual-signed authority rotation is implemented; offline delivery and production security review remain incomplete. Real third-party notification content remains blocked.
+> Status: provisional private admission and authenticated ciphertext relay are implemented for synthetic test devices. ADR-005 authority-key custody, verified authority-key backup/restore, strict three-client Workspace Membership v1 codecs/vectors, and the Server pending-proof/atomic approval persistence boundary are implemented. Dual-signed authority rotation and the Server half of recipient-specific durable ciphertext delivery are implemented; Android/Chrome cursor integration, snapshot-required recovery, and production security review remain incomplete. Real third-party notification content remains blocked.
 
 ## Current functionality
 
@@ -130,7 +130,7 @@ go test ./...
 
 `cmd/server` now mounts registration and relay endpoints only with an initialized admission store and authenticated relay handler. Knowing the host, workspace ID, or device ID is insufficient: registration requires an unexpired, unused admin-issued code, and every relay connection requires the independently issued device credential. Secrets are absent from URLs and persisted only as hashes.
 
-This is not yet a production release. Durable immediate device revocation and the server half of recoverable transport credential rotation are implemented. Android/Chrome dual-slot rotation and promotion, lost-device recovery, offline delivery, trusted-proxy policy, and an independent security review remain release blockers. Use `wss://` outside loopback; native TLS requires TLS 1.2 or newer. Until those gates pass, submit only synthetic encrypted test payloads—never real notification content.
+This is not yet a production release. Durable immediate device revocation, the server half of recoverable transport credential rotation, and the Server Relay Delivery v1 queue are implemented. Android/Chrome cursor integration, snapshot-required recovery, lost-device recovery, trusted-proxy policy, and an independent security review remain release blockers. Use `wss://` outside loopback; native TLS requires TLS 1.2 or newer. Until those gates pass, submit only synthetic encrypted test payloads—never real notification content.
 
 The first-message authentication format is documented in [`protocol/device-auth-frame-v1.md`](protocol/device-auth-frame-v1.md).
 

@@ -16,13 +16,13 @@ func TestHubRoutesUnchangedCiphertextToOneRecipient(t *testing.T) {
 	frame := canonicalFrame(t)
 	sender := peerFromFrame(t, frame, 24)
 	recipient := peerFromFrame(t, frame, 40)
-	hub := NewHub()
-	_, _, unregisterSender, err := hub.Register(sender, 1, 1)
+	hub := newTestHub(t)
+	_, _, _, unregisterSender, err := hub.Register(sender, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unregisterSender()
-	deliveries, disconnected, unregister, err := hub.Register(recipient, 1, 1)
+	deliveries, _, disconnected, unregister, err := hub.Register(recipient, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestHubRoutesUnchangedCiphertextToOneRecipient(t *testing.T) {
 	default:
 	}
 
-	if err := hub.Route(sender, frame); err != nil {
+	if err := hub.RouteOnline(sender, frame); err != nil {
 		t.Fatal(err)
 	}
 	routed := <-deliveries
@@ -50,35 +50,35 @@ func TestHubRejectsIdentityMismatchOfflineAndBackpressure(t *testing.T) {
 	frame := canonicalFrame(t)
 	sender := peerFromFrame(t, frame, 24)
 	recipient := peerFromFrame(t, frame, 40)
-	hub := NewHub()
+	hub := newTestHub(t)
 
 	wrongSender := sender
 	wrongSender.DeviceID[0] ^= 1
-	if err := hub.Route(wrongSender, frame); !errors.Is(err, ErrSenderMismatch) {
+	if err := hub.RouteOnline(wrongSender, frame); !errors.Is(err, ErrSenderMismatch) {
 		t.Fatalf("wrong sender error = %v", err)
 	}
 	wrongWorkspace := sender
 	wrongWorkspace.WorkspaceID[0] ^= 1
-	if err := hub.Route(wrongWorkspace, frame); !errors.Is(err, ErrSenderMismatch) {
+	if err := hub.RouteOnline(wrongWorkspace, frame); !errors.Is(err, ErrSenderMismatch) {
 		t.Fatalf("wrong workspace error = %v", err)
 	}
-	_, _, unregisterSender, err := hub.Register(sender, 1, 1)
+	_, _, _, unregisterSender, err := hub.Register(sender, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unregisterSender()
-	if err := hub.Route(sender, frame); !errors.Is(err, ErrRecipientOffline) {
+	if err := hub.RouteOnline(sender, frame); !errors.Is(err, ErrRecipientOffline) {
 		t.Fatalf("offline error = %v", err)
 	}
-	_, _, unregister, err := hub.Register(recipient, 1, 1)
+	_, _, _, unregister, err := hub.Register(recipient, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unregister()
-	if err := hub.Route(sender, frame); err != nil {
+	if err := hub.RouteOnline(sender, frame); err != nil {
 		t.Fatal(err)
 	}
-	if err := hub.Route(sender, frame); !errors.Is(err, ErrRecipientBusy) {
+	if err := hub.RouteOnline(sender, frame); !errors.Is(err, ErrRecipientBusy) {
 		t.Fatalf("backpressure error = %v", err)
 	}
 }
@@ -87,13 +87,13 @@ func TestHubDisconnectRemovesRoutingAndSignalsExactSession(t *testing.T) {
 	frame := canonicalFrame(t)
 	sender := peerFromFrame(t, frame, 24)
 	recipient := peerFromFrame(t, frame, 40)
-	hub := NewHub()
-	_, _, unregisterSender, err := hub.Register(sender, 1, 1)
+	hub := newTestHub(t)
+	_, _, _, unregisterSender, err := hub.Register(sender, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unregisterSender()
-	_, disconnected, unregister, err := hub.Register(recipient, 1, 1)
+	_, _, disconnected, unregister, err := hub.Register(recipient, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,13 +109,13 @@ func TestHubDisconnectRemovesRoutingAndSignalsExactSession(t *testing.T) {
 	if hub.IsConnected(recipient) {
 		t.Fatal("disconnected recipient remained routable")
 	}
-	if err := hub.Route(sender, frame); !errors.Is(err, ErrRecipientOffline) {
+	if err := hub.RouteOnline(sender, frame); !errors.Is(err, ErrRecipientOffline) {
 		t.Fatalf("route after recipient disconnect error = %v", err)
 	}
 	if !hub.Disconnect(sender) {
 		t.Fatal("connected sender was not disconnected")
 	}
-	if err := hub.Route(sender, frame); !errors.Is(err, ErrSenderOffline) {
+	if err := hub.RouteOnline(sender, frame); !errors.Is(err, ErrSenderOffline) {
 		t.Fatalf("route after sender disconnect error = %v", err)
 	}
 	if hub.Disconnect(recipient) {

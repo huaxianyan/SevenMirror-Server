@@ -65,7 +65,7 @@ func TestAuthenticatedHandlerRoutesOnlyAfterBinaryCredentialFrame(t *testing.T) 
 		}
 		return 1, nil
 	})
-	hub := NewHub()
+	hub := newTestHub(t)
 	handler, err := NewAuthenticatedWebSocketHandler(hub, authenticator)
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestAuthenticatedHandlerRoutesOnlyAfterBinaryCredentialFrame(t *testing.T) 
 func TestAuthenticatedHandlerClosesActiveRevokedSession(t *testing.T) {
 	peer := PeerIdentity{WorkspaceID: WorkspaceID{1}, DeviceID: DeviceID{2}}
 	token := bytes.Repeat([]byte{3}, 32)
-	hub := NewHub()
+	hub := newTestHub(t)
 	handler, err := NewAuthenticatedWebSocketHandler(hub, ConnectionAuthenticatorFunc(func(
 		_ context.Context, candidate PeerIdentity, received []byte, _ time.Time,
 	) (int64, error) {
@@ -133,7 +133,7 @@ func TestAuthenticatedHandlerClosesActiveRevokedSession(t *testing.T) {
 
 func TestAuthenticatedHandlerRejectsWrongTokenAndWebOrigin(t *testing.T) {
 	peer := PeerIdentity{WorkspaceID: WorkspaceID{1}, DeviceID: DeviceID{2}}
-	hub := NewHub()
+	hub := newTestHub(t)
 	handler, err := NewAuthenticatedWebSocketHandler(hub, ConnectionAuthenticatorFunc(func(
 		context.Context, PeerIdentity, []byte, time.Time,
 	) (int64, error) {
