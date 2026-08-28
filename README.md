@@ -18,6 +18,7 @@ Repository: <https://github.com/huaxianyan/SevenMirror-Server>
 - Canonical provisional notification and Workspace Membership v1 schemas with cross-client test vectors
 - Recipient-specific durable ciphertext delivery, cumulative ACK, bounded history gaps, and explicit snapshot-required recovery
 - Accepted protocol and Chrome recovery decisions in [`docs/adr/ADR-001-protocol-encoding-and-versioning.md`](docs/adr/ADR-001-protocol-encoding-and-versioning.md) and [`docs/adr/ADR-003-chrome-realtime-connection-and-recovery.md`](docs/adr/ADR-003-chrome-realtime-connection-and-recovery.md)
+- P6 threat model, independent-review process, readiness findings, and evidence checklist in [`docs/security-review/`](docs/security-review/README.md)
 
 The default bind address is `127.0.0.1:8080`; the service is not exposed publicly by default.
 
@@ -130,9 +131,11 @@ go test ./...
 
 ## Security status
 
-`cmd/server` now mounts registration and relay endpoints only with an initialized admission store and authenticated relay handler. Knowing the host, workspace ID, or device ID is insufficient: registration requires an unexpired, unused admin-issued code, and every relay connection requires the independently issued device credential. Secrets are absent from URLs and persisted only as hashes.
+`cmd/server` now mounts registration and relay endpoints only with an initialized admission store and authenticated relay handler. Knowing the host, workspace ID, or device ID is insufficient: registration requires an unexpired, unused admin-issued code, and every relay connection requires the independently issued device credential. Server-side pairing codes and transport credentials are absent from URLs and persisted only as hashes.
 
-This is not yet a production release. Durable immediate device revocation, the server half of recoverable transport credential rotation, and the Server Relay Delivery v1 queue are implemented. Android/Chrome cursor integration, snapshot-required recovery, lost-device recovery, trusted-proxy policy, and an independent security review remain release blockers. Use `wss://` outside loopback; native TLS requires TLS 1.2 or newer. Until those gates pass, submit only synthetic encrypted test payloads—never real notification content.
+This is not yet a production release. Certified revocation, recoverable transport credential rotation, recipient-scoped durable delivery, cumulative cursors, and authority-certified snapshot recovery are implemented and have passed the documented mixed-device engineering acceptance. They have not received independent security approval. The P6 review baseline, threat model, initial findings, and reproducible evidence checklist are maintained in [`docs/security-review/`](docs/security-review/README.md).
+
+Independent protocol/security review, automated secret and dependency-vulnerability gates, credential/plaintext leakage auditing, legacy admission removal-or-release policy, authority/signing backup operations, trusted-proxy policy, and two-real-Android OEM validation remain release blockers. Use `wss://` outside loopback; native TLS requires TLS 1.2 or newer. Until those gates pass and a reviewed release explicitly changes the product gate, submit only app-owned synthetic encrypted payloads—never third-party notification content.
 
 The first-message authentication format is documented in [`protocol/device-auth-frame-v1.md`](protocol/device-auth-frame-v1.md).
 
