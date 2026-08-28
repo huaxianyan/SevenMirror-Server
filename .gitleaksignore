@@ -1,0 +1,6 @@
+# Reviewed documentation false positives. Keep these exact fingerprints narrow;
+# public deterministic protocol vectors are handled by .gitleaks.toml.
+bfb86b457b651d883953ba33d7eaee1a57ffb76f:docs/security-review/review-checklist.md:generic-api-key:473
+4df68e95e9a65cfedfd1b71a19a18c1ad81db30c:protocol/README.md:generic-api-key:20
+a7999f634784d077852e6ae69084898d4ab90c47:protocol/README.md:generic-api-key:20
+d1dcbf8c0ba6926443d2ba258bc8c8d395e3b67e:protocol/README.md:generic-api-key:20

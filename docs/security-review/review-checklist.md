@@ -50,8 +50,8 @@ Severity is provisional until an independent reviewer assesses realistic impact.
 | ID | Provisional severity | State | Required disposition |
 | --- | --- | --- | --- |
 | SR-001 | High | OPEN | Complete independent protocol and cryptographic review of Auth HPKE, canonical encodings, identity binding, replay, and domain separation before v1 freeze. |
-| SR-002 | Medium | OPEN | Add automated secret scanning for all three repositories with a reviewed allowlist for public vectors and synthetic fixtures. |
-| SR-003 | Medium | OPEN | Add maintained dependency-vulnerability checks for Go, npm, Gradle, and GitHub Actions; define failure and exception policy. |
+| SR-002 | Medium | EVIDENCE | All three CI workflows now run SHA-pinned Gitleaks Action v3.0.0 with scanner v8.30.1 over full Git history. The only path allowlist is the published deterministic `protocol/test-vectors/` tree; Server documentation false positives use exact fingerprints. Independent review and release-candidate execution remain required. |
+| SR-003 | Medium | PARTIAL | Server now runs `govulncheck v1.1.4`; Chrome runs `npm audit` against `package-lock.json` and the initial High-severity `nanoid` finding is fixed at 3.3.18. Android still needs a complete locked Gradle/plugin inventory and vulnerability gate; GitHub Actions and exception policy also remain open. |
 | SR-004 | Medium | OPEN | Add a public `SECURITY.md` vulnerability-reporting and supported-version policy to each independently published repository, or document one shared policy that all three link to. |
 | SR-005 | High | OPEN | Remove the frozen `/v1/devices/register`/`legacy_active` trust path before release, or obtain explicit review and a migration/disable policy proving it cannot become a parallel trust source. |
 | SR-006 | Medium | PARTIAL | Review Android HPKE private-scalar unwrap, in-memory copies, zeroization limits, crash diagnostics, and the absence of hardware-backed P-256 HPKE operations. |
@@ -328,10 +328,12 @@ The scan must distinguish forbidden leakage from expected endpoint-local data.
 A blanket search for words such as `title` is not sufficient, and public fixed
 vectors are not secrets.
 
-- [ ] **P-01 — Tracked-secret scan.** Scan full Git history and current files in all
-  repositories for private keys, live tokens, passwords, signing stores, private
-  CA keys, and high-entropy credentials. Review every allowlist entry.
-  (`OPEN`; SR-002)
+- [ ] **P-01 — Tracked-secret scan.** All three CI workflows use full-history
+  checkout plus SHA-pinned Gitleaks Action v3.0.0/scanner v8.30.1. The local
+  baseline found only deterministic public protocol vectors and four exact
+  Server documentation false positives; narrow path/fingerprint exclusions make
+  the rescans clean. Independently review every exclusion and rerun on the exact
+  release commits. (`EVIDENCE`; SR-002)
 - [ ] **P-02 — Server logs.** Exercise success and all validation/error paths with
   unique canary credentials and business strings. Confirm structured Server logs
   and HTTP errors contain neither canary. (`PARTIAL`; SR-013)
@@ -395,12 +397,18 @@ vectors are not secrets.
 - [ ] **B-01 — Dependency inventory.** Produce locked Go, npm, Gradle/plugin, GitHub
   Action, base-image, and cryptographic-library inventory for the baseline.
   (`PARTIAL`)
-- [ ] **B-02 — Vulnerability scan.** Run current ecosystem-appropriate scanners,
-  record database timestamp/tool versions, triage reachable impact, and define
-  blocking severity plus expiry for exceptions. (`OPEN`; SR-003)
-- [ ] **B-03 — Secret scan gate.** Run a pinned/reviewed scanner on pull requests
-  and history-sensitive release checks. Ensure synthetic vectors do not create an
-  unreviewed broad exclusion. (`OPEN`; SR-002)
+- [ ] **B-02 — Vulnerability scan.** Server CI runs `govulncheck v1.1.4` against
+  reachable Go code. Chrome CI runs `npm audit --audit-level=high` against the
+  lockfile; the initial `nanoid < 3.3.18` High finding was remediated. A complete
+  locked Gradle/plugin inventory, Android scanner, GitHub Actions inventory,
+  database timestamp evidence, and exception policy remain open. (`PARTIAL`;
+  SR-003)
+- [ ] **B-03 — Secret scan gate.** All three pull-request/push workflows now scan
+  full Git history using Gitleaks Action v3.0.0 pinned to commit
+  `e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e` and scanner v8.30.1. The sole path
+  allowlist covers published deterministic protocol vectors; Server document
+  false positives are exact fingerprints. Independent exclusion review remains
+  required. (`EVIDENCE`; SR-002)
 - [ ] **B-04 — CI action trust.** Review and pin mutable third-party actions to
   immutable commits or document an equivalent update-review policy. Remove
   deprecated Node.js 20/setup-java behavior without weakening checks. (`OPEN`;

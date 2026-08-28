@@ -122,8 +122,10 @@ The independent review is complete only when it produces:
 The initial readiness audit has identified these open items; the detailed list
 and evidence are in the checklist:
 
-- no automated repository secret scan in the three CI workflows;
-- no automated Go, npm, or Gradle dependency-vulnerability gate;
+- the new three-repository Gitleaks history gate and its narrow public-vector
+  allowlist still require independent review against the release baseline;
+- Server and Chrome now have Go/npm vulnerability gates, but Android still lacks
+  a complete locked Gradle inventory and dependency-vulnerability gate;
 - no repository vulnerability-reporting policy (`SECURITY.md`);
 - the frozen legacy `/v1/devices/register` and `legacy_active` path still exists
   and needs a remove-or-release decision;
