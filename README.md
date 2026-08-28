@@ -4,7 +4,7 @@ Private self-hosted relay for Notification Mirroring. This is one of three indep
 
 Repository: <https://github.com/huaxianyan/SevenMirror-Server>
 
-> Status: provisional private admission and authenticated ciphertext relay are implemented for synthetic test devices. ADR-005 authority-key custody, verified authority-key backup/restore, strict three-client Workspace Membership v1 codecs/vectors, and the Server pending-proof/atomic approval persistence boundary are implemented. Dual-signed authority rotation and the Server half of recipient-specific durable ciphertext delivery are implemented; Android/Chrome cursor integration, snapshot-required recovery, and production security review remain incomplete. Real third-party notification content remains blocked.
+> Status: the provisional synthetic-only system implements private admission, authenticated opaque ciphertext relay, authority-signed workspace membership, verified authority backup／restore and dual-signed rotation, recipient-specific durable delivery, cumulative cursors, and authority-certified snapshot recovery. Real mixed `2 Android × 2 Chrome` convergence has passed; production security review, third-party notification approval, and release compatibility policy remain incomplete. Real third-party notification content remains blocked.
 
 ## Current functionality
 
@@ -16,6 +16,8 @@ Repository: <https://github.com/huaxianyan/SevenMirror-Server>
 - Bounded opaque ciphertext routing with workspace/device sender binding
 - Authentication/registration rate limits, five-second auth deadline, Ping/Pong liveness, and graceful shutdown
 - Canonical provisional notification and Workspace Membership v1 schemas with cross-client test vectors
+- Recipient-specific durable ciphertext delivery, cumulative ACK, bounded history gaps, and explicit snapshot-required recovery
+- Accepted protocol and Chrome recovery decisions in [`docs/adr/ADR-001-protocol-encoding-and-versioning.md`](docs/adr/ADR-001-protocol-encoding-and-versioning.md) and [`docs/adr/ADR-003-chrome-realtime-connection-and-recovery.md`](docs/adr/ADR-003-chrome-realtime-connection-and-recovery.md)
 
 The default bind address is `127.0.0.1:8080`; the service is not exposed publicly by default.
 

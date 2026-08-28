@@ -1,6 +1,6 @@
 # ADR-005: Centralized workspace membership authority
 
-- Status: **Accepted — membership enrollment, signed revocation, continuous roster refresh, business role enforcement, recipient cutover, bilateral source retirement, and verified authority backup/restore are implemented; authority rotation remains pending**
+- Status: **Accepted — enrollment, signed roster and revocation, business role enforcement, bilateral-source retirement, verified authority backup／restore, dual-signed authority rotation, and multi-device convergence are implemented**
 - Date: 2026-08-19
 - Owners: Server, Android, and Chrome projects
 
@@ -70,9 +70,11 @@ accepted epoch and reject rollback, same-epoch equivocation, invalid signatures,
 unknown fields, and non-canonical encoding.
 
 A client may send or accept a business envelope only when the relevant device,
-identity key, and role are valid in its accepted roster. Offline recovery must
-refresh authorization before resuming business traffic according to a bounded
-staleness policy that remains to be specified.
+identity key, and role are valid in its accepted roster. Clients continuously
+refresh membership while online and refresh the durable authority／roster chain
+before resuming business traffic. A certified revocation closes active relay
+sessions within the authorization monitor's bounded 250-millisecond polling
+window plus one local lookup; the system does not claim a zero-time window.
 
 The relay may know administrative device metadata and authorization state. It
 must still not parse, log, or persist notification titles, bodies, replies,
@@ -177,14 +179,37 @@ and make selective revocation significantly more expensive.
 Rejected because conflicting trust sources create ambiguous authorization,
 rotation, and recovery behavior.
 
-## Required next slices
+## Implementation status and remaining release gates
 
-1. Complete the authority-key lifecycle contract in
-   [`../workspace-authority-key-lifecycle.md`](../workspace-authority-key-lifecycle.md). Initial generation, separated PKCS#8 custody, public-key persistence, fail-closed loading, and verified backup/restore tooling are implemented; old-authority-signed rotation remains pending.
-2. Vendor and independently verify the canonical pending proof, device certificate, signed roster, revocation, and fixed vector from [`../../protocol/workspace-membership-v1.md`](../../protocol/workspace-membership-v1.md) in Android and Chrome; the Server schema, strict codec, signatures, roster chaining, Base-HPKE challenge vector, and canonical vector are implemented.
-3. Client consumption of the isolated [`../membership-http-v1.md`](../membership-http-v1.md) registration/proof/state flow, authority pinning, certificate storage, contiguous roster persistence, recoverable transport promotion, and real restart validation are implemented. Server certified revocation now atomically advances the signed roster and invalidates transport authorization. The frozen legacy endpoint still creates explicit `legacy_active` devices until cutover.
-4. Signed-roster roles are enforced in business recipient discovery and operation authorization.
-5. Pairwise recipient discovery has been removed from notification fanout and the complete action／result／ACK path.
-6. Obsolete bilateral pairing and per-peer identity-transition paths, unreferenced source, and dedicated tests have been removed from Android and Chrome; only frozen protocol history remains.
-7. Execute 1 Android × 2 Chrome enrollment, fanout, action, result ACK, revocation, snapshot, and
-   restart validation before proceeding to 2 × 2.
+The authority model is implemented end to end:
+
+1. [`../workspace-authority-key-lifecycle.md`](../workspace-authority-key-lifecycle.md)
+   covers separated PKCS#8 custody, verified backup／restore, old/new-authority
+   dual-signed transition, exact activation roster, and atomic current-authority
+   replacement. Running Android and Chrome clients have accepted a real rotation
+   and rejected an old-Server rollback after restart.
+2. Android and Chrome independently verify the canonical pending proof, device
+   certificate, signed roster, revocation, authority transition, and fixed
+   vectors from [`../../protocol/workspace-membership-v1.md`](../../protocol/workspace-membership-v1.md).
+3. Both clients implement bounded membership HTTP, authority pinning, contiguous
+   roster and transition persistence, recoverable transport promotion, continuous
+   refresh, role enforcement, and certified revocation.
+4. Notification, snapshot, action invoke, action result, and result ACK recipient
+   discovery and inbound authorization use only the signed roster. Obsolete
+   bilateral pairing and per-peer identity-transition runtime paths have been
+   removed; frozen protocol artifacts are not a fallback.
+5. Real `1 Android × 2 Chrome` enrollment, fanout, operation, revocation, snapshot,
+   and restart validation passed. Real mixed `2 Android × 2 Chrome` validation
+   subsequently passed independent per-recipient encryption and cursor behavior,
+   two-source snapshot recovery, action／reply／dismiss source routing, offline
+   Chrome replay, and Server／Android／browser／Worker restart convergence.
+
+Remaining release gates are operational rather than missing membership protocol
+stages:
+
+- independent review of authority compromise, backup custody, rotation, roster
+  rollback, registration proof, and revocation boundaries;
+- final administrator and client-facing enrollment／revocation UX;
+- release documentation that states the accepted malicious-authority risk and
+  requires an encrypted, consistent backup of both authority material and the
+  SQLite registry.
