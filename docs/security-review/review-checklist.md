@@ -51,7 +51,7 @@ Severity is provisional until an independent reviewer assesses realistic impact.
 | --- | --- | --- | --- |
 | SR-001 | High | OPEN | Complete independent protocol and cryptographic review of Auth HPKE, canonical encodings, identity binding, replay, and domain separation before v1 freeze. |
 | SR-002 | Medium | EVIDENCE | All three CI workflows now run SHA-pinned Gitleaks Action v3.0.0 with scanner v8.30.1 over full Git history. The only path allowlist is the published deterministic `protocol/test-vectors/` tree; Server documentation false positives use exact fingerprints. Independent review and release-candidate execution remain required. |
-| SR-003 | Medium | PARTIAL | Server now runs `govulncheck v1.1.4`; Chrome runs `npm audit` against `package-lock.json` and the initial High-severity `nanoid` finding is fixed at 3.3.18. Android still needs a complete locked Gradle/plugin inventory and vulnerability gate; GitHub Actions and exception policy also remain open. |
+| SR-003 | Medium | PARTIAL | Server now runs `govulncheck v1.1.4`; its first CI run found 12 reachable Go 1.24.13 standard-library vulnerabilities, so the enforced source/CI/container floor is now Go 1.25.13. Chrome runs `npm audit` against `package-lock.json` and the initial High-severity `nanoid` finding is fixed at 3.3.18. Android still needs a complete locked Gradle/plugin inventory and vulnerability gate; GitHub Actions and exception policy also remain open. |
 | SR-004 | Medium | OPEN | Add a public `SECURITY.md` vulnerability-reporting and supported-version policy to each independently published repository, or document one shared policy that all three link to. |
 | SR-005 | High | OPEN | Remove the frozen `/v1/devices/register`/`legacy_active` trust path before release, or obtain explicit review and a migration/disable policy proving it cannot become a parallel trust source. |
 | SR-006 | Medium | PARTIAL | Review Android HPKE private-scalar unwrap, in-memory copies, zeroization limits, crash diagnostics, and the absence of hardware-backed P-256 HPKE operations. |
@@ -398,7 +398,9 @@ vectors are not secrets.
   Action, base-image, and cryptographic-library inventory for the baseline.
   (`PARTIAL`)
 - [ ] **B-02 — Vulnerability scan.** Server CI runs `govulncheck v1.1.4` against
-  reachable Go code. Chrome CI runs `npm audit --audit-level=high` against the
+  reachable Go code. Its first run found 12 reachable standard-library findings
+  under Go 1.24.13; `go.mod`, CI, and the container builder now enforce the fixed
+  Go 1.25.13 floor. Chrome CI runs `npm audit --audit-level=high` against the
   lockfile; the initial `nanoid < 3.3.18` High finding was remediated. A complete
   locked Gradle/plugin inventory, Android scanner, GitHub Actions inventory,
   database timestamp evidence, and exception policy remain open. (`PARTIAL`;

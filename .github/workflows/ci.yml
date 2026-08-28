@@ -22,7 +22,7 @@ jobs:
           GITLEAKS_VERSION: 8.30.1
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24.x'
+          go-version-file: go.mod
           cache: true
       - name: Scan reachable Go code for known vulnerabilities
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...

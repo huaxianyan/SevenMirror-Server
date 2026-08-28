@@ -24,7 +24,7 @@ The default bind address is `127.0.0.1:8080`; the service is not exposed publicl
 
 ## Requirements
 
-- Go 1.24 or newer
+- Go 1.25.13 or newer; the patch floor is security-sensitive and is defined by `go.mod`
 - Docker is optional
 
 ## Run
