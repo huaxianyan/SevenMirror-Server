@@ -62,7 +62,7 @@ Severity is provisional until an independent reviewer assesses realistic impact.
 | SR-011 | High | EXTERNAL | Review registration → possession proof → approval → promotion → `SNO1`, including interruption, replay, concurrent approval/revocation, and stale MV3 Worker deployment. |
 | SR-012 | High | EXTERNAL | Review relay retention, cumulative ACK, eviction, `SNR1`, fixed high-water snapshot recovery, and certified source-key replacement failure. |
 | SR-013 | Medium | OPEN | Implement reproducible static and runtime scans for credentials and unexpected business plaintext in Server logs/SQLite/WAL/URLs and client diagnostics/storage, with explicit expected-local-plaintext allowlists. |
-| SR-014 | Medium | OPEN | Add artifact provenance/security gates appropriate to each release channel, including pinned or reviewed CI actions and documented signing/release verification. |
+| SR-014 | Medium | PARTIAL | Every external Action reference is now pinned to an immutable 40-character commit and CI rejects tag/branch references. All selected Actions use Node.js 24. Official `actions/*` commits are GitHub-verified; the pinned Android setup/emulator commits require independent source review because their commits are not GitHub-verified. Release-channel provenance and signing verification remain open. |
 | SR-015 | High | OPEN | Keep third-party notification transport disabled until security findings and two-real-Android OEM/network validation are complete and a reviewed release explicitly changes the gate. |
 
 Accepted-risk decisions must name the affected product claim. “Self-hosted” or
@@ -411,10 +411,14 @@ vectors are not secrets.
   allowlist covers published deterministic protocol vectors; Server document
   false positives are exact fingerprints. Independent exclusion review remains
   required. (`EVIDENCE`; SR-002)
-- [ ] **B-04 — CI action trust.** Review and pin mutable third-party actions to
-  immutable commits or document an equivalent update-review policy. Remove
-  deprecated Node.js 20/setup-java behavior without weakening checks. (`OPEN`;
-  SR-014)
+- [ ] **B-04 — CI action trust.** Every external Action is pinned to an immutable
+  40-character commit, and each primary CI job rejects future tag/branch refs.
+  Selected checkout/setup/upload Actions and both Android third-party Actions use
+  Node.js 24; `setup-java v4` is removed. GitHub verifies the selected official
+  `actions/*` commits. Independently review the unverified-signature
+  `android-actions/setup-android v4.0.1` and
+  `reactivecircus/android-emulator-runner v2.38.0` source commits and define an
+  update cadence. (`EVIDENCE`; SR-014)
 - [ ] **B-05 — Generated/vendored protocol.** Verify generation is reproducible,
   diffs are reviewed, upstream hashes fail closed, and temporary generator tools
   cannot enter releases accidentally. (`PARTIAL`)
