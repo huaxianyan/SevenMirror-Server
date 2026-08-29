@@ -15,6 +15,7 @@ import (
 
 	"github.com/huaxianyan/SyncNotifications-Server/internal/admission"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/membership"
+	"github.com/huaxianyan/SyncNotifications-Server/internal/workspacebackup"
 	membershipv1 "github.com/huaxianyan/SyncNotifications-Server/protocol/generated/membership/v1"
 )
 
@@ -22,6 +23,14 @@ func main() {
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
+	}
+	if os.Args[1] == "verify-workspace-backup" {
+		verifyWorkspaceBackup(os.Args[2:])
+		return
+	}
+	if os.Args[1] == "restore-workspace-backup" {
+		restoreWorkspaceBackup(os.Args[2:])
+		return
 	}
 	databasePath := os.Getenv("NM_DATABASE_PATH")
 	if databasePath == "" {
@@ -59,12 +68,8 @@ func main() {
 		fmt.Printf("workspace_id=%s\n", base64.RawURLEncoding.EncodeToString(workspace[:]))
 		fmt.Printf("authority_key_id=%s\n", authority.KeyID)
 		fmt.Printf("authority_private_key_file=%s\n", authority.Path)
-	case "backup-authority":
-		backupAuthority(store, databasePath, os.Args[2:])
-	case "verify-authority-backup":
-		verifyAuthorityBackup(store, os.Args[2:])
-	case "restore-authority":
-		restoreAuthority(store, databasePath, os.Args[2:])
+	case "backup-workspace":
+		backupWorkspace(store, databasePath, os.Args[2:])
 	case "prepare-authority-rotation":
 		prepareAuthorityRotation(databasePath, os.Args[2:])
 	case "rotate-authority":
@@ -88,96 +93,72 @@ func main() {
 	}
 }
 
-func backupAuthority(store *admission.Store, databasePath string, args []string) {
-	flags := flag.NewFlagSet("backup-authority", flag.ExitOnError)
+func backupWorkspace(store *admission.Store, databasePath string, args []string) {
+	flags := flag.NewFlagSet("backup-workspace", flag.ExitOnError)
 	workspaceText := flags.String("workspace", "", "base64url workspace ID")
-	outputDirectory := flags.String("output", "", "new protected backup directory")
+	outputDirectory := flags.String("output", "", "new protected workspace backup directory")
 	flags.Parse(args)
 	if flags.NArg() != 0 {
 		flags.Usage()
 		os.Exit(2)
 	}
 	workspace := parseWorkspaceID(*workspaceText)
-	publicKey, err := store.WorkspaceAuthorityPublicKey(context.Background(), workspace)
+	backup, err := workspacebackup.Create(
+		context.Background(), store, *outputDirectory, workspace,
+		authorityKeyDirectory(databasePath))
 	if err != nil {
-		fatal("load workspace authority", err)
-	}
-	keyID := membership.AuthorityKeyID(publicKey)
-	sourcePath := filepath.Join(
-		authorityKeyDirectory(databasePath),
-		"workspace-authority-"+keyID+".pk8",
-	)
-	backup, err := membership.CreateAuthorityBackup(
-		*outputDirectory,
-		workspace[:],
-		sourcePath,
-		publicKey,
-	)
-	if err != nil {
-		fatal("back up workspace authority", err)
+		fatal("back up workspace", err)
 	}
 	fmt.Printf("workspace_id=%s\n", base64.RawURLEncoding.EncodeToString(workspace[:]))
-	fmt.Printf("authority_key_id=%s\n", backup.KeyID)
-	fmt.Printf("authority_backup_directory=%s\n", backup.Directory)
+	fmt.Printf("authority_key_id=%s\n", backup.AuthorityKeyID)
+	fmt.Printf("workspace_backup_directory=%s\n", backup.Directory)
 }
 
-func verifyAuthorityBackup(store *admission.Store, args []string) {
-	flags := flag.NewFlagSet("verify-authority-backup", flag.ExitOnError)
+func verifyWorkspaceBackup(args []string) {
+	flags := flag.NewFlagSet("verify-workspace-backup", flag.ExitOnError)
 	workspaceText := flags.String("workspace", "", "base64url workspace ID")
-	backupDirectory := flags.String("backup", "", "authority backup directory")
+	backupDirectory := flags.String("backup", "", "workspace backup directory")
 	flags.Parse(args)
 	if flags.NArg() != 0 {
 		flags.Usage()
 		os.Exit(2)
 	}
 	workspace := parseWorkspaceID(*workspaceText)
-	publicKey, err := store.WorkspaceAuthorityPublicKey(context.Background(), workspace)
+	verified, err := workspacebackup.Verify(context.Background(), *backupDirectory, workspace)
 	if err != nil {
-		fatal("load workspace authority", err)
-	}
-	verified, err := membership.VerifyAuthorityBackup(
-		*backupDirectory,
-		workspace[:],
-		publicKey,
-	)
-	if err != nil {
-		fatal("verify workspace authority backup", err)
+		fatal("verify workspace backup", err)
 	}
 	fmt.Printf("workspace_id=%s\n", base64.RawURLEncoding.EncodeToString(workspace[:]))
-	fmt.Printf("authority_key_id=%s\n", verified.KeyID)
+	fmt.Printf("authority_key_id=%s\n", verified.AuthorityKeyID)
 	fmt.Println("result=verified")
 }
 
-func restoreAuthority(store *admission.Store, databasePath string, args []string) {
-	flags := flag.NewFlagSet("restore-authority", flag.ExitOnError)
+func restoreWorkspaceBackup(args []string) {
+	flags := flag.NewFlagSet("restore-workspace-backup", flag.ExitOnError)
 	workspaceText := flags.String("workspace", "", "base64url workspace ID")
-	backupDirectory := flags.String("backup", "", "authority backup directory")
+	backupDirectory := flags.String("backup", "", "workspace backup directory")
+	databasePath := flags.String("database", "", "new restored registry path")
+	authorityDirectory := flags.String(
+		"authority-key-directory", "", "restored authority key directory")
 	flags.Parse(args)
 	if flags.NArg() != 0 {
 		flags.Usage()
 		os.Exit(2)
 	}
 	workspace := parseWorkspaceID(*workspaceText)
-	publicKey, err := store.WorkspaceAuthorityPublicKey(context.Background(), workspace)
+	restored, err := workspacebackup.RestoreTo(
+		context.Background(), *backupDirectory, workspace,
+		*databasePath, *authorityDirectory)
 	if err != nil {
-		fatal("load workspace authority", err)
-	}
-	restored, err := membership.RestoreAuthorityBackup(
-		*backupDirectory,
-		authorityKeyDirectory(databasePath),
-		workspace[:],
-		publicKey,
-	)
-	if err != nil {
-		fatal("restore workspace authority", err)
+		fatal("restore workspace backup", err)
 	}
 	result := "restored"
-	if restored.AlreadyPresent {
-		result = "already-present"
+	if restored.AuthorityExisted {
+		result = "registry-restored-authority-already-present"
 	}
 	fmt.Printf("workspace_id=%s\n", base64.RawURLEncoding.EncodeToString(workspace[:]))
-	fmt.Printf("authority_key_id=%s\n", membership.AuthorityKeyID(publicKey))
-	fmt.Printf("authority_private_key_file=%s\n", restored.PrivateKeyPath)
+	fmt.Printf("registry_file=%s\n", restored.RegistryPath)
+	fmt.Printf("authority_private_key_file=%s\n", restored.AuthorityKeyPath)
 	fmt.Printf("result=%s\n", result)
 }
 
@@ -373,8 +354,8 @@ func loadWorkspaceAuthorityPrivateKey(
 	if err != nil {
 		return nil, err
 	}
-	privateKeyPath := filepath.Join(authorityKeyDirectory(databasePath),
-		"workspace-authority-"+membership.AuthorityKeyID(publicKey)+".pk8")
+	privateKeyPath := membership.AuthorityPrivateKeyPath(
+		authorityKeyDirectory(databasePath), membership.AuthorityKeyID(publicKey))
 	return membership.LoadAuthorityPrivateKey(privateKeyPath, publicKey)
 }
 
@@ -446,9 +427,9 @@ func parseWorkspaceID(value string) admission.WorkspaceID {
 func usage() {
 	fmt.Fprintln(os.Stderr, "Usage:")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin init-workspace")
-	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin backup-authority --workspace <id> --output <new-directory>")
-	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin verify-authority-backup --workspace <id> --backup <directory>")
-	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin restore-authority --workspace <id> --backup <directory>")
+	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin backup-workspace --workspace <id> --output <new-directory>")
+	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin verify-workspace-backup --workspace <id> --backup <directory>")
+	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin restore-workspace-backup --workspace <id> --backup <directory> --database <new-file> --authority-key-directory <directory>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin prepare-authority-rotation")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin rotate-authority --workspace <id> --new-key-file <path>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin issue-pairing-code --workspace <id> --type android|chrome [--name name] [--ttl 10m]")

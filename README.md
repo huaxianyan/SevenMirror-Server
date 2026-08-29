@@ -66,16 +66,16 @@ NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
 
 Workspace initialization stores only the authority public key in SQLite and writes the private key to an exclusive owner-only PKCS#8 file. The CLI prints its location and domain-separated public key ID, never private key material. Existing pre-schema-v3 workspaces are not silently assigned an authority.
 
-Create and verify an authority-key backup before approving real devices:
+Create and verify a workspace backup before approving real devices:
 
 ```sh
 NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
-  backup-authority --workspace <base64url-workspace-id> --output <new-directory>
-NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
-  verify-authority-backup --workspace <base64url-workspace-id> --backup <directory>
+  backup-workspace --workspace <base64url-workspace-id> --output <new-directory>
+go run ./cmd/admin verify-workspace-backup \
+  --workspace <base64url-workspace-id> --backup <directory>
 ```
 
-The protected backup directory contains the exact PKCS#8 file and a canonical manifest bound to the authority public key read from SQLite. SevenMirror does not encrypt this directory; store it in an encrypted backup system together with a consistent SQLite registry backup. After restoring the registry, `restore-authority` verifies every binding before exclusively creating the missing live key file. It never overwrites a file or changes SQLite.
+The command uses SQLite's online backup API rather than copying a live WAL database. The protected output binds one consistent registry snapshot to the exact authority PKCS#8 key selected from that snapshot. Verification checks the registry digest and integrity, exact schema, canonical manifests, workspace/public-key/key-ID binding, key derivation, file types, and permissions. SevenMirror deliberately does not encrypt this directory: move it into an access-controlled, encrypted off-host backup system. `restore-workspace-backup` restores only into a new registry path and never overwrites an existing registry or authority key. See the lifecycle document for the complete command and remaining operator obligations.
 
 Prepare a new protected key, then rotate with that exact path:
 

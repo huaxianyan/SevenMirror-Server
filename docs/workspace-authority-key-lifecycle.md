@@ -23,46 +23,43 @@ Existing workspaces created before schema version 3 retain a null authority publ
 
 ## Backup
 
-Before approving any real device, the operator must back up both:
+Before approving any real device, the operator must create one bound backup containing:
 
-1. the SQLite registry; and
-2. the exact authority PKCS#8 file named by the workspace authority key ID.
+1. a transactionally consistent SQLite registry snapshot; and
+2. the exact authority PKCS#8 file named by the authority key recorded in that snapshot.
 
-The private-key backup must be encrypted by the operator's backup system and stored separately from the live host. Copying only the database is insufficient.
-
-The admin CLI creates and verifies a protected authority-key backup directory:
+Copying a live SQLite main file is forbidden because committed state may still be in its WAL. `backup-workspace` instead uses SQLite's online backup API while the service database remains open:
 
 ```sh
 NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
-  backup-authority --workspace <id> --output <new-directory>
-NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
-  verify-authority-backup --workspace <id> --backup <directory>
+  backup-workspace --workspace <id> --output <new-directory>
+go run ./cmd/admin verify-workspace-backup \
+  --workspace <id> --backup <directory>
 ```
 
-`backup-authority` refuses an existing output path. It copies the exact PKCS#8 bytes and writes a canonical manifest binding the workspace ID, authority public key, domain-separated key ID, fixed private-key file name, and SHA-256 file digest. Creation immediately re-verifies the completed backup. On Unix, the directory and both files must remain owner-only `0700`／`0600`; symbolic links and non-regular files are rejected. The directory is intentionally not encrypted by SevenMirror: the operator must place it inside an encrypted backup system together with a consistent SQLite registry backup.
+The output path must not exist. It contains `registry.sqlite`, `manifest.txt`, and an `authority/` directory. The root canonical manifest binds the workspace ID, fixed registry filename, exact registry SHA-256, fixed authority directory, and authority key ID. The nested authority manifest binds the workspace ID, authority public key, domain-separated key ID, fixed private-key filename, and exact PKCS#8 digest.
 
-`verify-authority-backup` looks up the workspace authority public key from the selected live or restored SQLite registry. It then checks the canonical manifest, exact workspace／public-key／key-ID binding, digest, PKCS#8 encoding, Ed25519 key type, derived public key, file types, and permissions. It does not trust metadata from the backup to select the expected authority.
+Creation immediately re-verifies the completed backup. Verification checks the registry digest before opening it, runs SQLite integrity checking, requires the exact supported schema, reads the expected authority public key from the embedded registry rather than trusting backup metadata, and verifies the PKCS#8 encoding, Ed25519 type, derived public key, file types, exact directory entries, and permissions. On Unix, directories and files must remain owner-only `0700`／`0600`; symbolic links and non-regular files are rejected.
+
+The directory contains an unencrypted authority private key and registry data. SevenMirror deliberately does not implement encryption with a key available to the relay process. The operator must transfer the completed directory into an access-controlled, encrypted backup system stored separately from the live host, apply retention and deletion policy, and periodically verify retrieval. The built-in command proves local consistency; it does not prove off-host durability or external encryption.
 
 ## Restore
 
-A restore is valid only if all of the following match:
+A restore is valid only when the workspace ID, embedded registry, registry authority public key, PKCS#8-derived public key, and authority key ID all match. Restore must never generate a replacement authority for an existing workspace.
 
-- workspace ID;
-- authority public key stored in SQLite;
-- public key derived from the restored PKCS#8 private key;
-- authority key ID.
-
-Loading fails closed for malformed PKCS#8, a non-Ed25519 key, unsafe Unix permissions, or a public-key mismatch. Restore must never generate a replacement key for an existing workspace.
-
-Restore the SQLite registry first, select it through `NM_DATABASE_PATH`, then run:
+Restore into an offline, empty destination:
 
 ```sh
-NM_DATABASE_PATH=<restored-registry> NM_AUTHORITY_KEY_DIR=<live-key-directory> \
-  go run ./cmd/admin restore-authority \
-  --workspace <id> --backup <verified-backup-directory>
+go run ./cmd/admin restore-workspace-backup \
+  --workspace <id> \
+  --backup <verified-backup-directory> \
+  --database <new-restored-registry-file> \
+  --authority-key-directory <restored-key-directory>
 ```
 
-`restore-authority` re-verifies the complete backup against the authority public key in the selected registry before writing anything. It creates only the deterministic missing PKCS#8 file with exclusive owner-only permissions and verifies the restored file again. It never updates SQLite and never overwrites an existing file. Repeating an exact completed restore returns `result=already-present`; an existing corrupt or different file fails closed and remains unchanged.
+The command re-verifies the complete source before writing. It exclusive-creates the registry snapshot, verifies it again, and then restores the exact deterministic authority file with owner-only permissions. It refuses an existing registry file and never overwrites an existing authority file; an existing byte-identical authority is accepted, while a corrupt or different file fails closed. If authority restoration fails after creating the registry, the new registry file is removed.
+
+Run the service only after the command succeeds. Then verify roster and authority epochs against independently retained operational records and reconnect supported clients. Client rollback floors reject older signed state, but that protection can turn a stale restore into an availability failure; it is not permission to restore an arbitrary old backup. The CI canary destroys the original local state, performs an isolated registry-plus-authority restore through the real admin binary, and creates and verifies another bound backup from the restored state. Operator-specific encrypted off-host retrieval and stale-backup recovery drills remain release requirements.
 
 ## Rotation
 

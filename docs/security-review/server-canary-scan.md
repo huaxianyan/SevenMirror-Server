@@ -104,8 +104,10 @@ This slice does not yet close `SR-013`:
   forwarding; the separate pinned-Caddy gate in `scripts/caddy_proxy_canary.py`
   now covers the checked-in TLS, WebSocket, trusted-address and reduced-log
   baseline;
-- deployment backups, container/runtime logs, observability exporters and
-  operator support bundles remain external evidence;
+- `scripts/workspace_backup_restore_canary.py` separately proves a locally
+  consistent registry/authority backup and isolated restore; encrypted off-host
+  transport, retrieval, retention and deletion, plus container/runtime logs,
+  observability exporters and operator support bundles, remain external evidence;
 - WebSocket ciphertext persistence remains covered separately by the opaque
   relay restart test rather than duplicated here;
 - Android privileged/system artifacts and full business-content paths, plus

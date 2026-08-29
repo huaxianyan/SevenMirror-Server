@@ -174,6 +174,13 @@ func RestoreAuthorityBackup(
 	if err := os.MkdirAll(destinationDirectory, 0o700); err != nil {
 		return AuthorityRestore{}, fmt.Errorf("create authority destination directory: %w", err)
 	}
+	destinationInfo, err := os.Lstat(destinationDirectory)
+	if err != nil {
+		return AuthorityRestore{}, fmt.Errorf("stat authority destination directory: %w", err)
+	}
+	if destinationInfo.Mode()&os.ModeSymlink != 0 || !destinationInfo.IsDir() {
+		return AuthorityRestore{}, errors.New("authority destination must be a directory, not a symbolic link")
+	}
 	if err := os.Chmod(destinationDirectory, 0o700); err != nil {
 		return AuthorityRestore{}, fmt.Errorf("protect authority destination directory: %w", err)
 	}
@@ -410,6 +417,10 @@ func syncDirectory(path string) error {
 	}
 	defer directory.Close()
 	return directory.Sync()
+}
+
+func AuthorityPrivateKeyPath(directory string, keyID string) string {
+	return filepath.Join(directory, authorityPrivateKeyFileName(keyID))
 }
 
 func authorityPrivateKeyFileName(keyID string) string {

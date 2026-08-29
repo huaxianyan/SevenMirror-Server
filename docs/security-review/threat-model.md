@@ -338,12 +338,16 @@ project does not claim zero-window revocation.
 
 ### 8.7 Operator-managed secrets and backups
 
-The Server authority key is a restricted unencrypted PKCS#8 file. Its verified
-backup must be paired with a consistent SQLite registry backup and protected by
-an external encrypted backup system. Availability and confidentiality therefore
-depend on correct operator procedure. Android release-signing recovery similarly
-depends on a verified off-machine encrypted backup that is not yet recorded as
-complete.
+The Server authority key is a restricted unencrypted PKCS#8 file. The admin CLI
+uses SQLite's online backup API and canonical manifests to bind one consistent
+registry snapshot to the exact authority key selected from that snapshot; CI
+performs an isolated local restore through the real binary. The resulting backup
+still contains plaintext PKCS#8 and registry data and must be protected by an
+access-controlled external encrypted off-host system. Availability and
+confidentiality therefore still depend on operator transport, retention,
+retrieval, deletion and stale-backup procedures that the local canary cannot
+prove. Android release-signing recovery similarly depends on a verified
+off-machine encrypted backup that is not yet recorded as complete.
 
 ### 8.8 Pre-v1 compatibility
 

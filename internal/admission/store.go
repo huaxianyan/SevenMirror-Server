@@ -34,6 +34,7 @@ const (
 	maxMembershipRosterPage    = 256
 	maxMembershipRosterPageRaw = 1 << 20
 	maxAuthorityTransitions    = 256
+	currentSchemaVersion       = 8
 )
 
 var (
@@ -1366,10 +1367,10 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if version > 8 {
-		return fmt.Errorf("database schema version %d is newer than supported version 8", version)
+	if version > currentSchemaVersion {
+		return fmt.Errorf("database schema version %d is newer than supported version %d", version, currentSchemaVersion)
 	}
-	if version == 8 {
+	if version == currentSchemaVersion {
 		return nil
 	}
 	if version == 7 {

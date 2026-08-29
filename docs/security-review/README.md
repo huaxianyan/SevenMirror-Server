@@ -154,7 +154,7 @@ and evidence are in the checklist:
   release-baseline and independent-review confirmation;
 - Android HPKE requires a software-accessible private scalar after Keystore
   unwrap and needs focused memory/lifecycle review;
-- authority PKCS#8 encryption is delegated to the operator's backup system;
+- local registry/authority consistency and isolated restore now have a real-admin CI drill, while authority PKCS#8 encryption, access control, off-host retention and retrieval evidence remain delegated to the operator's backup system;
 - the documented Android signing-key backup still requires a verified copy on a
   separate encrypted physical medium;
 - the host-local Caddy trusted-proxy policy has internal evidence, while

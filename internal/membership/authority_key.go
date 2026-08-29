@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 )
 
 const authorityKeyIDDomain = "SyncNotifications-workspace-authority-key-id-v1\x00"
@@ -51,7 +50,7 @@ func GenerateAuthority(directory string) (GeneratedAuthority, error) {
 	var publicKey AuthorityPublicKey
 	copy(publicKey[:], public)
 	keyID := AuthorityKeyID(publicKey)
-	path := filepath.Join(directory, "workspace-authority-"+keyID+".pk8")
+	path := AuthorityPrivateKeyPath(directory, keyID)
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return GeneratedAuthority{}, fmt.Errorf("create workspace authority key file: %w", err)

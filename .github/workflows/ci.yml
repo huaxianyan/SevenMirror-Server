@@ -49,6 +49,8 @@ jobs:
           go build ./cmd/admin
       - name: Scan runtime artifacts for credentials and business plaintext
         run: python3 scripts/server_canary_scan.py --server ./server --admin ./admin
+      - name: Verify consistent workspace backup and isolated restore
+        run: python3 scripts/workspace_backup_restore_canary.py --admin ./admin
       - name: Verify production Caddy TLS and trusted-proxy baseline
         env:
           CADDY_VERSION: 2.11.4
