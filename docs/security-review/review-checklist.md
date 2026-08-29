@@ -52,7 +52,7 @@ Severity is provisional until an independent reviewer assesses realistic impact.
 | SR-001 | High | OPEN | Complete independent protocol and cryptographic review of Auth HPKE, canonical encodings, identity binding, replay, and domain separation before v1 freeze. |
 | SR-002 | Medium | EVIDENCE | All three CI workflows now run SHA-pinned Gitleaks Action v3.0.0 with scanner v8.30.1 over full Git history. The only path allowlist is the published deterministic `protocol/test-vectors/` tree; Server documentation false positives use exact fingerprints. Independent review and release-candidate execution remain required. |
 | SR-003 | Medium | PARTIAL | Server now runs `govulncheck v1.1.4`; its first CI run found 12 reachable Go 1.24.13 standard-library vulnerabilities, so the enforced source/CI/container floor is now Go 1.25.13. Chrome runs `npm audit` against `package-lock.json` and the initial High-severity `nanoid` finding is fixed at 3.3.18. Android now has strict Gradle locks, SHA-256 artifact verification, a reproducible release-runtime inventory, and a SHA-pinned OSV Scanner v2.5.1 blocking gate with zero current runtime findings. Its separate complete plugin/build-tool audit still reports upstream findings and intentionally remains non-blocking pending triage, remediation, or time-bounded accepted-risk decisions. Vulnerability database timestamp evidence and the cross-repository exception policy also remain open. |
-| SR-004 | Medium | OPEN | Add a public `SECURITY.md` vulnerability-reporting and supported-version policy to each independently published repository, or document one shared policy that all three link to. |
+| SR-004 | Medium | EVIDENCE | Server publishes the canonical `SECURITY.md`; Android and Chrome link to it from repository-local policies and expose component-specific private-report links. All three repositories have GitHub Private Vulnerability Reporting enabled. The policy states that no production version is currently supported, defines response targets, coordinated disclosure, research boundaries, report hygiene, and future security-update trust. Release-baseline verification remains required. |
 | SR-005 | High | OPEN | Remove the frozen `/v1/devices/register`/`legacy_active` trust path before release, or obtain explicit review and a migration/disable policy proving it cannot become a parallel trust source. |
 | SR-006 | Medium | PARTIAL | Review Android HPKE private-scalar unwrap, in-memory copies, zeroization limits, crash diagnostics, and the absence of hardware-backed P-256 HPKE operations. |
 | SR-007 | High | PARTIAL | Define and test encrypted, access-controlled, off-host authority-key plus consistent-registry backup/restore operations; the PKCS#8 file itself is currently unencrypted. |
@@ -434,9 +434,14 @@ vectors are not secrets.
 - [ ] **B-06 — Artifact signing/provenance.** Verify Android certificate identity,
   Chrome extension packaging/update identity, Server image/binary provenance,
   checksums/attestations, and rollback policy. (`PARTIAL`; SR-014)
-- [ ] **B-07 — Vulnerability intake.** Publish confidential reporting contact,
-  response expectations, supported versions, disclosure process, and key/security
-  update policy. (`OPEN`; SR-004)
+- [ ] **B-07 — Vulnerability intake.** All three public repositories enable
+  GitHub Private Vulnerability Reporting and publish repository-local
+  `SECURITY.md` entry points. Server owns the single canonical policy; it states
+  that `0.1.x-dev` has no production support, targets acknowledgement within 3
+  business days and initial triage within 7 calendar days, defines coordinated
+  disclosure and research boundaries, and rejects credentials or real
+  notification content in reports. Verify the links and policy against the
+  release baseline. (`EVIDENCE`; SR-004)
 - [ ] **B-08 — License and dependency policy.** Confirm cryptographic and fallback
   dependency versions/licenses are fixed as documented and upgrades require
   vectors plus security review. (`EVIDENCE`)

@@ -45,6 +45,9 @@ The current product gate remains:
 - [`android-third-party-actions.md`](android-third-party-actions.md) records the
   internal source, dependency, permission, and update-policy review for Android's
   non-official GitHub Actions.
+- [`../../SECURITY.md`](../../SECURITY.md) is the canonical public vulnerability
+  reporting, supported-version, disclosure, and security-update policy linked by
+  all three repositories.
 - [`../adr/ADR-001-protocol-encoding-and-versioning.md`](../adr/ADR-001-protocol-encoding-and-versioning.md)
   defines canonical encoding and pre-v1 version policy.
 - [`../adr/ADR-002-device-identity-and-e2ee.md`](../adr/ADR-002-device-identity-and-e2ee.md)
@@ -130,7 +133,6 @@ and evidence are in the checklist:
 - Android now has strict Gradle locks, artifact verification, and a blocking
   release-runtime OSV gate, but its complete plugin/build-tool audit still has
   upstream findings requiring explicit triage, remediation, or accepted risk;
-- no repository vulnerability-reporting policy (`SECURITY.md`);
 - the frozen legacy `/v1/devices/register` and `legacy_active` path still exists
   and needs a remove-or-release decision;
 - Android HPKE requires a software-accessible private scalar after Keystore
