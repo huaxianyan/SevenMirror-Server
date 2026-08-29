@@ -56,12 +56,12 @@ Severity is provisional until an independent reviewer assesses realistic impact.
 | SR-005 | High | OPEN | Remove the frozen `/v1/devices/register`/`legacy_active` trust path before release, or obtain explicit review and a migration/disable policy proving it cannot become a parallel trust source. |
 | SR-006 | Medium | PARTIAL | Review Android HPKE private-scalar unwrap, in-memory copies, zeroization limits, crash diagnostics, and the absence of hardware-backed P-256 HPKE operations. |
 | SR-007 | High | PARTIAL | Define and test encrypted, access-controlled, off-host authority-key plus consistent-registry backup/restore operations; the PKCS#8 file itself is currently unencrypted. |
-| SR-008 | Medium | PARTIAL | Chrome now inventories raw credentials, non-extractable identity keys, decrypted notification/action state, reply retention, `chrome.storage`, URL/UI surfaces, profile-compromise limits, and current deletion gaps in `docs/SENSITIVE_DATA.md`. Product retention/clearing controls plus real-browser profile, backup, crash, and OS-notification evidence remain open. |
+| SR-008 | Medium | PARTIAL | Chrome inventories raw credentials, non-extractable identity keys, decrypted notification/action state, reply retention, `chrome.storage`, URL/UI surfaces, profile-compromise limits, and deletion gaps. An isolated real-browser canary now covers extension IndexedDB LevelDB placement, Worker/browser restart, native notification API, captured diagnostics, `chrome.storage`, interaction URL and closed-profile export. Product retention/clearing controls, interaction DOM, backup/sync, crash/memory, IME and OS-notification-history evidence remain open. |
 | SR-009 | Medium | OPEN | Complete and verify an Android release-signing-key backup on a separate encrypted physical or otherwise independently durable medium. |
 | SR-010 | Medium | OPEN | Decide deployment-aware trusted-proxy handling and configurable connection/rate limits; test that proxy headers cannot bypass or collapse abuse controls. |
 | SR-011 | High | EXTERNAL | Review registration → possession proof → approval → promotion → `SNO1`, including interruption, replay, concurrent approval/revocation, and stale MV3 Worker deployment. |
 | SR-012 | High | EXTERNAL | Review relay retention, cumulative ACK, eviction, `SNR1`, fixed high-water snapshot recovery, and certified source-key replacement failure. |
-| SR-013 | Medium | PARTIAL | Server CI runs a real-binary canary gate through admin issuance, HTTP registration, fixed errors, no-redirect URL capture, SQLite/WAL/SHM, and stdout/stderr; its durable relay test separately keeps an encrypted business canary absent from persistence across restart. Android API 29 instrumentation scans real Keystore-backed HPKE and credential stores. Chrome now has a deterministic production-store canary proving exact credential-store confinement, reconstructed HPKE key non-extractability, expected notification plaintext classification, fixed errors/console silence, and tested clearing under `fake-indexeddb`. Real Chromium profile/console/notification/restart/export scans, Android privileged/system and business-content artifacts, deployment evidence, and release-baseline execution remain open. |
+| SR-013 | Medium | PARTIAL | Server CI runs a real-binary canary gate through admin issuance, HTTP registration, fixed errors, no-redirect URL capture, SQLite/WAL/SHM, and stdout/stderr; its durable relay test separately keeps an encrypted business canary absent from persistence across restart. Android API 29 instrumentation scans real Keystore-backed HPKE and credential stores. Chrome combines a deterministic production-store test with a real headless Cent Browser profile scan: current/pending raw tokens and expected title/body/reply plaintext were confined to extension IndexedDB, encoded tokens and diagnostic/URL/`chrome.storage` matches were zero, and identity/state survived browser restart. Chrome interaction DOM/crash/memory/sync/OS artifacts, Android privileged/system and business-content artifacts, deployment evidence, and release-baseline execution remain open. |
 | SR-014 | Medium | PARTIAL | Every external Action reference is pinned to an immutable 40-character commit and CI rejects tag/branch references. All retained Actions use Node.js 24. Internal source review removed the redundant unsigned `setup-android` after its production dependencies reported a High finding. The unsigned emulator Action reproduced its committed JavaScript, uses fixed workflow inputs with a read-only job, and retains a visible Moderate `uuid` finding whose affected buffered API is not reached; it has a 2026-09-29 recheck deadline. Independent review and release-channel provenance/signing verification remain open. |
 | SR-015 | High | OPEN | Keep third-party notification transport disabled until security findings and two-real-Android OEM/network validation are complete and a reviewed release explicitly changes the gate. |
 
@@ -314,7 +314,9 @@ Primary references:
   operation/reply payloads, decrypted notification state, `chrome.storage`, and
   URL/UI surfaces. It documents 30-day pending-action retention, indefinite
   notification revision state, current deletion gaps, and OS/profile-compromise
-  exposure. Real-profile inspection and product clearing controls remain open.
+  exposure. `scripts/chrome_profile_canary.py` now verifies the production MV3
+  origin across browser restart and closed-profile export. Product clearing,
+  interaction DOM, backup/sync, crash/memory and OS-history controls remain open.
   (`PARTIAL`; SR-008)
 - [ ] **K-06 — Identity loss.** Delete/corrupt identity stores or create transport
   binding mismatch. Confirm both clients fail closed and require revocation plus
@@ -370,14 +372,16 @@ vectors are not secrets.
   screenshots, OEM backup/migration, debug exports, and full business-content
   canaries remain open. (`PARTIAL`; SR-006, SR-013)
 - [ ] **P-07 — Chrome diagnostics.** `docs/SENSITIVE_DATA.md` classifies expected
-  endpoint-local state. `src/security/sensitive-data-canary.test.ts` uses
-  production stores to confine raw current/pending tokens to the credential
-  record, reject HPKE PKCS#8 export after reconstruction, retain notification
-  canaries only where expected, and scan induced errors/captured console calls.
-  It intentionally does not claim to scan Chromium's on-disk profile. A fresh
-  isolated MV3 profile must still cover real console/error buffers, IndexedDB/
-  LevelDB, `chrome.storage`, native notifications, Worker/browser restart,
-  interaction/reply lifecycle, crash artifacts, and profile export.
+  endpoint-local state. The deterministic store test covers field-level
+  placement and fixed errors. `scripts/chrome_profile_canary.py` additionally
+  launches production `dist/` in a fresh headless Cent Browser profile, captures
+  Worker diagnostics, exercises real WebCrypto/IndexedDB/`chrome.storage`/
+  notifications, restarts the browser, and scans the closed profile export. The
+  recorded run scanned 17,744,071 bytes: each raw current/pending token and each
+  expected title/body/reply appeared in one extension IndexedDB file; encoded
+  token, diagnostic, storage and URL matches were zero. Interaction DOM/reply
+  rendering is blocked in Cent headless mode and remains open with crash/memory,
+  OS notification history, sync/backup, IME and screen-capture artifacts.
   (`PARTIAL`; SR-008, SR-013)
 - [ ] **P-08 — Test evidence hygiene.** Scan `.tools` acceptance artifacts before
   sharing. Redact credentials, private keys, notification plaintext, and full

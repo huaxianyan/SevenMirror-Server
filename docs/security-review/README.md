@@ -50,7 +50,8 @@ The current product gate remains:
   and remaining client/deployment coverage.
 - The Chrome repository's `docs/SENSITIVE_DATA.md` defines its endpoint-local
   credential/plaintext inventory, profile-compromise boundary, deterministic
-  store canary, and remaining real-browser coverage.
+  store test, isolated real-browser profile canary, and remaining endpoint
+  coverage.
 - [`../../SECURITY.md`](../../SECURITY.md) is the canonical public vulnerability
   reporting, supported-version, disclosure, and security-update policy linked by
   all three repositories.
@@ -140,10 +141,10 @@ and evidence are in the checklist:
   release-runtime OSV gate, but its complete plugin/build-tool audit still has
   upstream findings requiring explicit triage, remediation, or accepted risk;
 - Server has a real-binary credential/plaintext canary gate, Android API 29
-  instrumentation scans Keystore-wrapped secret canaries, and Chrome now has an
-  endpoint-state inventory plus deterministic production-store canary. Chrome's
-  real Chromium profile/console/notification/restart/export scan, Android system
-  artifacts, and deployment-level evidence remain open;
+  instrumentation scans Keystore-wrapped secret canaries, and Chrome combines
+  deterministic store tests with an isolated real-browser profile/restart/export
+  scan. Chrome interaction DOM, crash/memory, sync/backup and OS artifacts,
+  Android system artifacts, and deployment-level evidence remain open;
 - the frozen legacy `/v1/devices/register` and `legacy_active` path still exists
   and needs a remove-or-release decision;
 - Android HPKE requires a software-accessible private scalar after Keystore
