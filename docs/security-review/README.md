@@ -48,6 +48,9 @@ The current product gate remains:
 - [`server-canary-scan.md`](server-canary-scan.md) defines the real-binary Server
   credential/plaintext scan, narrow allowed one-time outputs, scanned artifacts,
   and remaining client/deployment coverage.
+- The Chrome repository's `docs/SENSITIVE_DATA.md` defines its endpoint-local
+  credential/plaintext inventory, profile-compromise boundary, deterministic
+  store canary, and remaining real-browser coverage.
 - [`../../SECURITY.md`](../../SECURITY.md) is the canonical public vulnerability
   reporting, supported-version, disclosure, and security-update policy linked by
   all three repositories.
@@ -136,10 +139,11 @@ and evidence are in the checklist:
 - Android now has strict Gradle locks, artifact verification, and a blocking
   release-runtime OSV gate, but its complete plugin/build-tool audit still has
   upstream findings requiring explicit triage, remediation, or accepted risk;
-- Server has a real-binary credential/plaintext canary gate, and Android API 29
-  instrumentation now scans Keystore-wrapped secret canaries in private state,
-  errors, and own-process logcat; Chrome endpoint-local state classification and
-  runtime scans remain open;
+- Server has a real-binary credential/plaintext canary gate, Android API 29
+  instrumentation scans Keystore-wrapped secret canaries, and Chrome now has an
+  endpoint-state inventory plus deterministic production-store canary. Chrome's
+  real Chromium profile/console/notification/restart/export scan, Android system
+  artifacts, and deployment-level evidence remain open;
 - the frozen legacy `/v1/devices/register` and `legacy_active` path still exists
   and needs a remove-or-release decision;
 - Android HPKE requires a software-accessible private scalar after Keystore
