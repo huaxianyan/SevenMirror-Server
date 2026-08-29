@@ -62,7 +62,7 @@ Severity is provisional until an independent reviewer assesses realistic impact.
 | SR-011 | High | EXTERNAL | Review registration → possession proof → approval → promotion → `SNO1`, including interruption, replay, concurrent approval/revocation, and stale MV3 Worker deployment. |
 | SR-012 | High | EXTERNAL | Review relay retention, cumulative ACK, eviction, `SNR1`, fixed high-water snapshot recovery, and certified source-key replacement failure. |
 | SR-013 | Medium | OPEN | Implement reproducible static and runtime scans for credentials and unexpected business plaintext in Server logs/SQLite/WAL/URLs and client diagnostics/storage, with explicit expected-local-plaintext allowlists. |
-| SR-014 | Medium | PARTIAL | Every external Action reference is now pinned to an immutable 40-character commit and CI rejects tag/branch references. All selected Actions use Node.js 24. Official `actions/*` commits are GitHub-verified; the pinned Android setup/emulator commits require independent source review because their commits are not GitHub-verified. Release-channel provenance and signing verification remain open. |
+| SR-014 | Medium | PARTIAL | Every external Action reference is pinned to an immutable 40-character commit and CI rejects tag/branch references. All retained Actions use Node.js 24. Internal source review removed the redundant unsigned `setup-android` after its production dependencies reported a High finding. The unsigned emulator Action reproduced its committed JavaScript, uses fixed workflow inputs with a read-only job, and retains a visible Moderate `uuid` finding whose affected buffered API is not reached; it has a 2026-09-29 recheck deadline. Independent review and release-channel provenance/signing verification remain open. |
 | SR-015 | High | OPEN | Keep third-party notification transport disabled until security findings and two-real-Android OEM/network validation are complete and a reviewed release explicitly changes the gate. |
 
 Accepted-risk decisions must name the affected product claim. “Self-hosted” or
@@ -420,12 +420,14 @@ vectors are not secrets.
   required. (`EVIDENCE`; SR-002)
 - [ ] **B-04 — CI action trust.** Every external Action is pinned to an immutable
   40-character commit, and each primary CI job rejects future tag/branch refs.
-  Selected checkout/setup/upload Actions and both Android third-party Actions use
-  Node.js 24; `setup-java v4` is removed. GitHub verifies the selected official
-  `actions/*` commits. Independently review the unverified-signature
-  `android-actions/setup-android v4.0.1` and
-  `reactivecircus/android-emulator-runner v2.38.0` source commits and define an
-  update cadence. (`EVIDENCE`; SR-014)
+  Retained Actions use Node.js 24, and GitHub verifies the selected official
+  `actions/*` commits. Internal review of the two unsigned Android Actions is
+  recorded in `android-third-party-actions.md`: the redundant `setup-android`
+  was removed after its locked `undici` reported a High finding; the emulator
+  Action's committed JavaScript reproduced exactly and its Moderate `uuid`
+  finding is not reachable through the reviewed no-buffer call paths. The
+  emulator job now has only `contents: read`, and monthly/pre-release review is
+  required. Independent review remains required. (`EVIDENCE`; SR-014)
 - [ ] **B-05 — Generated/vendored protocol.** Verify generation is reproducible,
   diffs are reviewed, upstream hashes fail closed, and temporary generator tools
   cannot enter releases accidentally. (`PARTIAL`)

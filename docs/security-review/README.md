@@ -2,7 +2,7 @@
 
 Status: **review baseline prepared; independent security review has not started and has not passed**
 
-Last updated: 2026-08-28
+Last updated: 2026-08-29
 
 ## Purpose
 
@@ -42,6 +42,9 @@ The current product gate remains:
   data flows, security properties, accepted risks, and out-of-scope claims.
 - [`review-checklist.md`](review-checklist.md) maps review questions to concrete
   specifications, source boundaries, automated evidence, and unresolved work.
+- [`android-third-party-actions.md`](android-third-party-actions.md) records the
+  internal source, dependency, permission, and update-policy review for Android's
+  non-official GitHub Actions.
 - [`../adr/ADR-001-protocol-encoding-and-versioning.md`](../adr/ADR-001-protocol-encoding-and-versioning.md)
   defines canonical encoding and pre-v1 version policy.
 - [`../adr/ADR-002-device-identity-and-e2ee.md`](../adr/ADR-002-device-identity-and-e2ee.md)
