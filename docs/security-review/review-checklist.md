@@ -61,7 +61,7 @@ Severity is provisional until an independent reviewer assesses realistic impact.
 | SR-010 | Medium | OPEN | Decide deployment-aware trusted-proxy handling and configurable connection/rate limits; test that proxy headers cannot bypass or collapse abuse controls. |
 | SR-011 | High | EXTERNAL | Review registration → possession proof → approval → promotion → `SNO1`, including interruption, replay, concurrent approval/revocation, and stale MV3 Worker deployment. |
 | SR-012 | High | EXTERNAL | Review relay retention, cumulative ACK, eviction, `SNR1`, fixed high-water snapshot recovery, and certified source-key replacement failure. |
-| SR-013 | Medium | PARTIAL | Server CI runs a real-binary canary gate through admin issuance, HTTP registration, fixed errors, no-redirect URL capture, SQLite/WAL/SHM, and stdout/stderr; its durable relay test separately keeps an encrypted business canary absent from persistence across restart. Android API 29 instrumentation scans real Keystore-backed HPKE and credential stores. Chrome combines a deterministic production-store test with a real headless Cent Browser profile scan: current/pending raw tokens and expected title/body/reply plaintext were confined to extension IndexedDB, encoded tokens and diagnostic/URL/`chrome.storage` matches were zero, and identity/state survived browser restart. Chrome interaction DOM/crash/memory/sync/OS artifacts, Android privileged/system and business-content artifacts, deployment evidence, and release-baseline execution remain open. |
+| SR-013 | Medium | PARTIAL | Server CI now exercises real pairing and rotation code issuance, registration, current→pending rotation, fixed replay/malformed errors, old/pending WebSocket `SNA1` results, direct WebSocket targets and a method/path/status proxy access-log fixture; code/token text and decoded bytes remain absent from URLs, logs, HTTP errors and live/stopped SQLite/WAL/SHM. Its durable relay test separately keeps encrypted business canary plaintext absent across restart. Android API 29 instrumentation scans real Keystore-backed stores. Chrome combines deterministic store tests with a headless real-profile scan. Production reverse-proxy/deployment backup/support evidence, Chrome interaction DOM/crash/memory/sync/OS artifacts, Android privileged/system/business artifacts and release-baseline execution remain open. |
 | SR-014 | Medium | PARTIAL | Every external Action reference is pinned to an immutable 40-character commit and CI rejects tag/branch references. All retained Actions use Node.js 24. Internal source review removed the redundant unsigned `setup-android` after its production dependencies reported a High finding. The unsigned emulator Action reproduced its committed JavaScript, uses fixed workflow inputs with a read-only job, and retains a visible Moderate `uuid` finding whose affected buffered API is not reached; it has a 2026-09-29 recheck deadline. Independent review and release-channel provenance/signing verification remain open. |
 | SR-015 | High | OPEN | Keep third-party notification transport disabled until security findings and two-real-Android OEM/network validation are complete and a reviewed release explicitly changes the gate. |
 
@@ -187,11 +187,12 @@ Primary references:
   response, unknown/duplicate/trailing-field rejection, canonical unpadded
   Base64URL, canonical decimal epoch, and redirect rejection in both clients.
   (`EVIDENCE`)
-- [ ] **R-03 — Credential placement.** The real-binary Server canary gate keeps a
-  pairing code in the bounded registration body and the returned transport
-  credential in memory, rejects redirects, and proves neither text nor decoded
-  bytes enter effective URLs or routine Server stdout/stderr. Rotation-code and
-  reverse-proxy evidence remain open. (`PARTIAL`; SR-013)
+- [ ] **R-03 — Credential placement.** The real-binary Server canary gate keeps
+  pairing/rotation codes and current/pending credentials in bounded HTTP bodies
+  or binary WebSocket auth frames, rejects redirects and query-bearing targets,
+  and proves neither text nor decoded bytes enter effective targets, fixed
+  errors, routine Server output or the test proxy access log. A specific
+  production reverse-proxy configuration remains open. (`PARTIAL`; SR-013)
 - [ ] **R-04 — Possession proof.** Verify the challenge proves possession of the
   exact submitted HPKE key and is bound to workspace/device/registration state,
   expiry, and single use. Review replay and chosen-key behavior. (`EXTERNAL`;
@@ -344,24 +345,26 @@ vectors are not secrets.
   Server documentation false positives; narrow path/fingerprint exclusions make
   the rescans clean. Independently review every exclusion and rerun on the exact
   release commits. (`EVIDENCE`; SR-002)
-- [ ] **P-02 — Server logs.** CI exercises real binary startup/shutdown, successful
-  registration, consumed-code denial, and malformed business-canary input. The
-  captured structured stdout/stderr and fixed HTTP errors contain no raw or
-  encoded canary. Remaining validation/failure classes require release-baseline
-  coverage. (`PARTIAL`; SR-013)
-- [ ] **P-03 — Admin stdout.** The canary gate verifies an explicit admin command
-  emits its pairing code exactly once, then excludes that in-memory one-time
-  delivery channel while scanning routine Server output. Rotation-code and
-  operator terminal/support-bundle handling remain open. (`PARTIAL`; SR-013)
+- [ ] **P-02 — Server logs.** CI exercises real binary startup/shutdown,
+  registration, successful and replayed rotation, malformed business-canary
+  inputs, and old/pending WebSocket authentication. Captured stdout/stderr and
+  fixed HTTP errors contain no raw or encoded canary. Release-baseline and
+  deployment log coverage remain open. (`PARTIAL`; SR-013)
+- [ ] **P-03 — Admin stdout.** The canary gate verifies explicit admin commands
+  emit pairing and exact-device rotation codes exactly once, then excludes only
+  those in-memory one-time delivery channels while scanning routine artifacts.
+  Operator terminal/support-bundle handling remains open. (`PARTIAL`; SR-013)
 - [ ] **P-04 — Server SQLite/WAL.** CI searches the live and stopped SQLite, WAL,
   SHM, authority directory, logs, HTTP errors, and temporary run files for
   pairing-code and transport-token text/decoded bytes plus unique business
   plaintext. The durable relay restart test independently scans an encrypted
   business canary. Database backups and deployment artifacts remain open.
   (`PARTIAL`; SR-013)
-- [ ] **P-05 — URLs and redirects.** The Server canary client refuses redirects,
-  records exact effective registration targets, and scans them for credentials
-  and business plaintext. WebSocket target capture, reverse-proxy logs, and
+- [ ] **P-05 — URLs and redirects.** The Server canary refuses redirects, records
+  exact registration/rotation and direct/proxy WebSocket targets, rejects query
+  strings, and scans them for credentials and business plaintext. Its test-only
+  proxy records only method/path/status and intentionally does not forward the
+  WebSocket upgrade. Production proxy/TLS/access-log configuration and
   client-side referrer evidence remain open. (`PARTIAL`; SR-013)
 - [ ] **P-06 — Android diagnostics.** `docs/SENSITIVE_DATA.md` classifies
   forbidden secrets, expected app-private protocol/result state, and OS-visible

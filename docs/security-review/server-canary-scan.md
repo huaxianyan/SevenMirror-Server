@@ -4,11 +4,11 @@ Status: **automated internal evidence; not an independent security approval**
 
 ## Security boundary
 
-The Server may receive a pairing code in a bounded registration body, a
-transport credential in the first binary WebSocket frame, and opaque encrypted
-business envelopes. It must not place raw credentials or decrypted business
-content in routine logs, URLs, HTTP errors, SQLite, WAL, SHM, backups, or support
-artifacts.
+The Server may receive pairing and rotation codes in bounded HTTP bodies,
+current/pending credentials in a rotation body, one transport credential in the
+first binary WebSocket frame, and opaque encrypted business envelopes. It must
+not place raw credentials or decrypted business content in routine logs, URLs,
+HTTP errors, SQLite, WAL, SHM, backups, or support artifacts.
 
 An explicit admin command is allowed to print a newly generated one-time pairing
 or rotation code once to the operator's stdout. A successful registration
@@ -32,20 +32,41 @@ The script:
    keeps the allowed output in memory rather than adding it to scanned
    artifacts;
 4. starts the real Server binary on loopback with stdout and stderr captured;
-5. registers through the real HTTP endpoint with the code in the JSON body and
-   retains the one-time credential response only in memory;
-6. retries the consumed code and submits an invalid request containing a unique
-   synthetic business-text canary to exercise fixed HTTP error handling;
-7. refuses redirects and records each effective request target;
-8. scans live and stopped artifacts for the pairing code text and decoded bytes,
-   transport credential text and decoded bytes, and business canary;
-9. deletes the isolated directory after success or failure.
+5. starts a test-only loopback reverse proxy whose access log records only
+   method, request path and response status;
+6. registers through the proxy-backed real HTTP endpoint, retaining the
+   one-time current credential response only in memory;
+7. retries the consumed pairing code and submits an invalid registration body
+   containing a unique synthetic business-text canary;
+8. obtains the redacted `device_ref`, issues an exact-device rotation code with
+   the real admin binary, and verifies that code appears once only in the
+   allowed admin stdout;
+9. generates a pending credential, rotates successfully through the proxy, then
+   exercises consumed-code replay and malformed rotation errors;
+10. probes the proxy's `/v1/relay` access-log target without forwarding the
+    upgrade, and records the direct real WebSocket target separately;
+11. connects to the real relay with exact binary `SNA1`: the old current token
+    must receive generic policy close `1008`, while the pending token must
+    receive exact binary `SNO1`;
+12. refuses HTTP redirects, rejects query-bearing proxy targets, and records
+    each effective HTTP/WebSocket target;
+13. scans live and stopped artifacts for pairing/rotation code text and decoded
+    bytes, current/pending credential text and decoded bytes, and the business
+    canary;
+14. deletes the isolated directory after success or failure.
 
-Scanned artifacts include Server stdout/stderr, HTTP error bodies, effective
-URLs, the SQLite database, WAL, SHM, authority directory, and any temporary file
-created under the isolated run directory. The expected result is zero matches.
-The script reports only the canary class and artifact filename on failure; it
-does not print the matched credential.
+Scanned artifacts include Server stdout/stderr, registration and rotation error
+bodies, effective HTTP/WebSocket targets, the test proxy access log, SQLite,
+WAL, SHM, authority directory, and every temporary file under the isolated run
+directory. The expected result is zero matches. The script reports only the
+canary class and artifact filename on failure; it does not print the matched
+credential.
+
+The access-log proxy is deliberately not a production reverse proxy and does
+not forward WebSocket upgrades. It proves that the repository's recommended
+method/path/status logging shape remains secret-free for registration, rotation
+and relay targets. The exact relay authentication result is established through
+a separate direct connection to the unmodified real Server binary.
 
 ## Opaque relay storage evidence
 
@@ -65,14 +86,16 @@ not appear as plaintext in relay persistence.
 
 This slice does not yet close `SR-013`:
 
-- Android logcat, crash output, SharedPreferences, databases, backup behavior,
-  and debug exports still need a canary inventory and runtime scan;
-- Chrome console, errors, IndexedDB, storage, notifications, and profile exports
-  still need classification of expected endpoint-local plaintext;
-- rotation-code stdout and the credential-rotation HTTP path still require the
-  same real-entry scan;
-- external reverse-proxy access logs and operator backup/support pipelines are
-  deployment evidence, not covered by the in-process repository CI;
+- the fixture does not validate a specific production Nginx/Caddy/Traefik
+  configuration, TLS termination, forwarded-client-IP trust or full WebSocket
+  upgrade forwarding;
+- deployment backups, container/runtime logs, observability exporters and
+  operator support bundles remain external evidence;
+- WebSocket ciphertext persistence remains covered separately by the opaque
+  relay restart test rather than duplicated here;
+- Android privileged/system artifacts and full business-content paths, plus
+  Chrome interaction DOM, crash/memory, sync/backup and OS artifacts, remain
+  open in their endpoint reviews;
 - release-candidate execution and independent review remain required.
 
 Public protocol vectors and fixed test keys are not production secrets and are
