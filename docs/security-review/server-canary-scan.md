@@ -34,26 +34,30 @@ The script:
 4. starts the real Server binary on loopback with stdout and stderr captured;
 5. starts a test-only loopback reverse proxy whose access log records only
    method, request path and response status;
-6. registers through the proxy-backed real HTTP endpoint, retaining the
-   one-time current credential response only in memory;
-7. retries the consumed pairing code and submits an invalid registration body
-   containing a unique synthetic business-text canary;
-8. obtains the redacted `device_ref`, issues an exact-device rotation code with
+6. verifies the removed `/v1/devices/register` route returns `404`, then
+   registers through the real `/v1/membership/register` endpoint and retains
+   the one-time pending credential response only in memory;
+7. retries the consumed pairing code and submits an invalid membership
+   registration body containing a unique synthetic business-text canary;
+8. applies a test-only direct SQLite transition of that isolated row from
+   `pending_proof` to `approved`, solely to reach credential-rotation and relay
+   sensitive-state paths without adding a production test endpoint;
+9. obtains the redacted `device_ref`, issues an exact-device rotation code with
    the real admin binary, and verifies that code appears once only in the
    allowed admin stdout;
-9. generates a pending credential, rotates successfully through the proxy, then
-   exercises consumed-code replay and malformed rotation errors;
-10. probes the proxy's `/v1/relay` access-log target without forwarding the
+10. generates a pending credential, rotates successfully through the proxy,
+    then exercises consumed-code replay and malformed rotation errors;
+11. probes the proxy's `/v1/relay` access-log target without forwarding the
     upgrade, and records the direct real WebSocket target separately;
-11. connects to the real relay with exact binary `SNA1`: the old current token
+12. connects to the real relay with exact binary `SNA1`: the old current token
     must receive generic policy close `1008`, while the pending token must
     receive exact binary `SNO1`;
-12. refuses HTTP redirects, rejects query-bearing proxy targets, and records
+13. refuses HTTP redirects, rejects query-bearing proxy targets, and records
     each effective HTTP/WebSocket target;
-13. scans live and stopped artifacts for pairing/rotation code text and decoded
+14. scans live and stopped artifacts for pairing/rotation code text and decoded
     bytes, current/pending credential text and decoded bytes, and the business
     canary;
-14. deletes the isolated directory after success or failure.
+15. deletes the isolated directory after success or failure.
 
 Scanned artifacts include Server stdout/stderr, registration and rotation error
 bodies, effective HTTP/WebSocket targets, the test proxy access log, SQLite,
@@ -64,9 +68,19 @@ credential.
 
 The access-log proxy is deliberately not a production reverse proxy and does
 not forward WebSocket upgrades. It proves that the repository's recommended
-method/path/status logging shape remains secret-free for registration, rotation
-and relay targets. The exact relay authentication result is established through
-a separate direct connection to the unmodified real Server binary.
+method/path/status logging shape remains secret-free for legacy-route rejection,
+membership registration, rotation and relay targets. The exact relay
+authentication result is established through a separate direct connection to
+the unmodified real Server binary.
+
+The direct `pending_proof` → `approved` update is a canary fixture, not evidence
+that possession proof or authority approval can be bypassed through a product
+interface. The production HTTP API exposes no such transition. Membership
+integration tests, canonical vectors and client tests remain the evidence for
+challenge decryption, proof binding, administrator approval, certificate and
+roster generation. This scanner uses the fixture only after a real pending
+registration so it can inspect downstream credential placement with no test
+command compiled into either production binary.
 
 ## Opaque relay storage evidence
 

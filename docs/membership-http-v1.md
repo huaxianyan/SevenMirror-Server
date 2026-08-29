@@ -1,6 +1,6 @@
 # Membership HTTP v1
 
-Status: provisional ADR-005 membership API. Android and Chrome persist authority and roster rollback floors; the frozen legacy `/v1/devices/register` path remains isolated from this trust source.
+Status: provisional ADR-005 membership API. Android and Chrome persist authority and roster rollback floors. This is the only device-registration API mounted by the Server.
 
 All requests use `POST`, `Content-Type: application/json`, no redirects, no credentials in URLs, an 8192-byte body limit, unknown-field rejection, and canonical unpadded base64url binary values. Non-loopback use requires HTTPS.
 
@@ -42,6 +42,8 @@ For `after_roster_epoch = 0`, an approved device starts at its certificate's mem
 
 The endpoint authenticates pending or approved membership credentials but does not make pending credentials valid for WebSocket relay authentication. A certified revoked device retains read-only access only through the exact signed roster epoch that revoked its certificate. The response is reported as `approved` so existing clients can verify and durably apply that terminal roster, but `latest_roster_epoch` and roster pages are clamped to the recorded revocation epoch. The credential cannot authenticate relay traffic and cannot observe later workspace membership changes.
 
-## Legacy isolation
+## Removed legacy registration
 
-`/v1/devices/register` remains unchanged and creates explicit `legacy_active` records. It never returns an authority key, certificate, or roster. New clients must not combine a legacy approved-peer pin with Membership HTTP v1 as parallel trust sources.
+The former `/v1/devices/register` endpoint is not mounted and returns `404`. Schema migration v8 converts every historical uncertified `legacy_active` record to fail-closed `revoked`, removes any outstanding credential-rotation code for those records, and installs database triggers that reject attempts to recreate the legacy state. Runtime authentication, session authorization, rotation-code issuance and credential rotation accept only authority-certified `approved` devices.
+
+A historical device must be enrolled again with a new pairing code and current identity. No legacy approved-peer pin is accepted as a parallel trust source.

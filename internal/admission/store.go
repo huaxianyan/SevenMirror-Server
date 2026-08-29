@@ -439,10 +439,6 @@ func (s *Store) IssuePairingCode(
 	return base64.RawURLEncoding.EncodeToString(secret), nil
 }
 
-func (s *Store) Register(ctx context.Context, input Registration) (RegisteredDevice, error) {
-	return s.register(ctx, input, nil)
-}
-
 func (s *Store) RegisterPending(
 	ctx context.Context,
 	input Registration,
@@ -451,14 +447,6 @@ func (s *Store) RegisterPending(
 	if createChallenge == nil {
 		return RegisteredDevice{}, fmt.Errorf("%w: membership challenge factory is required", ErrInvalidRegistration)
 	}
-	return s.register(ctx, input, createChallenge)
-}
-
-func (s *Store) register(
-	ctx context.Context,
-	input Registration,
-	createChallenge PendingChallengeFactory,
-) (RegisteredDevice, error) {
 	if err := validateDeviceType(input.DeviceType); err != nil {
 		return RegisteredDevice{}, ErrInvalidPairingCode
 	}
@@ -522,25 +510,19 @@ func (s *Store) register(
 
 	var workspaceID WorkspaceID
 	copy(workspaceID[:], workspaceBytes)
-	membershipState := "legacy_active"
-	var challengeDigest, secretHash []byte
-	var challengeExpiryValue any
-	if createChallenge != nil {
-		challenge, challengeErr := createChallenge(workspaceID, deviceID)
-		if challengeErr != nil {
-			return RegisteredDevice{}, fmt.Errorf("create membership challenge: %w", challengeErr)
-		}
-		if len(challenge.Digest) != sha256.Size || allBytesZero(challenge.Digest) ||
-			len(challenge.Secret) != sha256.Size || allBytesZero(challenge.Secret) ||
-			!challenge.ExpiresAt.After(input.Now) || challenge.ExpiresAt.Sub(input.Now) > 10*time.Minute {
-			return RegisteredDevice{}, fmt.Errorf("%w: invalid membership challenge", ErrInvalidRegistration)
-		}
-		membershipState = "pending_proof"
-		challengeDigest = append([]byte(nil), challenge.Digest...)
-		hash := sha256.Sum256(challenge.Secret)
-		secretHash = hash[:]
-		challengeExpiryValue = unixMillis(challenge.ExpiresAt)
+	challenge, challengeErr := createChallenge(workspaceID, deviceID)
+	if challengeErr != nil {
+		return RegisteredDevice{}, fmt.Errorf("create membership challenge: %w", challengeErr)
 	}
+	if len(challenge.Digest) != sha256.Size || allBytesZero(challenge.Digest) ||
+		len(challenge.Secret) != sha256.Size || allBytesZero(challenge.Secret) ||
+		!challenge.ExpiresAt.After(input.Now) || challenge.ExpiresAt.Sub(input.Now) > 10*time.Minute {
+		return RegisteredDevice{}, fmt.Errorf("%w: invalid membership challenge", ErrInvalidRegistration)
+	}
+	challengeDigest := append([]byte(nil), challenge.Digest...)
+	hash := sha256.Sum256(challenge.Secret)
+	secretHash := hash[:]
+	challengeExpiryValue := unixMillis(challenge.ExpiresAt)
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO devices
 		(workspace_id, id, device_type, device_name, auth_token_hash, e2ee_public_key,
@@ -548,7 +530,7 @@ func (s *Store) register(
 		 proof_secret_hash, proof_expires_at_ms)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		workspaceID[:], deviceID[:], string(input.DeviceType), input.DeviceName,
-		authHash[:], input.E2EEPublicKey, nowMillis, nowMillis, membershipState,
+		authHash[:], input.E2EEPublicKey, nowMillis, nowMillis, "pending_proof",
 		challengeDigest, secretHash, challengeExpiryValue)
 	if err != nil {
 		return RegisteredDevice{}, fmt.Errorf("register device: %w", err)
@@ -1141,7 +1123,7 @@ func (s *Store) IssueCredentialRotationCode(
 		(code_hash, workspace_id, device_id, created_at_ms, expires_at_ms)
 		SELECT ?, workspace_id, id, ?, ? FROM devices
 		WHERE workspace_id = ? AND id = ? AND revoked_at_ms IS NULL
-			AND membership_state IN ('legacy_active', 'approved')`,
+			AND membership_state = 'approved'`,
 		hash[:], unixMillis(now), unixMillis(now.Add(ttl)), workspaceID[:], deviceID[:])
 	if err != nil {
 		clear(secret)
@@ -1217,7 +1199,8 @@ func (s *Store) RotateCredential(ctx context.Context, input CredentialRotation) 
 	result, err = tx.ExecContext(ctx, `
 		UPDATE devices SET auth_token_hash = ?, credential_version = credential_version + 1
 		WHERE workspace_id = ? AND id = ? AND auth_token_hash = ?
-			AND credential_version = ? AND revoked_at_ms IS NULL`,
+			AND credential_version = ? AND revoked_at_ms IS NULL
+			AND membership_state = 'approved'`,
 		pendingHash[:], input.WorkspaceID[:], input.DeviceID[:], currentHash[:], credentialVersion)
 	if err != nil {
 		return 0, fmt.Errorf("rotate credential: %w", err)
@@ -1283,7 +1266,7 @@ func (s *Store) IsDeviceAuthorized(
 ) (bool, error) {
 	var authorized bool
 	err := s.db.QueryRowContext(ctx, `
-		SELECT revoked_at_ms IS NULL AND membership_state IN ('legacy_active', 'approved')
+		SELECT revoked_at_ms IS NULL AND membership_state = 'approved'
 		FROM devices WHERE workspace_id = ? AND id = ?`,
 		workspaceID[:], deviceID[:]).Scan(&authorized)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1307,7 +1290,7 @@ func (s *Store) IsSessionAuthorized(
 	var authorized bool
 	err := s.db.QueryRowContext(ctx, `
 		SELECT revoked_at_ms IS NULL AND credential_version = ?
-			AND membership_state IN ('legacy_active', 'approved')
+			AND membership_state = 'approved'
 		FROM devices WHERE workspace_id = ? AND id = ?`,
 		credentialVersion, workspaceID[:], deviceID[:]).Scan(&authorized)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -1335,7 +1318,7 @@ func (s *Store) Authenticate(
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE devices SET last_online_at_ms = ?
 		WHERE workspace_id = ? AND id = ? AND auth_token_hash = ? AND revoked_at_ms IS NULL
-			AND membership_state IN ('legacy_active', 'approved')`,
+			AND membership_state = 'approved'`,
 		unixMillis(now), workspaceID[:], deviceID[:], hash[:])
 	if err != nil {
 		return DeviceIdentity{}, fmt.Errorf("authenticate device: %w", err)
@@ -1347,7 +1330,7 @@ func (s *Store) Authenticate(
 	err = s.db.QueryRowContext(ctx, `
 		SELECT device_type, device_name, credential_version FROM devices
 		WHERE workspace_id = ? AND id = ? AND auth_token_hash = ? AND revoked_at_ms IS NULL
-			AND membership_state IN ('legacy_active', 'approved')`,
+			AND membership_state = 'approved'`,
 		workspaceID[:], deviceID[:], hash[:]).Scan(&deviceType, &deviceName, &credentialVersion)
 	if err != nil {
 		return DeviceIdentity{}, ErrUnauthorized
@@ -1383,11 +1366,14 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if version > 7 {
-		return fmt.Errorf("database schema version %d is newer than supported version 7", version)
+	if version > 8 {
+		return fmt.Errorf("database schema version %d is newer than supported version 8", version)
+	}
+	if version == 8 {
+		return nil
 	}
 	if version == 7 {
-		return nil
+		return s.applySchemaVersion8(ctx)
 	}
 	if version == 6 {
 		return s.applySchemaVersion7(ctx)
@@ -1785,6 +1771,47 @@ func (s *Store) applySchemaVersion7(ctx context.Context) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit schema version 7: %w", err)
+	}
+	return s.applySchemaVersion8(ctx)
+}
+
+func (s *Store) applySchemaVersion8(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin schema version 8: %w", err)
+	}
+	defer tx.Rollback()
+	nowMillis := time.Now().UnixMilli()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM credential_rotation_codes
+		WHERE (workspace_id, device_id) IN (
+			SELECT workspace_id, id FROM devices WHERE membership_state = 'legacy_active'
+		)`); err != nil {
+		return fmt.Errorf("remove legacy credential rotation codes in schema version 8: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE devices
+		SET membership_state = 'revoked', revoked_at_ms = COALESCE(revoked_at_ms, ?)
+		WHERE membership_state = 'legacy_active'`, nowMillis); err != nil {
+		return fmt.Errorf("revoke legacy devices in schema version 8: %w", err)
+	}
+	statements := []string{
+		`CREATE TRIGGER reject_legacy_device_insert
+		BEFORE INSERT ON devices WHEN NEW.membership_state = 'legacy_active'
+		BEGIN SELECT RAISE(ABORT, 'legacy membership state is disabled'); END`,
+		`CREATE TRIGGER reject_legacy_device_update
+		BEFORE UPDATE OF membership_state ON devices WHEN NEW.membership_state = 'legacy_active'
+		BEGIN SELECT RAISE(ABORT, 'legacy membership state is disabled'); END`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("apply schema version 8: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (8, ?)`, nowMillis); err != nil {
+		return fmt.Errorf("record schema version 8: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema version 8: %w", err)
 	}
 	return nil
 }

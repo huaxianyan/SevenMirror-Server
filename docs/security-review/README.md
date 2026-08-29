@@ -146,8 +146,9 @@ and evidence are in the checklist:
   deterministic stores with an isolated real-profile scan. Production proxy,
   backup/support pipelines, Chrome interaction/crash/sync/OS artifacts and
   Android system artifacts remain open;
-- the frozen legacy `/v1/devices/register` and `legacy_active` path still exists
-  and needs a remove-or-release decision;
+- removal of `/v1/devices/register` and schema-v8 fail-closed migration of
+  historical `legacy_active` rows now have internal evidence, but still require
+  release-baseline and independent-review confirmation;
 - Android HPKE requires a software-accessible private scalar after Keystore
   unwrap and needs focused memory/lifecycle review;
 - authority PKCS#8 encryption is delegated to the operator's backup system;

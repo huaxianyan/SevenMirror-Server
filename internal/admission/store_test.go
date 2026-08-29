@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -47,7 +48,7 @@ func TestPairingCodeRegistersExactlyOnePersistentDevice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registered, err := store.Register(ctx, Registration{
+	registered, err := registerApprovedTestDevice(ctx, store, Registration{
 		PairingCode: code, DeviceType: DeviceAndroid, DeviceName: "Pixel",
 		E2EEPublicKey: testPublicKey(), Now: now.Add(time.Second),
 	})
@@ -67,7 +68,7 @@ func TestPairingCodeRegistersExactlyOnePersistentDevice(t *testing.T) {
 			t.Fatalf("raw credential persisted in %s", databaseFile)
 		}
 	}
-	if _, err := store.Register(ctx, Registration{
+	if _, err := registerApprovedTestDevice(ctx, store, Registration{
 		PairingCode: code, DeviceType: DeviceAndroid, DeviceName: "Pixel",
 		E2EEPublicKey: testPublicKey(), Now: now.Add(2 * time.Second),
 	}); !errors.Is(err, ErrInvalidPairingCode) {
@@ -101,14 +102,14 @@ func TestPairingCodeConstraintsDoNotLeakOrConsumeOnWrongType(t *testing.T) {
 	workspace, _ := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
 	code, _ := store.IssuePairingCode(ctx, workspace, DeviceChrome, "Browser", now, time.Minute)
 
-	_, err := store.Register(ctx, Registration{
+	_, err := registerApprovedTestDevice(ctx, store, Registration{
 		PairingCode: code, DeviceType: DeviceAndroid, DeviceName: "Browser",
 		E2EEPublicKey: testPublicKey(), Now: now,
 	})
 	if !errors.Is(err, ErrInvalidPairingCode) {
 		t.Fatalf("wrong type error = %v", err)
 	}
-	if _, err := store.Register(ctx, Registration{
+	if _, err := registerApprovedTestDevice(ctx, store, Registration{
 		PairingCode: code, DeviceType: DeviceChrome, DeviceName: "Browser",
 		E2EEPublicKey: testPublicKey(), Now: now,
 	}); err != nil {
@@ -116,7 +117,7 @@ func TestPairingCodeConstraintsDoNotLeakOrConsumeOnWrongType(t *testing.T) {
 	}
 
 	expired, _ := store.IssuePairingCode(ctx, workspace, DeviceChrome, "", now, time.Second)
-	if _, err := store.Register(ctx, Registration{
+	if _, err := registerApprovedTestDevice(ctx, store, Registration{
 		PairingCode: expired, DeviceType: DeviceChrome, DeviceName: "Late",
 		E2EEPublicKey: testPublicKey(), Now: now.Add(time.Second),
 	}); !errors.Is(err, ErrInvalidPairingCode) {
@@ -335,13 +336,15 @@ func TestPendingRegistrationRequiresExactIdentityProofBeforeApproval(t *testing.
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
+		`DROP TRIGGER reject_legacy_device_update`,
+		`DROP TRIGGER reject_legacy_device_insert`,
 		`DROP TABLE relay_deliveries`,
 		`DROP TABLE relay_delivery_state`,
 		`DROP TABLE workspace_authority_transitions`,
 		`ALTER TABLE workspaces DROP COLUMN authority_transition_digest`,
 		`ALTER TABLE workspaces DROP COLUMN authority_epoch`,
 		`ALTER TABLE devices DROP COLUMN revoked_membership_epoch`,
-		`DELETE FROM schema_migrations WHERE version IN (5, 6, 7)`,
+		`DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8)`,
 	} {
 		if _, err := legacyDB.Exec(statement); err != nil {
 			legacyDB.Close()
@@ -466,7 +469,7 @@ func TestConcurrentPairingCodeConsumptionAllowsOneRegistration(t *testing.T) {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			_, err := store.Register(ctx, Registration{
+			_, err := registerApprovedTestDevice(ctx, store, Registration{
 				PairingCode: code, DeviceType: DeviceAndroid,
 				DeviceName: fmt.Sprintf("phone-%d", index), E2EEPublicKey: testPublicKey(), Now: now,
 			})
@@ -502,7 +505,7 @@ func TestDeviceRevocationIsIdempotentPersistentAndWorkspaceBound(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		device, err := store.Register(ctx, Registration{
+		device, err := registerApprovedTestDevice(ctx, store, Registration{
 			PairingCode: code, DeviceType: DeviceChrome, DeviceName: name,
 			E2EEPublicKey: testPublicKey(), Now: now,
 		})
@@ -546,7 +549,8 @@ func TestDeviceRevocationIsIdempotentPersistentAndWorkspaceBound(t *testing.T) {
 		t.Fatalf("cross-workspace revocation error = %v", err)
 	}
 	if revoked, err := store.RevokeDevice(ctx, RevokeDeviceInput{
-		WorkspaceID: workspace, DeviceReference: reference, Now: now.Add(time.Second),
+		WorkspaceID: workspace, DeviceReference: reference,
+		AuthorityPrivateKey: testAuthorityPrivateKey(), Now: now.Add(time.Second),
 	}); err != nil || !revoked.Changed {
 		t.Fatalf("first revocation=%+v error=%v", revoked, err)
 	}
@@ -599,7 +603,7 @@ func TestCredentialRotationIsAtomicPersistentAndRecoverable(t *testing.T) {
 	now := time.UnixMilli(1_800_000_000_000)
 	workspace, _ := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
 	code, _ := store.IssuePairingCode(ctx, workspace, DeviceChrome, "Browser", now, time.Minute)
-	registered, err := store.Register(ctx, Registration{
+	registered, err := registerApprovedTestDevice(ctx, store, Registration{
 		PairingCode: code, DeviceType: DeviceChrome, DeviceName: "Browser",
 		E2EEPublicKey: testPublicKey(), Now: now,
 	})
@@ -686,7 +690,7 @@ func TestConcurrentCredentialRotationAllowsOneCommit(t *testing.T) {
 	now := time.UnixMilli(1_800_000_000_000)
 	workspace, _ := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
 	pairingCode, _ := store.IssuePairingCode(ctx, workspace, DeviceChrome, "Browser", now, time.Minute)
-	device, err := store.Register(ctx, Registration{
+	device, err := registerApprovedTestDevice(ctx, store, Registration{
 		PairingCode: pairingCode, DeviceType: DeviceChrome, DeviceName: "Browser",
 		E2EEPublicKey: testPublicKey(), Now: now,
 	})
@@ -738,7 +742,7 @@ func TestCredentialRotationCodeIsExactDeviceBoundAndExpires(t *testing.T) {
 	otherWorkspace, _ := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
 	register := func(name string) RegisteredDevice {
 		code, _ := store.IssuePairingCode(ctx, workspace, DeviceAndroid, name, now, time.Minute)
-		device, err := store.Register(ctx, Registration{
+		device, err := registerApprovedTestDevice(ctx, store, Registration{
 			PairingCode: code, DeviceType: DeviceAndroid, DeviceName: name,
 			E2EEPublicKey: testPublicKey(), Now: now,
 		})
@@ -799,7 +803,7 @@ func TestCredentialRotationCodeIsExactDeviceBoundAndExpires(t *testing.T) {
 	}
 	if revoked, err := store.RevokeDevice(ctx, RevokeDeviceInput{
 		WorkspaceID: workspace, DeviceReference: deviceReference(workspace, otherDevice.DeviceID),
-		Now: now,
+		AuthorityPrivateKey: testAuthorityPrivateKey(), Now: now,
 	}); err != nil || !revoked.Changed {
 		t.Fatalf("revoke before rotation=%+v error=%v", revoked, err)
 	}
@@ -812,7 +816,7 @@ func TestCredentialRotationCodeIsExactDeviceBoundAndExpires(t *testing.T) {
 	}
 }
 
-func TestOpenMigratesSchemaVersionOneWithoutChangingCredential(t *testing.T) {
+func TestOpenMigratesSchemaVersionOneAndRevokesLegacyCredential(t *testing.T) {
 	path := tempDatabasePath(t)
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -855,12 +859,18 @@ func TestOpenMigratesSchemaVersionOneWithoutChangingCredential(t *testing.T) {
 	var deviceID DeviceID
 	copy(workspaceID[:], workspace)
 	copy(deviceID[:], device)
-	identity, err := store.Authenticate(context.Background(), workspaceID, deviceID, token, time.Now())
-	if err != nil || identity.CredentialVersion != 1 {
-		t.Fatalf("migrated authentication identity=%+v error=%v", identity, err)
+	if _, err := store.Authenticate(context.Background(), workspaceID, deviceID, token, time.Now()); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("legacy credential authentication error=%v", err)
+	}
+	var state string
+	var revoked bool
+	if err := store.db.QueryRow(`SELECT membership_state, revoked_at_ms IS NOT NULL FROM devices
+		WHERE workspace_id = ? AND id = ?`, workspace, device).Scan(&state, &revoked); err != nil ||
+		state != "revoked" || !revoked {
+		t.Fatalf("migrated legacy state=%q revoked=%v error=%v", state, revoked, err)
 	}
 	var version int
-	if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 7 {
+	if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 8 {
 		t.Fatalf("schema version=%d error=%v", version, err)
 	}
 	if _, err := store.WorkspaceAuthorityPublicKey(context.Background(), workspaceID); !errors.Is(err, ErrWorkspaceAuthorityUnavailable) {
@@ -877,7 +887,7 @@ func TestOpenRejectsNewerSchemaVersion(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (8, 0)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (9, 0)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -886,6 +896,95 @@ func TestOpenRejectsNewerSchemaVersion(t *testing.T) {
 	if store, err := Open(context.Background(), path); err == nil {
 		store.Close()
 		t.Fatal("newer schema version unexpectedly accepted")
+	}
+}
+
+func TestSchemaVersionEightRevokesLegacyDeviceAndDeletesRotationCode(t *testing.T) {
+	ctx := context.Background()
+	path := tempDatabasePath(t)
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	workspace, err := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := store.IssuePairingCode(ctx, workspace, DeviceChrome, "Legacy", now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device, err := registerApprovedTestDevice(ctx, store, Registration{
+		PairingCode: code, DeviceType: DeviceChrome, DeviceName: "Legacy",
+		E2EEPublicKey: testPublicKey(), Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.IssueCredentialRotationCode(
+		ctx, workspace, deviceReference(workspace, device.DeviceID), now, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	versionSeven, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`DROP TRIGGER reject_legacy_device_update`,
+		`DROP TRIGGER reject_legacy_device_insert`,
+		`UPDATE devices SET membership_state = 'legacy_active'`,
+		`DELETE FROM schema_migrations WHERE version = 8`,
+	} {
+		if _, err := versionSeven.Exec(statement); err != nil {
+			versionSeven.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := versionSeven.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	if _, err := migrated.Authenticate(ctx, workspace, device.DeviceID, device.AuthToken, now); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("legacy authentication error=%v", err)
+	}
+	var state string
+	var rotationCodes int
+	if err := migrated.db.QueryRow(`SELECT membership_state FROM devices
+		WHERE workspace_id = ? AND id = ?`, workspace[:], device.DeviceID[:]).Scan(&state); err != nil ||
+		state != "revoked" {
+		t.Fatalf("legacy state=%q error=%v", state, err)
+	}
+	if err := migrated.db.QueryRow(`SELECT COUNT(*) FROM credential_rotation_codes
+		WHERE workspace_id = ? AND device_id = ?`, workspace[:], device.DeviceID[:]).Scan(&rotationCodes); err != nil || rotationCodes != 0 {
+		t.Fatalf("legacy rotation codes=%d error=%v", rotationCodes, err)
+	}
+}
+
+func TestSchemaRejectsLegacyMembershipState(t *testing.T) {
+	store := openTestStore(t, tempDatabasePath(t))
+	now := time.Now()
+	workspace, err := store.CreateWorkspace(context.Background(), testAuthorityPublicKey(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.db.Exec(`INSERT INTO devices(
+		workspace_id, id, device_type, device_name, auth_token_hash, e2ee_public_key,
+		registered_at_ms, last_online_at_ms, membership_state)
+		VALUES (?, ?, 'chrome', 'Legacy', ?, ?, ?, ?, 'legacy_active')`,
+		workspace[:], bytes.Repeat([]byte{0x55}, 16), bytes.Repeat([]byte{0x56}, sha256.Size),
+		testPublicKey(), now.UnixMilli(), now.UnixMilli())
+	if err == nil || !strings.Contains(err.Error(), "legacy membership state is disabled") {
+		t.Fatalf("legacy membership insert error=%v", err)
 	}
 }
 
@@ -911,11 +1010,15 @@ func tempDatabasePath(t *testing.T) string {
 	return t.TempDir() + "/admission.db"
 }
 
+func testAuthorityPrivateKey() ed25519.PrivateKey {
+	return ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x7a}, ed25519.SeedSize))
+}
+
 func testAuthorityPublicKey() membership.AuthorityPublicKey {
+	privateKey := testAuthorityPrivateKey()
+	defer clear(privateKey)
 	var key membership.AuthorityPublicKey
-	for index := range key {
-		key[index] = byte(index + 1)
-	}
+	copy(key[:], privateKey.Public().(ed25519.PublicKey))
 	return key
 }
 

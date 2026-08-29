@@ -151,7 +151,7 @@ func registerRelayTestDevice(
 	if err != nil {
 		t.Fatal(err)
 	}
-	device, err := store.Register(context.Background(), Registration{
+	device, err := registerApprovedTestDevice(context.Background(), store, Registration{
 		PairingCode: code, DeviceType: deviceType, DeviceName: name,
 		E2EEPublicKey: testPublicKey(), Now: now,
 	})

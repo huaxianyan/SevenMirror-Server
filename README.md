@@ -9,9 +9,9 @@ Repository: <https://github.com/huaxianyan/SevenMirror-Server>
 ## Current functionality
 
 - `GET /healthz` and `GET /readyz`
-- SQLite/WAL schema migration and durable private device registry with explicit `legacy_active`, pending-proof, pending-approval, approved, and revoked membership states
+- SQLite/WAL schema migration and durable private device registry with pending-proof, pending-approval, approved, and revoked membership states; schema v8 revokes historical `legacy_active` rows and prevents their recreation
 - Local admin CLI for workspace initialization with a unique Ed25519 authority and 192-bit, short-lived, one-time pairing codes
-- Frozen code-gated `POST /v1/devices/register` plus isolated ADR-005 `/v1/membership/register|prove|state` replacement flow; no open registration mode
+- Authority-controlled ADR-005 `POST /v1/membership/register|prove|state` enrollment flow; the former `/v1/devices/register` route is not mounted and no open registration mode exists
 - First-binary-frame WebSocket authentication at `GET /v1/relay`
 - Bounded opaque ciphertext routing with workspace/device sender binding
 - Authentication/registration rate limits, five-second auth deadline, Ping/Pong liveness, and graceful shutdown
@@ -88,7 +88,7 @@ The old and new authorities jointly sign a canonical transition. Transition stor
 
 The raw pairing code is printed once. SQLite stores only its SHA-256 hash. A successful registration returns a random 32-byte device credential once; only its SHA-256 hash is persisted.
 
-The replacement pending/proof/state API is documented in [`docs/membership-http-v1.md`](docs/membership-http-v1.md). It returns a real RFC 9180 Base-HPKE identity challenge and keeps pending credentials outside relay authorization. Current Android and Chrome enrollment entry points use this API and persist authority pins, roster epochs, and pending recovery journals. The legacy endpoint remains frozen for compatibility but is no longer used by those client entry points.
+The pending/proof/state API is documented in [`docs/membership-http-v1.md`](docs/membership-http-v1.md). It returns a real RFC 9180 Base-HPKE identity challenge and keeps pending credentials outside relay authorization. Current Android and Chrome enrollment entry points use this API and persist authority pins, roster epochs, and pending recovery journals. The former `/v1/devices/register` route has been removed; requests receive `404`, and schema v8 permanently revokes historical uncertified `legacy_active` rows.
 
 List devices using redacted 96-bit administrative references, then revoke one exact device:
 
@@ -99,7 +99,7 @@ NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
   revoke-device --workspace <base64url-workspace-id> --device-ref <redacted-ref>
 ```
 
-The membership admin commands operate on pending records created through `/v1/membership/register`; the frozen legacy `/v1/devices/register` endpoint continues to create only `legacy_active` records:
+The membership admin commands operate on pending records created only through `/v1/membership/register`:
 
 ```sh
 NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
@@ -109,7 +109,7 @@ NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
   --roles receive,invoke
 ```
 
-Approval loads the exact workspace authority key from `NM_AUTHORITY_KEY_DIR`, signs the device certificate, advances and signs the roster, and commits the certificate, device state, and roster in one SQLite transaction. It prints only the redacted device reference and roster epoch. `revoke-device` uses the same authority custody path for certified members: one SQLite transaction removes the exact certificate from the active set, appends its revocation, advances and signs the roster, and marks the device revoked. Legacy devices remain revocable without creating a roster entry.
+Approval loads the exact workspace authority key from `NM_AUTHORITY_KEY_DIR`, signs the device certificate, advances and signs the roster, and commits the certificate, device state, and roster in one SQLite transaction. It prints only the redacted device reference and roster epoch. `revoke-device` uses the same authority custody path for certified members: one SQLite transaction removes the exact certificate from the active set, appends its revocation, advances and signs the roster, and marks the device revoked. Historical uncertified devices are fail-closed and migrated directly to revoked state; they cannot re-enroll without a new pairing code and identity.
 
 The list and revoke commands never print a full device ID, transport credential, or E2EE public key. Revocation is durable and idempotent. New authentication fails immediately; the running server revalidates active peers every 250 ms, atomically removes a revoked peer from ciphertext routing, and closes its WebSocket with a fixed policy response. Authorization lookup failures disconnect only the affected peer fail-closed.
 

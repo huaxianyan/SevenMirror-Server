@@ -13,6 +13,7 @@ from pathlib import Path
 import secrets
 import signal
 import socket
+import sqlite3
 import struct
 import subprocess
 import tempfile
@@ -376,13 +377,16 @@ def main() -> None:
             wait_until_ready(opener, origin)
             proxy, proxy_thread, proxy_origin = start_access_log_proxy(origin, proxy_log_path)
             wait_until_ready(opener, proxy_origin)
-            registration_url = f"{proxy_origin}/v1/devices/register"
+            legacy_registration_url = f"{proxy_origin}/v1/devices/register"
+            registration_url = f"{proxy_origin}/v1/membership/register"
             registration = {
                 "pairing_code": pairing_code,
                 "device_type": "chrome",
                 "device_name": "Canary Browser",
                 "e2ee_public_key": encode_base64url(PUBLIC_P256_POINT),
             }
+            legacy_error, legacy_url = request_json(
+                opener, legacy_registration_url, registration, 404)
             success, success_url = request_json(opener, registration_url, registration, 201)
             response = json.loads(success)
             workspace_id = response.get("workspace_id")
@@ -402,6 +406,23 @@ def main() -> None:
                 {**registration, "notification_title": business_canary},
                 400,
             )
+
+            # This scanner's subject is credential/plaintext placement, not HPKE
+            # proof correctness (covered by membership integration and vectors).
+            # Promote only this temporary pending row so rotation and relay canaries
+            # can exercise the production binaries without shipping a test endpoint.
+            fixture_database = sqlite3.connect(database)
+            try:
+                updated = fixture_database.execute(
+                    "UPDATE devices SET membership_state = 'approved' "
+                    "WHERE workspace_id = ? AND id = ? AND membership_state = 'pending_proof'",
+                    (decode_base64url(workspace_id), decode_base64url(device_id)),
+                )
+                if updated.rowcount != 1:
+                    raise RuntimeError("canary fixture could not promote pending membership")
+                fixture_database.commit()
+            finally:
+                fixture_database.close()
 
             devices_output = run_admin(
                 admin_binary, env, "list-devices", "--workspace", workspace)
@@ -455,6 +476,7 @@ def main() -> None:
             proxy_lines = proxy_log_path.read_text(encoding="utf-8").splitlines()
             for expected_target in (
                 "POST /v1/devices/register ",
+                "POST /v1/membership/register ",
                 "POST /v1/devices/rotate ",
                 "GET /v1/relay ",
             ):
@@ -475,9 +497,11 @@ def main() -> None:
                 raise RuntimeError("pending credential did not receive exact SNO1")
 
             errors_path.write_bytes(
-                replay_error + invalid_error + rotation_replay_error + rotation_invalid_error)
+                legacy_error + replay_error + invalid_error +
+                rotation_replay_error + rotation_invalid_error)
             urls_path.write_text(
                 "\n".join((
+                    legacy_url,
                     success_url,
                     replay_url,
                     invalid_url,

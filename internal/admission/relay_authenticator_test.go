@@ -18,7 +18,7 @@ func TestRegisteredCredentialAuthenticatesProductionRelayBoundary(t *testing.T) 
 	now := time.UnixMilli(1_800_000_000_000)
 	workspace, _ := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
 	code, _ := store.IssuePairingCode(ctx, workspace, DeviceChrome, "Browser", now, time.Minute)
-	registered, err := store.Register(ctx, Registration{
+	registered, err := registerApprovedTestDevice(ctx, store, Registration{
 		PairingCode: code, DeviceType: DeviceChrome, DeviceName: "Browser",
 		E2EEPublicKey: testPublicKey(), Now: now,
 	})
@@ -72,7 +72,7 @@ func TestDurableRevocationClosesActiveRelayAndRejectsReconnect(t *testing.T) {
 	now := time.UnixMilli(1_800_000_000_000)
 	workspace, _ := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
 	code, _ := store.IssuePairingCode(ctx, workspace, DeviceChrome, "Browser", now, time.Minute)
-	registered, err := store.Register(ctx, Registration{
+	registered, err := registerApprovedTestDevice(ctx, store, Registration{
 		PairingCode: code, DeviceType: DeviceChrome, DeviceName: "Browser",
 		E2EEPublicKey: testPublicKey(), Now: now,
 	})
@@ -117,7 +117,7 @@ func TestDurableRevocationClosesActiveRelayAndRejectsReconnect(t *testing.T) {
 	}
 	if revoked, err := store.RevokeDevice(ctx, RevokeDeviceInput{
 		WorkspaceID: workspace, DeviceReference: deviceReference(workspace, registered.DeviceID),
-		Now: now.Add(time.Second),
+		AuthorityPrivateKey: testAuthorityPrivateKey(), Now: now.Add(time.Second),
 	}); err != nil || !revoked.Changed {
 		t.Fatalf("revocation=%+v error=%v", revoked, err)
 	}
@@ -154,7 +154,7 @@ func TestCredentialRotationClosesOldSessionAndAuthenticatesPendingCredential(t *
 	now := time.UnixMilli(1_800_000_000_000)
 	workspace, _ := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
 	code, _ := store.IssuePairingCode(ctx, workspace, DeviceChrome, "Browser", now, time.Minute)
-	registered, err := store.Register(ctx, Registration{
+	registered, err := registerApprovedTestDevice(ctx, store, Registration{
 		PairingCode: code, DeviceType: DeviceChrome, DeviceName: "Browser",
 		E2EEPublicKey: testPublicKey(), Now: now,
 	})
