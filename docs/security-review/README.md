@@ -124,8 +124,9 @@ and evidence are in the checklist:
 
 - the new three-repository Gitleaks history gate and its narrow public-vector
   allowlist still require independent review against the release baseline;
-- Server and Chrome now have Go/npm vulnerability gates, but Android still lacks
-  a complete locked Gradle inventory and dependency-vulnerability gate;
+- Android now has strict Gradle locks, artifact verification, and a blocking
+  release-runtime OSV gate, but its complete plugin/build-tool audit still has
+  upstream findings requiring explicit triage, remediation, or accepted risk;
 - no repository vulnerability-reporting policy (`SECURITY.md`);
 - the frozen legacy `/v1/devices/register` and `legacy_active` path still exists
   and needs a remove-or-release decision;

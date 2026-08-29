@@ -51,7 +51,7 @@ Severity is provisional until an independent reviewer assesses realistic impact.
 | --- | --- | --- | --- |
 | SR-001 | High | OPEN | Complete independent protocol and cryptographic review of Auth HPKE, canonical encodings, identity binding, replay, and domain separation before v1 freeze. |
 | SR-002 | Medium | EVIDENCE | All three CI workflows now run SHA-pinned Gitleaks Action v3.0.0 with scanner v8.30.1 over full Git history. The only path allowlist is the published deterministic `protocol/test-vectors/` tree; Server documentation false positives use exact fingerprints. Independent review and release-candidate execution remain required. |
-| SR-003 | Medium | PARTIAL | Server now runs `govulncheck v1.1.4`; its first CI run found 12 reachable Go 1.24.13 standard-library vulnerabilities, so the enforced source/CI/container floor is now Go 1.25.13. Chrome runs `npm audit` against `package-lock.json` and the initial High-severity `nanoid` finding is fixed at 3.3.18. Android still needs a complete locked Gradle/plugin inventory and vulnerability gate; GitHub Actions and exception policy also remain open. |
+| SR-003 | Medium | PARTIAL | Server now runs `govulncheck v1.1.4`; its first CI run found 12 reachable Go 1.24.13 standard-library vulnerabilities, so the enforced source/CI/container floor is now Go 1.25.13. Chrome runs `npm audit` against `package-lock.json` and the initial High-severity `nanoid` finding is fixed at 3.3.18. Android now has strict Gradle locks, SHA-256 artifact verification, a reproducible release-runtime inventory, and a SHA-pinned OSV Scanner v2.5.1 blocking gate with zero current runtime findings. Its separate complete plugin/build-tool audit still reports upstream findings and intentionally remains non-blocking pending triage, remediation, or time-bounded accepted-risk decisions. Vulnerability database timestamp evidence and the cross-repository exception policy also remain open. |
 | SR-004 | Medium | OPEN | Add a public `SECURITY.md` vulnerability-reporting and supported-version policy to each independently published repository, or document one shared policy that all three link to. |
 | SR-005 | High | OPEN | Remove the frozen `/v1/devices/register`/`legacy_active` trust path before release, or obtain explicit review and a migration/disable policy proving it cannot become a parallel trust source. |
 | SR-006 | Medium | PARTIAL | Review Android HPKE private-scalar unwrap, in-memory copies, zeroization limits, crash diagnostics, and the absence of hardware-backed P-256 HPKE operations. |
@@ -401,10 +401,17 @@ vectors are not secrets.
   reachable Go code. Its first run found 12 reachable standard-library findings
   under Go 1.24.13; `go.mod`, CI, and the container builder now enforce the fixed
   Go 1.25.13 floor. Chrome CI runs `npm audit --audit-level=high` against the
-  lockfile; the initial `nanoid < 3.3.18` High finding was remediated. A complete
-  locked Gradle/plugin inventory, Android scanner, GitHub Actions inventory,
-  database timestamp evidence, and exception policy remain open. (`PARTIAL`;
-  SR-003)
+  lockfile; the initial `nanoid < 3.3.18` High finding was remediated. Android
+  locks real build/test/runtime classpaths in strict mode, verifies artifact
+  SHA-256 metadata, regenerates an exact 90-package release-runtime inventory,
+  and runs SHA-pinned OSV Scanner v2.5.1. The release-runtime gate currently has
+  zero findings. A separate scan of the complete 472-package artifact/plugin
+  metadata reports 21 affected build-tool packages and 86 vulnerability records;
+  it remains non-blocking so these upstream findings stay visible rather than
+  being broadly ignored or mislabeled as APK runtime vulnerabilities. Triage,
+  remediation or time-bounded accepted-risk decisions, vulnerability database
+  timestamp evidence, and the cross-repository exception policy remain
+  open. (`PARTIAL`; SR-003)
 - [ ] **B-03 — Secret scan gate.** All three pull-request/push workflows now scan
   full Git history using Gitleaks Action v3.0.0 pinned to commit
   `e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e` and scanner v8.30.1. The sole path
