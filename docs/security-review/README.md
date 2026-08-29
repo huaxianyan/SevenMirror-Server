@@ -147,8 +147,9 @@ and evidence are in the checklist:
   old/pending WebSocket authentication and sensitive artifacts. A separate
   pinned Caddy gate now covers real TLS termination, WebSocket forwarding,
   trusted client-address derivation and reduced access logs. Operator-specific
-  certificate renewal, firewall, backup/support/log-shipping pipelines, Chrome
-  interaction/crash/sync/OS artifacts and Android system artifacts remain open;
+  certificate renewal, firewall and backup/support/log-shipping pipelines remain
+  open. Chrome now has local non-headless interaction DOM evidence, while a pinned
+  CI browser plus crash/sync/OS artifacts and Android system artifacts remain open;
 - removal of `/v1/devices/register` and schema-v8 fail-closed migration of
   historical `legacy_active` rows now have internal evidence, but still require
   release-baseline and independent-review confirmation;
