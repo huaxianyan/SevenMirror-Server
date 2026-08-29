@@ -61,7 +61,7 @@ Severity is provisional until an independent reviewer assesses realistic impact.
 | SR-010 | Medium | OPEN | Decide deployment-aware trusted-proxy handling and configurable connection/rate limits; test that proxy headers cannot bypass or collapse abuse controls. |
 | SR-011 | High | EXTERNAL | Review registration → possession proof → approval → promotion → `SNO1`, including interruption, replay, concurrent approval/revocation, and stale MV3 Worker deployment. |
 | SR-012 | High | EXTERNAL | Review relay retention, cumulative ACK, eviction, `SNR1`, fixed high-water snapshot recovery, and certified source-key replacement failure. |
-| SR-013 | Medium | OPEN | Implement reproducible static and runtime scans for credentials and unexpected business plaintext in Server logs/SQLite/WAL/URLs and client diagnostics/storage, with explicit expected-local-plaintext allowlists. |
+| SR-013 | Medium | PARTIAL | Server CI now runs a real-binary canary gate through admin issuance, HTTP registration, fixed error handling, no-redirect URL capture, live/clean-shutdown SQLite/WAL/SHM, and captured stdout/stderr. It scans raw and encoded credentials plus unique business text; explicit admin stdout and the one-time registration response are the only narrow allowed channels and are retained only in memory. The durable relay test separately proves an encrypted business canary remains absent from persistence across restart. Android/Chrome runtime diagnostics and expected endpoint-local plaintext inventories remain open. |
 | SR-014 | Medium | PARTIAL | Every external Action reference is pinned to an immutable 40-character commit and CI rejects tag/branch references. All retained Actions use Node.js 24. Internal source review removed the redundant unsigned `setup-android` after its production dependencies reported a High finding. The unsigned emulator Action reproduced its committed JavaScript, uses fixed workflow inputs with a read-only job, and retains a visible Moderate `uuid` finding whose affected buffered API is not reached; it has a 2026-09-29 recheck deadline. Independent review and release-channel provenance/signing verification remain open. |
 | SR-015 | High | OPEN | Keep third-party notification transport disabled until security findings and two-real-Android OEM/network validation are complete and a reviewed release explicitly changes the gate. |
 
@@ -187,9 +187,11 @@ Primary references:
   response, unknown/duplicate/trailing-field rejection, canonical unpadded
   Base64URL, canonical decimal epoch, and redirect rejection in both clients.
   (`EVIDENCE`)
-- [ ] **R-03 — Credential placement.** Verify pairing codes, transport credentials,
-  rotation codes, and auth tokens never enter URLs, redirects, referrers, or
-  routine Server logs. (`PARTIAL`; SR-013)
+- [ ] **R-03 — Credential placement.** The real-binary Server canary gate keeps a
+  pairing code in the bounded registration body and the returned transport
+  credential in memory, rejects redirects, and proves neither text nor decoded
+  bytes enter effective URLs or routine Server stdout/stderr. Rotation-code and
+  reverse-proxy evidence remain open. (`PARTIAL`; SR-013)
 - [ ] **R-04 — Possession proof.** Verify the challenge proves possession of the
   exact submitted HPKE key and is bound to workspace/device/registration state,
   expiry, and single use. Review replay and chosen-key behavior. (`EXTERNAL`;
@@ -334,20 +336,25 @@ vectors are not secrets.
   Server documentation false positives; narrow path/fingerprint exclusions make
   the rescans clean. Independently review every exclusion and rerun on the exact
   release commits. (`EVIDENCE`; SR-002)
-- [ ] **P-02 — Server logs.** Exercise success and all validation/error paths with
-  unique canary credentials and business strings. Confirm structured Server logs
-  and HTTP errors contain neither canary. (`PARTIAL`; SR-013)
-- [ ] **P-03 — Admin stdout.** Confirm one-time pairing/rotation codes are emitted
-  only by explicit admin commands to the operator's stdout, never copied to
-  routine Server logs. Document terminal history, CI log, and support-bundle
-  handling. (`PARTIAL`; SR-013)
-- [ ] **P-04 — Server SQLite/WAL.** Search a live and cleanly shut down database,
-  WAL, SHM, backup, and temporary files for raw canary credentials and business
-  plaintext. Expected result: hashed admission secrets and opaque business
-  ciphertext only. (`PARTIAL`; existing hash-only tests; SR-013)
-- [ ] **P-05 — URLs and redirects.** Capture HTTP/WebSocket requests and ensure
-  credentials occur only in protected bounded bodies/auth frames, never URL,
-  query, fragment, redirect target, or referrer. (`PARTIAL`; SR-013)
+- [ ] **P-02 — Server logs.** CI exercises real binary startup/shutdown, successful
+  registration, consumed-code denial, and malformed business-canary input. The
+  captured structured stdout/stderr and fixed HTTP errors contain no raw or
+  encoded canary. Remaining validation/failure classes require release-baseline
+  coverage. (`PARTIAL`; SR-013)
+- [ ] **P-03 — Admin stdout.** The canary gate verifies an explicit admin command
+  emits its pairing code exactly once, then excludes that in-memory one-time
+  delivery channel while scanning routine Server output. Rotation-code and
+  operator terminal/support-bundle handling remain open. (`PARTIAL`; SR-013)
+- [ ] **P-04 — Server SQLite/WAL.** CI searches the live and stopped SQLite, WAL,
+  SHM, authority directory, logs, HTTP errors, and temporary run files for
+  pairing-code and transport-token text/decoded bytes plus unique business
+  plaintext. The durable relay restart test independently scans an encrypted
+  business canary. Database backups and deployment artifacts remain open.
+  (`PARTIAL`; SR-013)
+- [ ] **P-05 — URLs and redirects.** The Server canary client refuses redirects,
+  records exact effective registration targets, and scans them for credentials
+  and business plaintext. WebSocket target capture, reverse-proxy logs, and
+  client-side referrer evidence remain open. (`PARTIAL`; SR-013)
 - [ ] **P-06 — Android diagnostics.** Search logcat, crash/error strings,
   SharedPreferences/databases, Auto Backup, screenshots, and exported debug
   artifacts using canaries. Classify intentional local state. (`OPEN`; SR-013)

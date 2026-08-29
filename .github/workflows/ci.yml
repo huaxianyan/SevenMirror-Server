@@ -47,5 +47,7 @@ jobs:
         run: |
           go build ./cmd/server
           go build ./cmd/admin
+      - name: Scan runtime artifacts for credentials and business plaintext
+        run: python3 scripts/server_canary_scan.py --server ./server --admin ./admin
       - name: Build container
         run: docker build .

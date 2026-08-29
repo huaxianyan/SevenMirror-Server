@@ -3,11 +3,15 @@ package admission
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -31,7 +35,8 @@ func TestOfflineRecipientResumesDurableCiphertextAfterServerRestart(t *testing.T
 	recipient := registerRelayTestDevice(t, store, workspace, DeviceChrome, "Browser", now)
 	senderPeer := relayPeer(sender)
 	recipientPeer := relayPeer(recipient)
-	envelope := routedTestEnvelope(t, senderPeer, recipientPeer, now)
+	businessCanary := []byte("sevenmirror-relay-business-canary-e9168b42")
+	envelope := routedTestEnvelope(t, senderPeer, recipientPeer, now, businessCanary)
 
 	hub, err := relay.NewHub(store, store)
 	if err != nil {
@@ -64,11 +69,13 @@ func TestOfflineRecipientResumesDurableCiphertextAfterServerRestart(t *testing.T
 		}
 		time.Sleep(time.Millisecond)
 	}
+	assertCanaryAbsentFromDatabaseFiles(t, path, businessCanary)
 	senderConnection.Close()
 	firstServer.Close()
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
+	assertCanaryAbsentFromDatabaseFiles(t, path, businessCanary)
 
 	restarted, err := Open(ctx, path)
 	if err != nil {
@@ -166,6 +173,7 @@ func routedTestEnvelope(
 	sender relay.PeerIdentity,
 	recipient relay.PeerIdentity,
 	now time.Time,
+	businessCanary []byte,
 ) []byte {
 	t.Helper()
 	content, err := os.ReadFile("../../protocol/test-vectors/encrypted-envelope-v1.json")
@@ -199,11 +207,36 @@ func routedTestEnvelope(
 	if err != nil {
 		t.Fatal(err)
 	}
+	block, err := aes.NewCipher(bytes.Repeat([]byte{0x7c}, 16))
+	if err != nil {
+		t.Fatal(err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame.Ciphertext = aead.Seal(nil, bytes.Repeat([]byte{0x29}, aead.NonceSize()), businessCanary, frame.RoutingHeader[:])
+	if bytes.Contains(frame.Ciphertext, businessCanary) {
+		t.Fatal("test encryption fixture retained business plaintext")
+	}
 	encoded, err = envelopeframe.Encode(frame)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return encoded
+}
+
+func assertCanaryAbsentFromDatabaseFiles(t *testing.T, path string, canary []byte) {
+	t.Helper()
+	for _, databaseFile := range []string{path, path + "-wal", path + "-shm"} {
+		contents, err := os.ReadFile(databaseFile)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		if bytes.Contains(contents, canary) {
+			t.Fatalf("business plaintext persisted in %s", filepath.Base(databaseFile))
+		}
+	}
 }
 
 func storedDeliveryCount(t *testing.T, store *Store) int {
