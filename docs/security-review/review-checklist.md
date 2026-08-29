@@ -61,7 +61,7 @@ Severity is provisional until an independent reviewer assesses realistic impact.
 | SR-010 | Medium | OPEN | Decide deployment-aware trusted-proxy handling and configurable connection/rate limits; test that proxy headers cannot bypass or collapse abuse controls. |
 | SR-011 | High | EXTERNAL | Review registration → possession proof → approval → promotion → `SNO1`, including interruption, replay, concurrent approval/revocation, and stale MV3 Worker deployment. |
 | SR-012 | High | EXTERNAL | Review relay retention, cumulative ACK, eviction, `SNR1`, fixed high-water snapshot recovery, and certified source-key replacement failure. |
-| SR-013 | Medium | PARTIAL | Server CI now runs a real-binary canary gate through admin issuance, HTTP registration, fixed error handling, no-redirect URL capture, live/clean-shutdown SQLite/WAL/SHM, and captured stdout/stderr. It scans raw and encoded credentials plus unique business text; explicit admin stdout and the one-time registration response are the only narrow allowed channels and are retained only in memory. The durable relay test separately proves an encrypted business canary remains absent from persistence across restart. Android/Chrome runtime diagnostics and expected endpoint-local plaintext inventories remain open. |
+| SR-013 | Medium | PARTIAL | Server CI runs a real-binary canary gate through admin issuance, HTTP registration, fixed errors, no-redirect URL capture, SQLite/WAL/SHM, and stdout/stderr; its durable relay test separately keeps an encrypted business canary absent from persistence across restart. Android now inventories expected app-private state and runs an API 29 instrumentation canary through real Keystore-backed HPKE identity, current/pending transport credential, and pending enrollment stores. Raw/Base64 tokens and the HPKE scalar are absent from mutable app-private state, generated errors, and own-process logcat. Chrome runtime diagnostics, Android privileged/system artifacts and business-content paths, deployment evidence, and release-baseline execution remain open. |
 | SR-014 | Medium | PARTIAL | Every external Action reference is pinned to an immutable 40-character commit and CI rejects tag/branch references. All retained Actions use Node.js 24. Internal source review removed the redundant unsigned `setup-android` after its production dependencies reported a High finding. The unsigned emulator Action reproduced its committed JavaScript, uses fixed workflow inputs with a read-only job, and retains a visible Moderate `uuid` finding whose affected buffered API is not reached; it has a 2026-09-29 recheck deadline. Independent review and release-channel provenance/signing verification remain open. |
 | SR-015 | High | OPEN | Keep third-party notification transport disabled until security findings and two-real-Android OEM/network validation are complete and a reviewed release explicitly changes the gate. |
 
@@ -300,9 +300,12 @@ Primary references:
   copy through sender/receiver/error paths. Assess best-effort zeroization and
   JVM/native-library copies without claiming guaranteed memory erasure.
   (`PARTIAL`; SR-006)
-- [ ] **K-03 — Android transport credentials.** Verify wrapping, dual-slot rotation,
-  backup exclusion, log/exception behavior, and fail-closed corruption.
-  (`EVIDENCE`)
+- [ ] **K-03 — Android transport credentials.** Current, pending-rotation, and
+  pending-enrollment tokens use distinct Keystore-backed AES-GCM persistence.
+  API 29 canary instrumentation finds neither raw nor Base64 token bytes in
+  mutable app-private state, generated errors, or own-process logcat; the
+  release manifest disables backup. Physical-device backup/migration evidence
+  remains required. (`EVIDENCE`; SR-013)
 - [ ] **K-04 — Chrome HPKE identity.** Verify production generates and restores a
   non-extractable P-256 `CryptoKey`, rejects extractable/mismatched keys, and uses
   fallback only as documented. (`EVIDENCE`)
@@ -355,9 +358,14 @@ vectors are not secrets.
   records exact effective registration targets, and scans them for credentials
   and business plaintext. WebSocket target capture, reverse-proxy logs, and
   client-side referrer evidence remain open. (`PARTIAL`; SR-013)
-- [ ] **P-06 — Android diagnostics.** Search logcat, crash/error strings,
-  SharedPreferences/databases, Auto Backup, screenshots, and exported debug
-  artifacts using canaries. Classify intentional local state. (`OPEN`; SR-013)
+- [ ] **P-06 — Android diagnostics.** `docs/SENSITIVE_DATA.md` classifies
+  forbidden secrets, expected app-private protocol/result state, and OS-visible
+  business content. API 29 instrumentation persists real wrapped HPKE/current/
+  pending/enrollment secrets, then scans raw/standard-Base64/Base64URL variants
+  across SharedPreferences, databases, files, cache, no-backup storage,
+  rejection errors, and own-process logcat. Privileged logcat, heap/crash/ANR,
+  screenshots, OEM backup/migration, debug exports, and full business-content
+  canaries remain open. (`PARTIAL`; SR-006, SR-013)
 - [ ] **P-07 — Chrome diagnostics.** Search service-worker/page console, extension
   errors, IndexedDB/storage, notifications, crash artifacts, and exported profile
   data using canaries. Classify expected local plaintext and ensure options/popup

@@ -136,8 +136,10 @@ and evidence are in the checklist:
 - Android now has strict Gradle locks, artifact verification, and a blocking
   release-runtime OSV gate, but its complete plugin/build-tool audit still has
   upstream findings requiring explicit triage, remediation, or accepted risk;
-- Server now has a real-binary credential/plaintext canary gate, but Android and
-  Chrome endpoint-local state classification and runtime scans remain open;
+- Server has a real-binary credential/plaintext canary gate, and Android API 29
+  instrumentation now scans Keystore-wrapped secret canaries in private state,
+  errors, and own-process logcat; Chrome endpoint-local state classification and
+  runtime scans remain open;
 - the frozen legacy `/v1/devices/register` and `legacy_active` path still exists
   and needs a remove-or-release decision;
 - Android HPKE requires a software-accessible private scalar after Keystore
