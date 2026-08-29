@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/huaxianyan/SyncNotifications-Server/internal/admission"
+	"github.com/huaxianyan/SyncNotifications-Server/internal/clientaddress"
 )
 
 const maxCredentialRotationBody = 2048
@@ -31,11 +32,14 @@ type credentialRotationRequest struct {
 	PendingAuthToken string `json:"pending_auth_token"`
 }
 
-func newCredentialRotationHandler(store *admission.Store) http.Handler {
+func newCredentialRotationHandler(
+	store *admission.Store,
+	clientAddresses clientaddress.Resolver,
+) http.Handler {
 	return &credentialRotationHandler{
 		rotator: store,
 		now:     time.Now,
-		limiter: newRegistrationRateLimiter(),
+		limiter: newRegistrationRateLimiter(clientAddresses),
 	}
 }
 
@@ -50,10 +54,17 @@ func (h *credentialRotationHandler) ServeHTTP(w http.ResponseWriter, r *http.Req
 		return
 	}
 	now := h.now()
-	if h.limiter != nil && !h.limiter.allow(r, now) {
-		w.Header().Set("Retry-After", "60")
-		http.Error(w, "too many credential rotation attempts", http.StatusTooManyRequests)
-		return
+	if h.limiter != nil {
+		allowed, err := h.limiter.allow(r, now)
+		if err != nil {
+			http.Error(w, "invalid client address", http.StatusBadRequest)
+			return
+		}
+		if !allowed {
+			w.Header().Set("Retry-After", "60")
+			http.Error(w, "too many credential rotation attempts", http.StatusTooManyRequests)
+			return
+		}
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxCredentialRotationBody)
 	decoder := json.NewDecoder(r.Body)

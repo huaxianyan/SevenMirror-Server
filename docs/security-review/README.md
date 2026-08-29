@@ -48,6 +48,9 @@ The current product gate remains:
 - [`server-canary-scan.md`](server-canary-scan.md) defines the real-binary Server
   credential/plaintext scan, narrow allowed one-time outputs, scanned artifacts,
   and remaining client/deployment coverage.
+- [`../caddy-reverse-proxy.md`](../caddy-reverse-proxy.md) defines the checked-in
+  Caddy TLS/WebSocket baseline, exact trusted-address policy, reduced access log,
+  real-process canary and operator-specific limitations.
 - The Chrome repository's `docs/SENSITIVE_DATA.md` defines its endpoint-local
   credential/plaintext inventory, profile-compromise boundary, deterministic
   store test, isolated real-browser profile canary, and remaining endpoint
@@ -140,12 +143,12 @@ and evidence are in the checklist:
 - Android now has strict Gradle locks, artifact verification, and a blocking
   release-runtime OSV gate, but its complete plugin/build-tool audit still has
   upstream findings requiring explicit triage, remediation, or accepted risk;
-- Server's real-binary canary now covers pairing and credential rotation HTTP,
-  old/pending WebSocket authentication, target capture and a constrained proxy
-  access log; Android API 29 scans Keystore-wrapped canaries, and Chrome combines
-  deterministic stores with an isolated real-profile scan. Production proxy,
-  backup/support pipelines, Chrome interaction/crash/sync/OS artifacts and
-  Android system artifacts remain open;
+- Server's real-binary canary covers pairing and credential rotation HTTP,
+  old/pending WebSocket authentication and sensitive artifacts. A separate
+  pinned Caddy gate now covers real TLS termination, WebSocket forwarding,
+  trusted client-address derivation and reduced access logs. Operator-specific
+  certificate renewal, firewall, backup/support/log-shipping pipelines, Chrome
+  interaction/crash/sync/OS artifacts and Android system artifacts remain open;
 - removal of `/v1/devices/register` and schema-v8 fail-closed migration of
   historical `legacy_active` rows now have internal evidence, but still require
   release-baseline and independent-review confirmation;
@@ -154,7 +157,8 @@ and evidence are in the checklist:
 - authority PKCS#8 encryption is delegated to the operator's backup system;
 - the documented Android signing-key backup still requires a verified copy on a
   separate encrypted physical medium;
-- trusted-proxy policy and configurable abuse limits remain undecided;
+- the host-local Caddy trusted-proxy policy has internal evidence, while
+  configurable abuse limits and distributed proxy topologies remain undecided;
 - two-real-device OEM background and network-transition validation remains open;
 - no independent reviewer has reviewed the Auth HPKE, canonical codecs,
   membership authority, cursor, or snapshot-reset implementation.

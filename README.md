@@ -43,6 +43,7 @@ Configuration:
 | `NM_SHUTDOWN_TIMEOUT_SECONDS` | `10` | Graceful shutdown timeout |
 | `NM_TLS_CERT_FILE` | unset | PEM certificate chain for optional native HTTPS/WSS |
 | `NM_TLS_KEY_FILE` | unset | Matching PEM private key; must be configured with `NM_TLS_CERT_FILE` |
+| `NM_TRUSTED_PROXY_CIDRS` | unset | Canonical comma-separated CIDR prefixes allowed to supply one canonical `X-Forwarded-For` client address; leave unset for direct/native TLS |
 
 For direct non-loopback deployment without a TLS reverse proxy, configure both TLS files and bind explicitly:
 
@@ -53,7 +54,7 @@ NM_TLS_KEY_FILE=/run/secrets/server-key.pem \
 go run ./cmd/server
 ```
 
-The certificate must be valid for the hostname or IP entered by clients. The server never generates certificates, never redirects plaintext registration to HTTPS, and refuses a partial cert/key configuration. Keep the private key outside the repository with least-privilege filesystem permissions. A reverse proxy with a publicly trusted certificate remains supported; keep the default loopback bind when proxying locally. The synthetic physical-device procedure and exact pass criteria are documented in [`docs/non-loopback-https-recovery.md`](docs/non-loopback-https-recovery.md).
+The certificate must be valid for the hostname or IP entered by clients. The server never generates certificates, never redirects plaintext registration to HTTPS, and refuses a partial cert/key configuration. Keep the private key outside the repository with least-privilege filesystem permissions. For host-local proxy termination, keep the default loopback bind and use the production-shaped Caddy baseline in [`docs/caddy-reverse-proxy.md`](docs/caddy-reverse-proxy.md); only the exact configured proxy socket peer may supply a canonical single-value client address. The synthetic physical-device procedure and exact pass criteria are documented in [`docs/non-loopback-https-recovery.md`](docs/non-loopback-https-recovery.md).
 
 Initialize a private workspace and issue one device-type-bound code from the local CLI:
 
@@ -135,7 +136,7 @@ go test ./...
 
 This is not yet a production release. Certified revocation, recoverable transport credential rotation, recipient-scoped durable delivery, cumulative cursors, and authority-certified snapshot recovery are implemented and have passed the documented mixed-device engineering acceptance. They have not received independent security approval. The P6 review baseline, threat model, initial findings, and reproducible evidence checklist are maintained in [`docs/security-review/`](docs/security-review/README.md).
 
-Independent protocol/security review, automated secret and dependency-vulnerability gates, credential/plaintext leakage auditing, legacy admission removal-or-release policy, authority/signing backup operations, trusted-proxy policy, and two-real-Android OEM validation remain release blockers. Use `wss://` outside loopback; native TLS requires TLS 1.2 or newer. Until those gates pass and a reviewed release explicitly changes the product gate, submit only app-owned synthetic encrypted payloads—never third-party notification content.
+Independent protocol/security review, release-baseline security scans, authority/signing backup operations, operator-specific proxy/certificate/log-retention validation, configurable abuse-limit policy, release provenance, and two-real-Android OEM validation remain release blockers. Use `wss://` outside loopback; native TLS requires TLS 1.2 or newer. Until those gates pass and a reviewed release explicitly changes the product gate, submit only app-owned synthetic encrypted payloads—never third-party notification content.
 
 The first-message authentication format is documented in [`protocol/device-auth-frame-v1.md`](protocol/device-auth-frame-v1.md).
 

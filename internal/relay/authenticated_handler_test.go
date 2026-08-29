@@ -8,12 +8,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/huaxianyan/SyncNotifications-Server/internal/clientaddress"
 )
 
 func TestAuthenticationFrameMatchesCanonicalVector(t *testing.T) {
@@ -66,7 +68,8 @@ func TestAuthenticatedHandlerRoutesOnlyAfterBinaryCredentialFrame(t *testing.T) 
 		return 1, nil
 	})
 	hub := newTestHub(t)
-	handler, err := NewAuthenticatedWebSocketHandler(hub, authenticator)
+	handler, err := NewAuthenticatedWebSocketHandler(
+		hub, authenticator, clientaddress.New(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +109,7 @@ func TestAuthenticatedHandlerClosesActiveRevokedSession(t *testing.T) {
 			return 0, errors.New("unauthorized")
 		}
 		return 1, nil
-	}))
+	}), clientaddress.New(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +141,7 @@ func TestAuthenticatedHandlerRejectsWrongTokenAndWebOrigin(t *testing.T) {
 		context.Context, PeerIdentity, []byte, time.Time,
 	) (int64, error) {
 		return 0, errors.New("unauthorized")
-	}))
+	}), clientaddress.New(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,24 +170,42 @@ func TestAuthenticatedHandlerRejectsWrongTokenAndWebOrigin(t *testing.T) {
 	}
 }
 
-func TestAuthenticationAttemptLimiterIgnoresForwardedAddresses(t *testing.T) {
-	limiter := newAuthAttemptLimiter()
+func TestAuthenticationAttemptLimiterUsesForwardedAddressOnlyForTrustedProxy(t *testing.T) {
+	limiter := newAuthAttemptLimiter(clientaddress.New(nil))
 	now := time.Unix(1_800_000_000, 0)
 	for i := 0; i < authAttemptsPerMinute; i++ {
 		request := httptest.NewRequest(http.MethodGet, "/v1/relay", nil)
 		request.RemoteAddr = "192.0.2.20:1234"
 		request.Header.Set("X-Forwarded-For", "198.51.100.1")
-		if !limiter.allow(request, now) {
-			t.Fatalf("attempt %d unexpectedly rejected", i+1)
+		if allowed, err := limiter.allow(request, now); err != nil || !allowed {
+			t.Fatalf("attempt %d allowed=%v error=%v", i+1, allowed, err)
 		}
 	}
 	blocked := httptest.NewRequest(http.MethodGet, "/v1/relay", nil)
 	blocked.RemoteAddr = "192.0.2.20:9999"
-	if limiter.allow(blocked, now) {
-		t.Fatal("excess authentication attempt accepted")
+	if allowed, err := limiter.allow(blocked, now); err != nil || allowed {
+		t.Fatalf("excess authentication attempt allowed=%v error=%v", allowed, err)
 	}
-	if !limiter.allow(blocked, now.Add(time.Minute)) {
-		t.Fatal("authentication attempt window did not reset")
+	if allowed, err := limiter.allow(blocked, now.Add(time.Minute)); err != nil || !allowed {
+		t.Fatalf("reset authentication attempt allowed=%v error=%v", allowed, err)
+	}
+
+	trusted := newAuthAttemptLimiter(clientaddress.New([]netip.Prefix{
+		netip.MustParsePrefix("192.0.2.20/32"),
+	}))
+	for i := 0; i < authAttemptsPerMinute; i++ {
+		request := httptest.NewRequest(http.MethodGet, "/v1/relay", nil)
+		request.RemoteAddr = "192.0.2.20:1234"
+		request.Header.Set("X-Forwarded-For", "198.51.100.1")
+		if allowed, err := trusted.allow(request, now); err != nil || !allowed {
+			t.Fatalf("trusted attempt %d allowed=%v error=%v", i+1, allowed, err)
+		}
+	}
+	otherClient := httptest.NewRequest(http.MethodGet, "/v1/relay", nil)
+	otherClient.RemoteAddr = "192.0.2.20:1234"
+	otherClient.Header.Set("X-Forwarded-For", "198.51.100.2")
+	if allowed, err := trusted.allow(otherClient, now); err != nil || !allowed {
+		t.Fatalf("separate forwarded client allowed=%v error=%v", allowed, err)
 	}
 }
 

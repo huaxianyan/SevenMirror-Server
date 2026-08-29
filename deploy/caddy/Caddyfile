@@ -1,0 +1,40 @@
+{
+	admin off
+	auto_https disable_redirects
+}
+
+{$SEVENMIRROR_LISTEN_ADDRESS} {
+	tls {$SEVENMIRROR_TLS_CERT_FILE} {$SEVENMIRROR_TLS_KEY_FILE}
+
+	log {
+		output file {$SEVENMIRROR_ACCESS_LOG} {
+			mode 0600
+			roll_size 10MiB
+			roll_keep 5
+			roll_keep_for 720h
+		}
+		format filter {
+			request>remote_ip delete
+			request>remote_port delete
+			request>client_ip delete
+			request>proto delete
+			request>host delete
+			request>headers delete
+			request>tls delete
+			request>uri regexp \\?.*$ ""
+			bytes_read delete
+			user_id delete
+			duration delete
+			size delete
+			resp_headers delete
+			wrap json
+		}
+	}
+
+	reverse_proxy {$SEVENMIRROR_UPSTREAM} {
+		header_up -Forwarded
+		header_up -X-Real-IP
+		header_up -X-Forwarded-Host
+		header_up X-Forwarded-Proto https
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/huaxianyan/SyncNotifications-Server/internal/admission"
+	"github.com/huaxianyan/SyncNotifications-Server/internal/clientaddress"
 )
 
 func TestLegacyDeviceRegistrationEndpointIsNotMounted(t *testing.T) {
@@ -15,7 +16,11 @@ func TestLegacyDeviceRegistrationEndpointIsNotMounted(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	handler := NewProductionHandler(store, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	handler := NewProductionHandler(
+		store,
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+		clientaddress.New(nil),
+	)
 	request := httptest.NewRequest(http.MethodPost, "/v1/devices/register", nil)
 	response := httptest.NewRecorder()
 

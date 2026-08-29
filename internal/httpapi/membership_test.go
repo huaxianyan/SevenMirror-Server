@@ -16,6 +16,7 @@ import (
 	"filippo.io/hpke"
 	hpkeecdh "filippo.io/hpke/crypto/ecdh"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/admission"
+	"github.com/huaxianyan/SyncNotifications-Server/internal/clientaddress"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/membership"
 	membershipv1 "github.com/huaxianyan/SyncNotifications-Server/protocol/generated/membership/v1"
 	"github.com/huaxianyan/SyncNotifications-Server/protocol/membershipcodec"
@@ -45,7 +46,7 @@ func TestMembershipHTTPRegistersProofsAndRetrievesApprovedRoster(t *testing.T) {
 	privateScalar[31] = 2
 	x, y := elliptic.P256().ScalarBaseMult(privateScalar)
 	identityPublic := elliptic.Marshal(elliptic.P256(), x, y)
-	handler := newMembershipHandler(store)
+	handler := newMembershipHandler(store, clientaddress.New(nil))
 	handler.now = func() time.Time { return now }
 
 	register := httptest.NewRecorder()

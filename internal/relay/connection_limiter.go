@@ -1,10 +1,11 @@
 package relay
 
 import (
-	"net"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/huaxianyan/SyncNotifications-Server/internal/clientaddress"
 )
 
 const (
@@ -19,18 +20,21 @@ type authAttemptEntry struct {
 }
 
 type authAttemptLimiter struct {
-	mu    sync.Mutex
-	peers map[string]authAttemptEntry
+	mu       sync.Mutex
+	peers    map[string]authAttemptEntry
+	resolver clientaddress.Resolver
 }
 
-func newAuthAttemptLimiter() *authAttemptLimiter {
-	return &authAttemptLimiter{peers: make(map[string]authAttemptEntry)}
+func newAuthAttemptLimiter(resolver clientaddress.Resolver) *authAttemptLimiter {
+	return &authAttemptLimiter{
+		peers: make(map[string]authAttemptEntry), resolver: resolver,
+	}
 }
 
-func (l *authAttemptLimiter) allow(request *http.Request, now time.Time) bool {
-	host, _, err := net.SplitHostPort(request.RemoteAddr)
-	if err != nil || host == "" {
-		host = request.RemoteAddr
+func (l *authAttemptLimiter) allow(request *http.Request, now time.Time) (bool, error) {
+	host, err := l.resolver.Resolve(request)
+	if err != nil {
+		return false, err
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -47,16 +51,16 @@ func (l *authAttemptLimiter) allow(request *http.Request, now time.Time) bool {
 				}
 			}
 			if len(l.peers) >= maxAuthenticationPeers {
-				return false
+				return false, nil
 			}
 		}
 		l.peers[host] = authAttemptEntry{startedAt: now, attempts: 1}
-		return true
+		return true, nil
 	}
 	if entry.attempts >= authAttemptsPerMinute {
-		return false
+		return false, nil
 	}
 	entry.attempts++
 	l.peers[host] = entry
-	return true
+	return true, nil
 }

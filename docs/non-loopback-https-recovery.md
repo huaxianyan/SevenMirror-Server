@@ -25,7 +25,7 @@ go run ./cmd/server
 
 TLS 1.2 or newer is required. The server does not generate certificates and does not redirect an HTTP registration request to HTTPS.
 
-A TLS reverse proxy may be used instead. In that case keep the application listener on `127.0.0.1`, preserve WebSocket upgrade semantics, and do not enable forwarded-client-IP trust until the separate trusted-proxy policy is implemented.
+A TLS reverse proxy may be used instead. In that case keep the application listener on `127.0.0.1` and follow the Caddy WebSocket, access-log and exact trusted-peer baseline in [`caddy-reverse-proxy.md`](caddy-reverse-proxy.md). Do not trust broad private or container ranges.
 
 ## Client preparation
 

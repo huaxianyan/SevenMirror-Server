@@ -58,10 +58,10 @@ Severity is provisional until an independent reviewer assesses realistic impact.
 | SR-007 | High | PARTIAL | Define and test encrypted, access-controlled, off-host authority-key plus consistent-registry backup/restore operations; the PKCS#8 file itself is currently unencrypted. |
 | SR-008 | Medium | PARTIAL | Chrome inventories raw credentials, non-extractable identity keys, decrypted notification/action state, reply retention, `chrome.storage`, URL/UI surfaces, profile-compromise limits, and deletion gaps. An isolated real-browser canary now covers extension IndexedDB LevelDB placement, Worker/browser restart, native notification API, captured diagnostics, `chrome.storage`, interaction URL and closed-profile export. Product retention/clearing controls, interaction DOM, backup/sync, crash/memory, IME and OS-notification-history evidence remain open. |
 | SR-009 | Medium | OPEN | Complete and verify an Android release-signing-key backup on a separate encrypted physical or otherwise independently durable medium. |
-| SR-010 | Medium | OPEN | Decide deployment-aware trusted-proxy handling and configurable connection/rate limits; test that proxy headers cannot bypass or collapse abuse controls. |
+| SR-010 | Medium | PARTIAL | Server now accepts one canonical `X-Forwarded-For` address only from explicitly configured canonical proxy CIDRs; direct peers ignore forwarded headers. The Caddy baseline overwrites incoming forwarding state, keeps Server on loopback, and real-process CI proves spoofed headers cannot escape or collapse rate-limit buckets. Configurable registration/rotation/connection limits, distributed proxy topologies, slow-client/flood capacity and operator-specific firewall validation remain open. |
 | SR-011 | High | EXTERNAL | Review registration → possession proof → approval → promotion → `SNO1`, including interruption, replay, concurrent approval/revocation, and stale MV3 Worker deployment. |
 | SR-012 | High | EXTERNAL | Review relay retention, cumulative ACK, eviction, `SNR1`, fixed high-water snapshot recovery, and certified source-key replacement failure. |
-| SR-013 | Medium | PARTIAL | Server CI now exercises real pairing and rotation code issuance, authority-membership registration, legacy-route `404`, current→pending rotation, fixed replay/malformed errors, old/pending WebSocket `SNA1` results, direct WebSocket targets and a method/path/status proxy access-log fixture; the sensitive-state scanner uses a documented temporary-DB promotion after real pending registration because possession proof correctness is covered separately. Code/token text and decoded bytes remain absent from URLs, logs, HTTP errors and live/stopped SQLite/WAL/SHM. Its durable relay test separately keeps encrypted business canary plaintext absent across restart. Android API 29 instrumentation scans real Keystore-backed stores. Chrome combines deterministic store tests with a headless real-profile scan. Production reverse-proxy/deployment backup/support evidence, Chrome interaction DOM/crash/memory/sync/OS artifacts, Android privileged/system/business artifacts and release-baseline execution remain open. |
+| SR-013 | Medium | PARTIAL | Server CI exercises real pairing/rotation issuance, authority registration, legacy-route `404`, credential rotation, WebSocket authentication and sensitive-state scans. A second gate runs pinned Caddy v2.11.4 with the checked-in TLS/WebSocket/trusted-proxy/access-log baseline and proves random query/header/body canaries are absent from reduced logs. Durable relay persistence separately keeps encrypted business plaintext absent across restart. Android API 29 scans real Keystore-backed stores, while Chrome combines deterministic stores with a real-profile scan. Operator deployment backup/support/observability and certificate/log-retention evidence, Chrome interaction/crash/memory/sync/OS artifacts, Android privileged/system/business artifacts and release-baseline execution remain open. |
 | SR-014 | Medium | PARTIAL | Every external Action reference is pinned to an immutable 40-character commit and CI rejects tag/branch references. All retained Actions use Node.js 24. Internal source review removed the redundant unsigned `setup-android` after its production dependencies reported a High finding. The unsigned emulator Action reproduced its committed JavaScript, uses fixed workflow inputs with a read-only job, and retains a visible Moderate `uuid` finding whose affected buffered API is not reached; it has a 2026-09-29 recheck deadline. Independent review and release-channel provenance/signing verification remain open. |
 | SR-015 | High | OPEN | Keep third-party notification transport disabled until security findings and two-real-Android OEM/network validation are complete and a reviewed release explicitly changes the gate. |
 
@@ -191,8 +191,11 @@ Primary references:
   pairing/rotation codes and current/pending credentials in bounded HTTP bodies
   or binary WebSocket auth frames, rejects redirects and query-bearing targets,
   and proves neither text nor decoded bytes enter effective targets, fixed
-  errors, routine Server output or the test proxy access log. A specific
-  production reverse-proxy configuration remains open. (`PARTIAL`; SR-013)
+  errors, routine Server output or the test proxy access log. The separate real
+  Caddy gate validates TLS termination, full WebSocket forwarding, exact proxy
+  trust and a reduced method/path/status log without query, header or body
+  canaries. Operator-specific log shipping and retention remain open.
+  (`PARTIAL`; SR-013)
 - [ ] **R-04 — Possession proof.** Verify the challenge proves possession of the
   exact submitted HPKE key and is bound to workspace/device/registration state,
   expiry, and single use. Review replay and chosen-key behavior. (`EXTERNAL`;
@@ -407,9 +410,12 @@ vectors are not secrets.
 - [ ] **S-03 — TLS/WSS policy.** Verify non-loopback plaintext endpoints are
   rejected, redirects are not followed, hostname/private-CA validation is exact,
   and production builds cannot silently trust debug CAs. (`EVIDENCE`)
-- [ ] **S-04 — Reverse proxy.** Test direct deployment and supported proxy
-  deployment. Define which forwarded headers, if any, are trusted and only from
-  configured proxy addresses. (`OPEN`; SR-010)
+- [ ] **S-04 — Reverse proxy.** The supported Caddy baseline keeps Server on
+  loopback, terminates TLS, forwards WebSockets and overwrites client-address
+  state. Server trusts one canonical forwarded address only from configured
+  canonical CIDRs; CI verifies spoof and bucket-isolation behavior. Validate the
+  operator's exact firewall, certificate renewal and service topology.
+  (`PARTIAL`; SR-010)
 - [ ] **S-05 — Security headers/origin.** Review HTTP response headers, WebSocket
   origin policy and browser applicability, caching of credential responses, and
   content-type sniffing. (`OPEN`)

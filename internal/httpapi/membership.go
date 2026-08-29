@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/huaxianyan/SyncNotifications-Server/internal/admission"
+	"github.com/huaxianyan/SyncNotifications-Server/internal/clientaddress"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/membership"
 	"github.com/huaxianyan/SyncNotifications-Server/protocol/membershipcodec"
 )
@@ -55,8 +56,13 @@ type membershipStateResponse struct {
 	LatestRosterEpoch    string   `json:"latest_roster_epoch"`
 }
 
-func newMembershipHandler(store *admission.Store) *membershipHandler {
-	return &membershipHandler{store: store, now: time.Now, limiter: newRegistrationRateLimiter()}
+func newMembershipHandler(
+	store *admission.Store,
+	clientAddresses clientaddress.Resolver,
+) *membershipHandler {
+	return &membershipHandler{
+		store: store, now: time.Now, limiter: newRegistrationRateLimiter(clientAddresses),
+	}
 }
 
 func (h *membershipHandler) register(w http.ResponseWriter, r *http.Request) {
@@ -201,10 +207,17 @@ func (h *membershipHandler) beginJSON(w http.ResponseWriter, r *http.Request, ra
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return false
 	}
-	if rateLimited && h.limiter != nil && !h.limiter.allow(r, h.now()) {
-		w.Header().Set("Retry-After", "60")
-		http.Error(w, "too many registration attempts", http.StatusTooManyRequests)
-		return false
+	if rateLimited && h.limiter != nil {
+		allowed, err := h.limiter.allow(r, h.now())
+		if err != nil {
+			http.Error(w, "invalid client address", http.StatusBadRequest)
+			return false
+		}
+		if !allowed {
+			w.Header().Set("Retry-After", "60")
+			http.Error(w, "too many registration attempts", http.StatusTooManyRequests)
+			return false
+		}
 	}
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {

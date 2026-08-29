@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/huaxianyan/SyncNotifications-Server/internal/clientaddress"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/relay"
 )
 
@@ -33,7 +34,7 @@ func TestRegisteredCredentialAuthenticatesProductionRelayBoundary(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := relay.NewAuthenticatedWebSocketHandler(hub, authenticator)
+	handler, err := relay.NewAuthenticatedWebSocketHandler(hub, authenticator, clientaddress.New(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +88,7 @@ func TestDurableRevocationClosesActiveRelayAndRejectsReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := relay.NewAuthenticatedWebSocketHandler(hub, authenticator)
+	handler, err := relay.NewAuthenticatedWebSocketHandler(hub, authenticator, clientaddress.New(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +170,7 @@ func TestCredentialRotationClosesOldSessionAndAuthenticatesPendingCredential(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := relay.NewAuthenticatedWebSocketHandler(hub, authenticator)
+	handler, err := relay.NewAuthenticatedWebSocketHandler(hub, authenticator, clientaddress.New(nil))
 	if err != nil {
 		t.Fatal(err)
 	}

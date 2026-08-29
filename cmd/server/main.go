@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/huaxianyan/SyncNotifications-Server/internal/admission"
+	"github.com/huaxianyan/SyncNotifications-Server/internal/clientaddress"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/config"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/httpapi"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/relay"
@@ -48,7 +49,9 @@ func main() {
 		logger.Error("configure device authenticator", "error", err)
 		os.Exit(1)
 	}
-	relayHandler, err := relay.NewAuthenticatedWebSocketHandler(hub, authenticator)
+	clientAddresses := clientaddress.New(cfg.TrustedProxyCIDRs)
+	relayHandler, err := relay.NewAuthenticatedWebSocketHandler(
+		hub, authenticator, clientAddresses)
 	if err != nil {
 		logger.Error("configure authenticated relay", "error", err)
 		os.Exit(1)
@@ -56,7 +59,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              cfg.Address,
-		Handler:           httpapi.NewProductionHandler(store, relayHandler),
+		Handler:           httpapi.NewProductionHandler(store, relayHandler, clientAddresses),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}

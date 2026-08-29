@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/huaxianyan/SyncNotifications-Server/internal/clientaddress"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/relay"
 	"github.com/huaxianyan/SyncNotifications-Server/protocol/envelopeframe"
 	"github.com/huaxianyan/SyncNotifications-Server/protocol/relaydelivery"
@@ -46,7 +47,7 @@ func TestOfflineRecipientResumesDurableCiphertextAfterServerRestart(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler, err := relay.NewAuthenticatedWebSocketHandler(hub, authenticator)
+	handler, err := relay.NewAuthenticatedWebSocketHandler(hub, authenticator, clientaddress.New(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +92,7 @@ func TestOfflineRecipientResumesDurableCiphertextAfterServerRestart(t *testing.T
 		t.Fatal(err)
 	}
 	restartedHandler, err := relay.NewAuthenticatedWebSocketHandler(
-		restartedHub, restartedAuthenticator)
+		restartedHub, restartedAuthenticator, clientaddress.New(nil))
 	if err != nil {
 		t.Fatal(err)
 	}

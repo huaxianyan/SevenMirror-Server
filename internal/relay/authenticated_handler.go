@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/huaxianyan/SyncNotifications-Server/internal/clientaddress"
 )
 
 const (
@@ -45,6 +46,7 @@ type AuthenticatedWebSocketHandler struct {
 func NewAuthenticatedWebSocketHandler(
 	hub *Hub,
 	authenticator ConnectionAuthenticator,
+	clientAddresses clientaddress.Resolver,
 ) (*AuthenticatedWebSocketHandler, error) {
 	if hub == nil || authenticator == nil {
 		return nil, errors.New("hub and authenticator are required")
@@ -53,7 +55,7 @@ func NewAuthenticatedWebSocketHandler(
 		hub:           hub,
 		authenticator: authenticator,
 		now:           time.Now,
-		attempts:      newAuthAttemptLimiter(),
+		attempts:      newAuthAttemptLimiter(clientAddresses),
 		authSlots:     make(chan struct{}, maxConcurrentAuth),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
@@ -69,7 +71,12 @@ func (h *AuthenticatedWebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !h.attempts.allow(r, h.now()) {
+	allowed, err := h.attempts.allow(r, h.now())
+	if err != nil {
+		http.Error(w, "invalid client address", http.StatusBadRequest)
+		return
+	}
+	if !allowed {
 		w.Header().Set("Retry-After", "60")
 		http.Error(w, "too many connection attempts", http.StatusTooManyRequests)
 		return

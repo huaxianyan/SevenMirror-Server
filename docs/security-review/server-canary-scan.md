@@ -100,9 +100,10 @@ not appear as plaintext in relay persistence.
 
 This slice does not yet close `SR-013`:
 
-- the fixture does not validate a specific production Nginx/Caddy/Traefik
-  configuration, TLS termination, forwarded-client-IP trust or full WebSocket
-  upgrade forwarding;
+- this credential scanner's internal proxy still does not validate production
+  forwarding; the separate pinned-Caddy gate in `scripts/caddy_proxy_canary.py`
+  now covers the checked-in TLS, WebSocket, trusted-address and reduced-log
+  baseline;
 - deployment backups, container/runtime logs, observability exporters and
   operator support bundles remain external evidence;
 - WebSocket ciphertext persistence remains covered separately by the opaque
