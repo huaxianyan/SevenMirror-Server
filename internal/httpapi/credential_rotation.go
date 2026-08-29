@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/huaxianyan/SyncNotifications-Server/internal/admission"
-	"github.com/huaxianyan/SyncNotifications-Server/internal/clientaddress"
 )
 
 const maxCredentialRotationBody = 2048
@@ -21,7 +20,7 @@ type credentialRotator interface {
 type credentialRotationHandler struct {
 	rotator credentialRotator
 	now     func() time.Time
-	limiter *registrationRateLimiter
+	limiter *clientRateLimiter
 }
 
 type credentialRotationRequest struct {
@@ -34,13 +33,9 @@ type credentialRotationRequest struct {
 
 func newCredentialRotationHandler(
 	store *admission.Store,
-	clientAddresses clientaddress.Resolver,
+	limiter *clientRateLimiter,
 ) http.Handler {
-	return &credentialRotationHandler{
-		rotator: store,
-		now:     time.Now,
-		limiter: newRegistrationRateLimiter(clientAddresses),
-	}
+	return &credentialRotationHandler{rotator: store, now: time.Now, limiter: limiter}
 }
 
 func (h *credentialRotationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

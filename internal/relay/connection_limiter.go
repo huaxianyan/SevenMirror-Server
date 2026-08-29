@@ -1,34 +1,53 @@
 package relay
 
 import (
+	"errors"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/huaxianyan/SyncNotifications-Server/internal/clientaddress"
+	"github.com/huaxianyan/SyncNotifications-Server/internal/ratelimit"
 )
 
-const (
-	maxAuthenticationPeers = 4096
-	authAttemptsPerMinute  = 20
-	maxConcurrentAuth      = 64
-)
+type AuthenticationLimits struct {
+	AttemptsPerMinute int
+	MaxClientBuckets  int
+	MaxConcurrent     int
+	FrameTimeout      time.Duration
+}
 
-type authAttemptEntry struct {
-	startedAt time.Time
-	attempts  int
+func DefaultAuthenticationLimits() AuthenticationLimits {
+	return AuthenticationLimits{
+		AttemptsPerMinute: 20,
+		MaxClientBuckets:  4096,
+		MaxConcurrent:     64,
+		FrameTimeout:      5 * time.Second,
+	}
+}
+
+func (l AuthenticationLimits) validate() error {
+	if l.AttemptsPerMinute < 1 || l.MaxClientBuckets < 1 ||
+		l.MaxConcurrent < 1 || l.FrameTimeout <= 0 {
+		return errors.New("relay authentication limits must be positive")
+	}
+	return nil
 }
 
 type authAttemptLimiter struct {
-	mu       sync.Mutex
-	peers    map[string]authAttemptEntry
+	windows  *ratelimit.FixedWindow
 	resolver clientaddress.Resolver
 }
 
-func newAuthAttemptLimiter(resolver clientaddress.Resolver) *authAttemptLimiter {
-	return &authAttemptLimiter{
-		peers: make(map[string]authAttemptEntry), resolver: resolver,
+func newAuthAttemptLimiter(
+	resolver clientaddress.Resolver,
+	limits AuthenticationLimits,
+) *authAttemptLimiter {
+	windows, err := ratelimit.NewFixedWindow(
+		limits.AttemptsPerMinute, limits.MaxClientBuckets, time.Minute)
+	if err != nil {
+		panic(err)
 	}
+	return &authAttemptLimiter{windows: windows, resolver: resolver}
 }
 
 func (l *authAttemptLimiter) allow(request *http.Request, now time.Time) (bool, error) {
@@ -36,31 +55,5 @@ func (l *authAttemptLimiter) allow(request *http.Request, now time.Time) (bool, 
 	if err != nil {
 		return false, err
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	entry, exists := l.peers[host]
-	if exists && now.Sub(entry.startedAt) >= time.Minute {
-		delete(l.peers, host)
-		exists = false
-	}
-	if !exists {
-		if len(l.peers) >= maxAuthenticationPeers {
-			for peer, candidate := range l.peers {
-				if now.Sub(candidate.startedAt) >= time.Minute {
-					delete(l.peers, peer)
-				}
-			}
-			if len(l.peers) >= maxAuthenticationPeers {
-				return false, nil
-			}
-		}
-		l.peers[host] = authAttemptEntry{startedAt: now, attempts: 1}
-		return true, nil
-	}
-	if entry.attempts >= authAttemptsPerMinute {
-		return false, nil
-	}
-	entry.attempts++
-	l.peers[host] = entry
-	return true, nil
+	return l.windows.Allow(host, now), nil
 }

@@ -157,8 +157,10 @@ and evidence are in the checklist:
 - local registry/authority consistency and isolated restore now have a real-admin CI drill, while authority PKCS#8 encryption, access control, off-host retention and retrieval evidence remain delegated to the operator's backup system;
 - the documented Android signing-key backup still requires a verified copy on a
   separate encrypted physical medium;
-- the host-local Caddy trusted-proxy policy has internal evidence, while
-  configurable abuse limits and distributed proxy topologies remain undecided;
+- host-local trusted-proxy policy, configurable finite abuse limits and
+  single-process slow-client/capacity checks have internal evidence, while
+  distributed proxy coordination, reconnect storms and deployment throughput
+  remain undecided;
 - two-real-device OEM background and network-transition validation remains open;
 - no independent reviewer has reviewed the Auth HPKE, canonical codecs,
   membership authority, cursor, or snapshot-reset implementation.

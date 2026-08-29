@@ -14,7 +14,7 @@ Repository: <https://github.com/huaxianyan/SevenMirror-Server>
 - Authority-controlled ADR-005 `POST /v1/membership/register|prove|state` enrollment flow; the former `/v1/devices/register` route is not mounted and no open registration mode exists
 - First-binary-frame WebSocket authentication at `GET /v1/relay`
 - Bounded opaque ciphertext routing with workspace/device sender binding
-- Authentication/registration rate limits, five-second auth deadline, Ping/Pong liveness, and graceful shutdown
+- Bounded configurable membership, rotation and relay-authentication limits; slow-header/body/auth deadlines; Ping/Pong liveness; and graceful shutdown
 - Canonical provisional notification and Workspace Membership v1 schemas with cross-client test vectors
 - Recipient-specific durable ciphertext delivery, cumulative ACK, bounded history gaps, and explicit snapshot-required recovery
 - Accepted protocol and Chrome recovery decisions in [`docs/adr/ADR-001-protocol-encoding-and-versioning.md`](docs/adr/ADR-001-protocol-encoding-and-versioning.md) and [`docs/adr/ADR-003-chrome-realtime-connection-and-recovery.md`](docs/adr/ADR-003-chrome-realtime-connection-and-recovery.md)
@@ -41,6 +41,15 @@ Configuration:
 | `NM_DATABASE_PATH` | `data/syncnotifications.db` | SQLite registry and migration database |
 | `NM_AUTHORITY_KEY_DIR` | directory `authority-keys` beside the database | Owner-only directory for newly generated workspace authority PKCS#8 private keys; used by the admin CLI |
 | `NM_SHUTDOWN_TIMEOUT_SECONDS` | `10` | Graceful shutdown timeout |
+| `NM_READ_HEADER_TIMEOUT_SECONDS` | `5` | Maximum time to receive complete HTTP request headers |
+| `NM_REQUEST_READ_TIMEOUT_SECONDS` | `10` | Maximum time to receive the complete HTTP request, including its bounded body |
+| `NM_MEMBERSHIP_ATTEMPTS_PER_MINUTE` | `10` | Membership register/prove/state attempts allowed per resolved client address |
+| `NM_ROTATION_ATTEMPTS_PER_MINUTE` | `10` | Credential-rotation attempts allowed per resolved client address |
+| `NM_RATE_LIMIT_MAX_CLIENT_BUCKETS` | `4096` | Maximum membership and rotation client-address buckets per limiter |
+| `NM_RELAY_AUTH_ATTEMPTS_PER_MINUTE` | `20` | Relay WebSocket upgrade/authentication attempts allowed per resolved client address |
+| `NM_RELAY_AUTH_MAX_CLIENT_BUCKETS` | `4096` | Maximum relay-authentication client-address buckets |
+| `NM_RELAY_AUTH_MAX_CONCURRENT` | `64` | Maximum concurrent upgraded connections waiting for authentication |
+| `NM_RELAY_AUTH_FRAME_TIMEOUT_SECONDS` | `5` | Maximum time an upgraded WebSocket may wait for exact `SNA1` authentication |
 | `NM_TLS_CERT_FILE` | unset | PEM certificate chain for optional native HTTPS/WSS |
 | `NM_TLS_KEY_FILE` | unset | Matching PEM private key; must be configured with `NM_TLS_CERT_FILE` |
 | `NM_TRUSTED_PROXY_CIDRS` | unset | Canonical comma-separated CIDR prefixes allowed to supply one canonical `X-Forwarded-For` client address; leave unset for direct/native TLS |
@@ -136,7 +145,7 @@ go test ./...
 
 This is not yet a production release. Certified revocation, recoverable transport credential rotation, recipient-scoped durable delivery, cumulative cursors, and authority-certified snapshot recovery are implemented and have passed the documented mixed-device engineering acceptance. They have not received independent security approval. The P6 review baseline, threat model, initial findings, and reproducible evidence checklist are maintained in [`docs/security-review/`](docs/security-review/README.md).
 
-Independent protocol/security review, release-baseline security scans, authority/signing backup operations, operator-specific proxy/certificate/log-retention validation, configurable abuse-limit policy, release provenance, and two-real-Android OEM validation remain release blockers. Use `wss://` outside loopback; native TLS requires TLS 1.2 or newer. Until those gates pass and a reviewed release explicitly changes the product gate, submit only app-owned synthetic encrypted payloads—never third-party notification content.
+Independent protocol/security review, release-baseline security scans, authority/signing backup operations, operator-specific proxy/certificate/log-retention validation, distributed-proxy and deployment-capacity abuse testing, release provenance, and two-real-Android OEM validation remain release blockers. Use `wss://` outside loopback; native TLS requires TLS 1.2 or newer. Until those gates pass and a reviewed release explicitly changes the product gate, submit only app-owned synthetic encrypted payloads—never third-party notification content.
 
 The first-message authentication format is documented in [`protocol/device-auth-frame-v1.md`](protocol/device-auth-frame-v1.md).
 

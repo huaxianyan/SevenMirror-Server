@@ -64,6 +64,14 @@ The checked-in configuration intentionally does not choose an ACME account, DNS 
 
 Run Caddy and Server as separate least-privilege service identities when the host supports it. The Caddy identity needs the certificate and access-log paths but does not need the SQLite registry or authority private keys. The Server identity needs its registry and runtime data but does not need the TLS private key or Caddy logs. The admin CLI and authority key directory should not be available to the Caddy identity.
 
+## Abuse limits
+
+Server defaults bound membership and rotation attempts to 10 per resolved client per minute, relay authentication attempts to 20 per minute, tracked client buckets to 4,096 per limiter, concurrent unauthenticated upgraded sockets to 64, HTTP header reads to 5 seconds, complete HTTP request reads to 10 seconds, and the exact `SNA1` wait to 5 seconds. The corresponding `NM_*` variables are listed in the root README.
+
+These are safe finite defaults, not universal capacity recommendations. Choose deployment values from the number of enrolled devices, reconnect behavior and available file descriptors／memory. If multiple externally reachable proxies can forward to Server, they must all produce the same authenticated canonical client-address boundary or use a separately reviewed rate-limiting topology. Do not increase client buckets or concurrent authentication merely to suppress overload symptoms.
+
+`scripts/abuse_limit_canary.py` starts the real Server with deliberately small values and proves membership／rotation attempt limits, bounded client buckets, concurrent pre-authentication capacity, relay-authentication attempt limits, and slow HTTP header／body／WebSocket-auth termination. It does not establish production throughput, reconnect-storm capacity, distributed limiter coordination or external load-balancer behavior.
+
 ## Automated evidence
 
 CI downloads Caddy `v2.11.4` from the official GitHub release and verifies the Linux amd64 archive against the hard-coded official SHA-512:

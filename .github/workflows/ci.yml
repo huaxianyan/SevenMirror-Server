@@ -51,6 +51,8 @@ jobs:
         run: python3 scripts/server_canary_scan.py --server ./server --admin ./admin
       - name: Verify consistent workspace backup and isolated restore
         run: python3 scripts/workspace_backup_restore_canary.py --admin ./admin
+      - name: Verify abuse limits and slow-client timeouts
+        run: python3 scripts/abuse_limit_canary.py --server ./server
       - name: Verify production Caddy TLS and trusted-proxy baseline
         env:
           CADDY_VERSION: 2.11.4

@@ -1,66 +1,60 @@
 package httpapi
 
 import (
+	"errors"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/huaxianyan/SyncNotifications-Server/internal/clientaddress"
+	"github.com/huaxianyan/SyncNotifications-Server/internal/ratelimit"
 )
 
-const maxRateLimitPeers = 4096
-
-type fixedWindowEntry struct {
-	startedAt time.Time
-	attempts  int
+type AttemptLimits struct {
+	AttemptsPerMinute int
+	MaxClientBuckets  int
 }
 
-type registrationRateLimiter struct {
-	mu       sync.Mutex
-	peers    map[string]fixedWindowEntry
-	limit    int
-	window   time.Duration
-	resolver clientaddress.Resolver
+type RateLimits struct {
+	Membership AttemptLimits
+	Rotation   AttemptLimits
 }
 
-func newRegistrationRateLimiter(resolver clientaddress.Resolver) *registrationRateLimiter {
-	return &registrationRateLimiter{
-		peers: make(map[string]fixedWindowEntry), limit: 10, window: time.Minute,
-		resolver: resolver,
+func DefaultRateLimits() RateLimits {
+	return RateLimits{
+		Membership: AttemptLimits{AttemptsPerMinute: 10, MaxClientBuckets: 4096},
+		Rotation:   AttemptLimits{AttemptsPerMinute: 10, MaxClientBuckets: 4096},
 	}
 }
 
-func (l *registrationRateLimiter) allow(r *http.Request, now time.Time) (bool, error) {
+func (l RateLimits) validate() error {
+	if l.Membership.AttemptsPerMinute < 1 || l.Membership.MaxClientBuckets < 1 ||
+		l.Rotation.AttemptsPerMinute < 1 || l.Rotation.MaxClientBuckets < 1 {
+		return errors.New("HTTP API rate limits must be positive")
+	}
+	return nil
+}
+
+type clientRateLimiter struct {
+	windows  *ratelimit.FixedWindow
+	resolver clientaddress.Resolver
+}
+
+func newClientRateLimiter(
+	resolver clientaddress.Resolver,
+	limits AttemptLimits,
+) *clientRateLimiter {
+	window, err := ratelimit.NewFixedWindow(
+		limits.AttemptsPerMinute, limits.MaxClientBuckets, time.Minute)
+	if err != nil {
+		panic(err)
+	}
+	return &clientRateLimiter{windows: window, resolver: resolver}
+}
+
+func (l *clientRateLimiter) allow(r *http.Request, now time.Time) (bool, error) {
 	host, err := l.resolver.Resolve(r)
 	if err != nil {
 		return false, err
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	entry, exists := l.peers[host]
-	if exists && now.Sub(entry.startedAt) >= l.window {
-		delete(l.peers, host)
-		exists = false
-	}
-	if !exists {
-		if len(l.peers) >= maxRateLimitPeers {
-			for peer, candidate := range l.peers {
-				if now.Sub(candidate.startedAt) >= l.window {
-					delete(l.peers, peer)
-				}
-			}
-			if len(l.peers) >= maxRateLimitPeers {
-				return false, nil
-			}
-		}
-		l.peers[host] = fixedWindowEntry{startedAt: now, attempts: 1}
-		return true, nil
-	}
-	if entry.attempts >= l.limit {
-		return false, nil
-	}
-	entry.attempts++
-	l.peers[host] = entry
-	return true, nil
+	return l.windows.Allow(host, now), nil
 }

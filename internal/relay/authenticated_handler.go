@@ -12,10 +12,7 @@ import (
 	"github.com/huaxianyan/SyncNotifications-Server/internal/clientaddress"
 )
 
-const (
-	authFrameSize = 68
-	authTimeout   = 5 * time.Second
-)
+const authFrameSize = 68
 
 var authMagic = [4]byte{'S', 'N', 'A', '1'}
 
@@ -40,6 +37,7 @@ type AuthenticatedWebSocketHandler struct {
 	now           func() time.Time
 	attempts      *authAttemptLimiter
 	authSlots     chan struct{}
+	authTimeout   time.Duration
 	upgrader      websocket.Upgrader
 }
 
@@ -47,16 +45,28 @@ func NewAuthenticatedWebSocketHandler(
 	hub *Hub,
 	authenticator ConnectionAuthenticator,
 	clientAddresses clientaddress.Resolver,
+	configuredLimits ...AuthenticationLimits,
 ) (*AuthenticatedWebSocketHandler, error) {
 	if hub == nil || authenticator == nil {
 		return nil, errors.New("hub and authenticator are required")
+	}
+	limits := DefaultAuthenticationLimits()
+	if len(configuredLimits) > 1 {
+		return nil, errors.New("at most one relay authentication limit set is allowed")
+	}
+	if len(configuredLimits) == 1 {
+		limits = configuredLimits[0]
+	}
+	if err := limits.validate(); err != nil {
+		return nil, err
 	}
 	return &AuthenticatedWebSocketHandler{
 		hub:           hub,
 		authenticator: authenticator,
 		now:           time.Now,
-		attempts:      newAuthAttemptLimiter(clientAddresses),
-		authSlots:     make(chan struct{}, maxConcurrentAuth),
+		attempts:      newAuthAttemptLimiter(clientAddresses, limits),
+		authSlots:     make(chan struct{}, limits.MaxConcurrent),
+		authTimeout:   limits.FrameTimeout,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
@@ -100,7 +110,7 @@ func (h *AuthenticatedWebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http
 	}
 	defer connection.Close()
 
-	peer, token, err := readAuthenticationFrame(connection)
+	peer, token, err := readAuthenticationFrame(connection, h.authTimeout)
 	if err != nil {
 		writeGenericClose(connection)
 		return
@@ -129,9 +139,12 @@ func EncodeAuthenticationFrame(peer PeerIdentity, token []byte) ([]byte, error) 
 	return frame, nil
 }
 
-func readAuthenticationFrame(connection *websocket.Conn) (PeerIdentity, []byte, error) {
+func readAuthenticationFrame(
+	connection *websocket.Conn,
+	timeout time.Duration,
+) (PeerIdentity, []byte, error) {
 	connection.SetReadLimit(authFrameSize)
-	if err := connection.SetReadDeadline(time.Now().Add(authTimeout)); err != nil {
+	if err := connection.SetReadDeadline(time.Now().Add(timeout)); err != nil {
 		return PeerIdentity{}, nil, err
 	}
 	messageType, reader, err := connection.NextReader()

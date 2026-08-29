@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/huaxianyan/SyncNotifications-Server/internal/admission"
-	"github.com/huaxianyan/SyncNotifications-Server/internal/clientaddress"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/membership"
 	"github.com/huaxianyan/SyncNotifications-Server/protocol/membershipcodec"
 )
@@ -21,7 +20,7 @@ const maxMembershipBody = 8192
 type membershipHandler struct {
 	store   *admission.Store
 	now     func() time.Time
-	limiter *registrationRateLimiter
+	limiter *clientRateLimiter
 }
 
 type membershipRegistrationResponse struct {
@@ -58,11 +57,9 @@ type membershipStateResponse struct {
 
 func newMembershipHandler(
 	store *admission.Store,
-	clientAddresses clientaddress.Resolver,
+	limiter *clientRateLimiter,
 ) *membershipHandler {
-	return &membershipHandler{
-		store: store, now: time.Now, limiter: newRegistrationRateLimiter(clientAddresses),
-	}
+	return &membershipHandler{store: store, now: time.Now, limiter: limiter}
 }
 
 func (h *membershipHandler) register(w http.ResponseWriter, r *http.Request) {

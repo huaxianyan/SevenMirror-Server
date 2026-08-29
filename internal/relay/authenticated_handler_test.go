@@ -171,9 +171,10 @@ func TestAuthenticatedHandlerRejectsWrongTokenAndWebOrigin(t *testing.T) {
 }
 
 func TestAuthenticationAttemptLimiterUsesForwardedAddressOnlyForTrustedProxy(t *testing.T) {
-	limiter := newAuthAttemptLimiter(clientaddress.New(nil))
+	limits := DefaultAuthenticationLimits()
+	limiter := newAuthAttemptLimiter(clientaddress.New(nil), limits)
 	now := time.Unix(1_800_000_000, 0)
-	for i := 0; i < authAttemptsPerMinute; i++ {
+	for i := 0; i < limits.AttemptsPerMinute; i++ {
 		request := httptest.NewRequest(http.MethodGet, "/v1/relay", nil)
 		request.RemoteAddr = "192.0.2.20:1234"
 		request.Header.Set("X-Forwarded-For", "198.51.100.1")
@@ -192,8 +193,8 @@ func TestAuthenticationAttemptLimiterUsesForwardedAddressOnlyForTrustedProxy(t *
 
 	trusted := newAuthAttemptLimiter(clientaddress.New([]netip.Prefix{
 		netip.MustParsePrefix("192.0.2.20/32"),
-	}))
-	for i := 0; i < authAttemptsPerMinute; i++ {
+	}), limits)
+	for i := 0; i < limits.AttemptsPerMinute; i++ {
 		request := httptest.NewRequest(http.MethodGet, "/v1/relay", nil)
 		request.RemoteAddr = "192.0.2.20:1234"
 		request.Header.Set("X-Forwarded-For", "198.51.100.1")

@@ -10,7 +10,7 @@ import (
 )
 
 func TestRegistrationRateLimiterUsesConfiguredClientAddressAndResets(t *testing.T) {
-	limiter := newRegistrationRateLimiter(clientaddress.New(nil))
+	limiter := newClientRateLimiter(clientaddress.New(nil), DefaultRateLimits().Membership)
 	now := time.Unix(1_800_000_000, 0)
 	for i := 0; i < 10; i++ {
 		request := httptest.NewRequest("POST", "/v1/membership/register", nil)
@@ -29,9 +29,9 @@ func TestRegistrationRateLimiterUsesConfiguredClientAddressAndResets(t *testing.
 		t.Fatalf("reset attempt allowed=%v error=%v", allowed, err)
 	}
 
-	trusted := newRegistrationRateLimiter(clientaddress.New([]netip.Prefix{
+	trusted := newClientRateLimiter(clientaddress.New([]netip.Prefix{
 		netip.MustParsePrefix("192.0.2.10/32"),
-	}))
+	}), DefaultRateLimits().Membership)
 	for index, forwarded := range []string{"198.51.100.1", "198.51.100.2"} {
 		request := httptest.NewRequest("POST", "/v1/membership/register", nil)
 		request.RemoteAddr = "192.0.2.10:1234"

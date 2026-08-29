@@ -327,7 +327,10 @@ does not hide this metadata.
 A relay or network attacker can drop, delay, reorder, or evict ciphertext and can
 prevent snapshot responses. Recovery detects and reconciles supported gaps but
 cannot guarantee availability. Queue bounds intentionally trade retention for
-bounded Server resources.
+bounded Server resources. Configurable finite client buckets, attempt rates,
+pre-authentication slots and HTTP／WebSocket authentication deadlines bound one
+Server process; they do not coordinate distributed proxies or prove production
+capacity under reconnect storms.
 
 ### 8.6 Revocation is not retroactive
 

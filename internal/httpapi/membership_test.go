@@ -46,7 +46,8 @@ func TestMembershipHTTPRegistersProofsAndRetrievesApprovedRoster(t *testing.T) {
 	privateScalar[31] = 2
 	x, y := elliptic.P256().ScalarBaseMult(privateScalar)
 	identityPublic := elliptic.Marshal(elliptic.P256(), x, y)
-	handler := newMembershipHandler(store, clientaddress.New(nil))
+	handler := newMembershipHandler(store, newClientRateLimiter(
+		clientaddress.New(nil), DefaultRateLimits().Membership))
 	handler.now = func() time.Time { return now }
 
 	register := httptest.NewRecorder()

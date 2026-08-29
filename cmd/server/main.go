@@ -19,6 +19,40 @@ import (
 	"github.com/huaxianyan/SyncNotifications-Server/internal/relay"
 )
 
+func configuredHTTPRateLimits(overrides config.AbuseLimitOverrides) httpapi.RateLimits {
+	limits := httpapi.DefaultRateLimits()
+	if overrides.MembershipAttemptsPerMinute != 0 {
+		limits.Membership.AttemptsPerMinute = overrides.MembershipAttemptsPerMinute
+	}
+	if overrides.RotationAttemptsPerMinute != 0 {
+		limits.Rotation.AttemptsPerMinute = overrides.RotationAttemptsPerMinute
+	}
+	if overrides.RateLimitMaxClientBuckets != 0 {
+		limits.Membership.MaxClientBuckets = overrides.RateLimitMaxClientBuckets
+		limits.Rotation.MaxClientBuckets = overrides.RateLimitMaxClientBuckets
+	}
+	return limits
+}
+
+func configuredRelayAuthenticationLimits(
+	overrides config.AbuseLimitOverrides,
+) relay.AuthenticationLimits {
+	limits := relay.DefaultAuthenticationLimits()
+	if overrides.RelayAuthAttemptsPerMinute != 0 {
+		limits.AttemptsPerMinute = overrides.RelayAuthAttemptsPerMinute
+	}
+	if overrides.RelayAuthMaxClientBuckets != 0 {
+		limits.MaxClientBuckets = overrides.RelayAuthMaxClientBuckets
+	}
+	if overrides.RelayAuthMaxConcurrent != 0 {
+		limits.MaxConcurrent = overrides.RelayAuthMaxConcurrent
+	}
+	if overrides.RelayAuthFrameTimeout != 0 {
+		limits.FrameTimeout = overrides.RelayAuthFrameTimeout
+	}
+	return limits
+}
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
@@ -50,17 +84,26 @@ func main() {
 		os.Exit(1)
 	}
 	clientAddresses := clientaddress.New(cfg.TrustedProxyCIDRs)
+	relayLimits := configuredRelayAuthenticationLimits(cfg.AbuseLimits)
 	relayHandler, err := relay.NewAuthenticatedWebSocketHandler(
-		hub, authenticator, clientAddresses)
+		hub, authenticator, clientAddresses, relayLimits)
 	if err != nil {
 		logger.Error("configure authenticated relay", "error", err)
 		os.Exit(1)
 	}
 
+	apiLimits := configuredHTTPRateLimits(cfg.AbuseLimits)
+	productionHandler, err := httpapi.NewProductionHandler(
+		store, relayHandler, clientAddresses, apiLimits)
+	if err != nil {
+		logger.Error("configure admission rate limits", "error", err)
+		os.Exit(1)
+	}
 	server := &http.Server{
 		Addr:              cfg.Address,
-		Handler:           httpapi.NewProductionHandler(store, relayHandler, clientAddresses),
-		ReadHeaderTimeout: 5 * time.Second,
+		Handler:           productionHandler,
+		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
+		ReadTimeout:       cfg.RequestReadTimeout,
 		IdleTimeout:       60 * time.Second,
 	}
 
