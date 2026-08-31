@@ -30,13 +30,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Scan reachable Go code for known vulnerabilities
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
-      - name: Verify project license
-        run: |
-          echo '3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986  LICENSE' | sha256sum --check -
-          grep -Fq 'GPL-3.0-only' LICENSE-TRANSITION.md
-          grep -Fq 'a057ab234c237b16f54e3786e54263d84c64e1e8' LICENSE-TRANSITION.md
       - name: Verify release artifact manifest tamper detection
         run: python3 scripts/test_build_release_artifacts.py
       - name: Build and verify release artifact manifest
@@ -44,6 +37,13 @@ jobs:
           python3 scripts/build_release_artifacts.py \
             --output "$RUNNER_TEMP/sevenmirror-server-release" \
             --revision "$GITHUB_SHA"
+      - name: Scan reachable Go code for known vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+      - name: Verify project license
+        run: |
+          echo '3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986  LICENSE' | sha256sum --check -
+          grep -Fq 'GPL-3.0-only' LICENSE-TRANSITION.md
+          grep -Fq 'a057ab234c237b16f54e3786e54263d84c64e1e8' LICENSE-TRANSITION.md
       - name: Check formatting
         run: test -z "$(gofmt -l cmd internal protocol)"
       - name: Vet
