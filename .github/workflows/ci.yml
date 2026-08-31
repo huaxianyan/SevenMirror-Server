@@ -39,8 +39,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_VERSION: 8.30.1
-      - name: Scan reachable Go code for known vulnerabilities
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+      - name: Validate vulnerability exception governance
+        run: |
+          python3 scripts/test_validate_vulnerability_exceptions.py
+          python3 scripts/validate_vulnerability_exceptions.py
+      - name: Scan reachable Go code with database freshness evidence
+        run: |
+          python3 scripts/test_govulncheck_gate.py
+          python3 scripts/govulncheck_gate.py \
+            --output "$RUNNER_TEMP/server-vulnerability-evidence.json" \
+            --revision "$GITHUB_SHA"
       - name: Verify project license
         run: |
           echo '3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986  LICENSE' | sha256sum --check -

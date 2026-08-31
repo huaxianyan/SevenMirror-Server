@@ -51,7 +51,7 @@ Severity is provisional until an independent reviewer assesses realistic impact.
 | --- | --- | --- | --- |
 | SR-001 | High | OPEN | Complete independent protocol and cryptographic review of Auth HPKE, canonical encodings, identity binding, replay, and domain separation before v1 freeze. |
 | SR-002 | Medium | EVIDENCE | All three CI workflows now run SHA-pinned Gitleaks Action v3.0.0 with scanner v8.30.1 over full Git history. The only path allowlist is the published deterministic `protocol/test-vectors/` tree; Server documentation false positives use exact fingerprints. Independent review and release-candidate execution remain required. |
-| SR-003 | Medium | PARTIAL | Server now runs `govulncheck v1.1.4`; its first CI run found 12 reachable Go 1.24.13 standard-library vulnerabilities, so the enforced source/CI/container floor is now Go 1.25.13. Chrome runs `npm audit` against `package-lock.json` and the initial High-severity `nanoid` finding is fixed at 3.3.18. Android now has strict Gradle locks, SHA-256 artifact verification, a reproducible release-runtime inventory, and a SHA-pinned OSV Scanner v2.5.1 blocking gate with zero current runtime findings. Its separate complete plugin/build-tool audit still reports upstream findings and intentionally remains non-blocking pending triage, remediation, or time-bounded accepted-risk decisions. Vulnerability database timestamp evidence and the cross-repository exception policy also remain open. |
+| SR-003 | Medium | PARTIAL | Server runs `govulncheck v1.1.4`; after the Go 1.25.13 remediation it emits bounded JSON evidence and rejects a vuln.go.dev `db_last_modified` older than seven days, future-dated state, scanner/runtime drift or any reachable finding. The canonical cross-repository exception registry is empty and now fails CI on malformed, duplicate, overlong or expired entries; exact purl/finding/scope, product claim, distinct owner/approver and bounded expiry are mandatory. Chrome's locked npm audit remains at zero High findings. Android's 90-package runtime OSV gate remains zero, while its complete plugin/build-tool audit still reports 21 affected packages／86 records and is intentionally visible pending individual remediation, applicability or approved time-bounded decisions. npm/OSV query-time evidence, base-image package scans and those Android dispositions remain open. |
 | SR-004 | Medium | EVIDENCE | Server publishes the canonical `SECURITY.md`; Android and Chrome link to it from repository-local policies and expose component-specific private-report links. All three repositories have GitHub Private Vulnerability Reporting enabled. The policy states that no production version is currently supported, defines response targets, coordinated disclosure, research boundaries, report hygiene, and future security-update trust. Release-baseline verification remains required. |
 | SR-005 | High | EVIDENCE | `/v1/devices/register` is no longer mounted. Schema v8 revokes historical `legacy_active` rows, removes their outstanding rotation codes, and installs insert/update rejection triggers. Authentication, session authorization, rotation-code issuance, and rotation now require `approved`. Unit tests cover route absence, migration rejection, credential denial, and schema enforcement; the real-binary canary also requires legacy-route `404`. Release-baseline execution and independent review remain required. |
 | SR-006 | Medium | PARTIAL | Review Android HPKE private-scalar unwrap, in-memory copies, zeroization limits, crash diagnostics, and the absence of hardware-backed P-256 HPKE operations. |
@@ -470,9 +470,11 @@ vectors are not secrets.
   metadata reports 21 affected build-tool packages and 86 vulnerability records;
   it remains non-blocking so these upstream findings stay visible rather than
   being broadly ignored or mislabeled as APK runtime vulnerabilities. Triage,
-  remediation or time-bounded accepted-risk decisions, vulnerability database
-  timestamp evidence, and the cross-repository exception policy remain
-  open. (`PARTIAL`; SR-003)
+  remediation or time-bounded accepted-risk decisions remain open. Server's
+  bounded govulncheck evidence now records and enforces vuln.go.dev database
+  freshness. The canonical exception registry is empty and validates exact
+  finding/purl/scope, distinct owner/approver and expiry; npm/OSV query-time
+  evidence and base-image package scans remain open. (`PARTIAL`; SR-003)
 - [ ] **B-03 — Secret scan gate.** All three pull-request/push workflows now scan
   full Git history using Gitleaks Action v3.0.0 pinned to commit
   `e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e` and scanner v8.30.1. The sole path

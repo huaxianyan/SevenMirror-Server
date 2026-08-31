@@ -37,9 +37,16 @@ jobs:
           case "$protocol_version" in
             *-dev) echo 'Development protocol versions cannot be released by tag.' >&2; exit 1 ;;
           esac
-      - name: Build and verify release artifact set
+      - name: Validate vulnerability evidence and exception registry
         run: |
           test -z "$(git status --porcelain=v1)"
+          python3 scripts/validate_vulnerability_exceptions.py
+          mkdir "$RUNNER_TEMP/sevenmirror-security-evidence"
+          python3 scripts/govulncheck_gate.py \
+            --output "$RUNNER_TEMP/sevenmirror-security-evidence/server-vulnerability-evidence.json" \
+            --revision "$GITHUB_SHA"
+      - name: Build and verify release artifact set
+        run: |
           python3 scripts/build_release_artifacts.py \
             --output "$RUNNER_TEMP/sevenmirror-server-release" \
             --revision "$GITHUB_SHA"
@@ -71,6 +78,10 @@ jobs:
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: '${{ runner.temp }}/sevenmirror-container-release/*'
+      - name: Generate signed vulnerability-evidence provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: '${{ runner.temp }}/sevenmirror-security-evidence/*'
       - name: Upload verified binary artifact set
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
@@ -83,5 +94,12 @@ jobs:
         with:
           name: sevenmirror-container-${{ github.sha }}
           path: '${{ runner.temp }}/sevenmirror-container-release/'
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload bounded vulnerability evidence
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: sevenmirror-vulnerability-evidence-${{ github.sha }}
+          path: '${{ runner.temp }}/sevenmirror-security-evidence/'
           if-no-files-found: error
           retention-days: 30

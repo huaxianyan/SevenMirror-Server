@@ -76,7 +76,9 @@ includes reproducible verification, and is available through the relevant
 repository or release channel. A GitHub Security Advisory and CVE will be used
 when warranted. Dependency findings are not suppressed solely because the
 vulnerable code is transitive; applicability and accepted residual risk must be
-documented.
+documented. The canonical cross-repository exception, owner, approver, expiry and
+scan-time evidence rules are in
+[`docs/vulnerability-management.md`](docs/vulnerability-management.md).
 
 Reports may be closed as not applicable when the behavior is outside the stated
 threat model or supported deployment, but the explanation must identify the
