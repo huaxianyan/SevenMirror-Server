@@ -38,6 +38,7 @@ func (s fixedStore) IssuePairingCode(
 	_ admission.DeviceType,
 	_ string,
 	now time.Time,
+	_ time.Duration,
 ) (adminservice.PairingCode, error) {
 	return adminservice.PairingCode{Code: "JOIN-CODE", ExpiresAt: now.Add(10 * time.Minute)}, nil
 }

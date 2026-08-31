@@ -234,6 +234,8 @@ func issuePairingCode(management *adminservice.Service, args []string) {
 	workspaceText := flags.String("workspace", "", "base64url workspace ID")
 	deviceType := flags.String("type", "", "android or chrome")
 	name := flags.String("name", "", "optional bound device name")
+	ttl := flags.Duration("ttl", adminservice.DefaultPairingCodeLifetime,
+		"validity duration (maximum 24h)")
 	flags.Parse(args)
 	if flags.NArg() != 0 {
 		flags.Usage()
@@ -241,13 +243,13 @@ func issuePairingCode(management *adminservice.Service, args []string) {
 	}
 	workspace := parseWorkspaceID(*workspaceText)
 	issued, err := management.IssuePairingCode(
-		context.Background(), workspace, admission.DeviceType(*deviceType), *name, time.Now())
+		context.Background(), workspace, admission.DeviceType(*deviceType), *name, time.Now(), *ttl)
 	if err != nil {
 		fatal("issue pairing code", err)
 	}
 	// The raw single-use secret is printed exactly once and is never stored.
 	fmt.Printf("pairing_code=%s\n", issued.Code)
-	fmt.Println("expires_in=10m")
+	fmt.Printf("expires_in=%s\n", ttl.String())
 }
 
 func listDevices(store *admission.Store, args []string) {
@@ -381,7 +383,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin restore-workspace-backup --workspace <id> --backup <directory> --database <new-file> --authority-key-directory <directory>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin prepare-authority-rotation")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin rotate-authority --workspace <id> --new-key-file <path>")
-	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin issue-pairing-code --workspace <id> --type android|chrome [--name name]")
+	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin issue-pairing-code --workspace <id> --type android|chrome [--name name] [--ttl 10m]")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin list-devices --workspace <id>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin list-pending-devices --workspace <id>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin approve-device --workspace <id> --device-ref <ref>")

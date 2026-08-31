@@ -107,7 +107,8 @@ func registerPendingApproval(
 	now time.Time,
 ) admission.RegisteredDevice {
 	t.Helper()
-	issued, err := service.IssuePairingCode(ctx, workspaceID, deviceType, deviceName, now)
+	issued, err := service.IssuePairingCode(
+		ctx, workspaceID, deviceType, deviceName, now, DefaultPairingCodeLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}

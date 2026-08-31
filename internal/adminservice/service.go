@@ -12,7 +12,7 @@ import (
 	membershipv1 "github.com/huaxianyan/SyncNotifications-Server/protocol/generated/membership/v1"
 )
 
-const pairingCodeLifetime = 10 * time.Minute
+const DefaultPairingCodeLifetime = 10 * time.Minute
 
 var ErrInvalidDeviceState = errors.New("device is not in the required state")
 
@@ -58,13 +58,14 @@ func (s *Service) IssuePairingCode(
 	deviceType admission.DeviceType,
 	deviceName string,
 	now time.Time,
+	ttl time.Duration,
 ) (PairingCode, error) {
 	code, err := s.store.IssuePairingCode(
-		ctx, workspaceID, deviceType, deviceName, now, pairingCodeLifetime)
+		ctx, workspaceID, deviceType, deviceName, now, ttl)
 	if err != nil {
 		return PairingCode{}, err
 	}
-	return PairingCode{Code: code, ExpiresAt: now.Add(pairingCodeLifetime)}, nil
+	return PairingCode{Code: code, ExpiresAt: now.Add(ttl)}, nil
 }
 
 func (s *Service) ApproveDevice(

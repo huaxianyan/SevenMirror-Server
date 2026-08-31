@@ -36,7 +36,7 @@ var files embed.FS
 type Manager interface {
 	ListWorkspaces(context.Context) ([]admission.WorkspaceSummary, error)
 	ListDevices(context.Context, admission.WorkspaceID) ([]admission.DeviceSummary, error)
-	IssuePairingCode(context.Context, admission.WorkspaceID, admission.DeviceType, string, time.Time) (adminservice.PairingCode, error)
+	IssuePairingCode(context.Context, admission.WorkspaceID, admission.DeviceType, string, time.Time, time.Duration) (adminservice.PairingCode, error)
 	ApproveDevice(context.Context, admission.WorkspaceID, string, time.Time) (admission.ApprovedMembership, error)
 	ChangeDeviceAccess(context.Context, admission.WorkspaceID, string, adminservice.DeviceAccessAction, time.Time) (admission.RevokedDevice, error)
 }
@@ -249,7 +249,7 @@ func (h *Handler) issuePairingCode(w http.ResponseWriter, r *http.Request) {
 	}
 	issued, err := h.manager.IssuePairingCode(
 		r.Context(), workspaceID, admission.DeviceType(r.PostForm.Get("device_type")),
-		r.PostForm.Get("device_name"), h.now())
+		r.PostForm.Get("device_name"), h.now(), adminservice.DefaultPairingCodeLifetime)
 	if err != nil {
 		h.finishAction(w, r, digest, actionFailure())
 		return
