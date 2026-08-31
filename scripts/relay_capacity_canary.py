@@ -34,9 +34,13 @@ STORM_CLIENTS = 32
 STORM_WAVES = 4
 ROUTING_PAIRS = 16
 FRAMES_PER_PAIR = 125
+DURABLE_PAIRS = 4
+DURABLE_FRAMES_PER_PAIR = 125
 MAX_RSS_GROWTH_BYTES = 128 * 1024 * 1024
 MAX_FINAL_DESCRIPTOR_GROWTH = 96
 MINIMUM_FRAMES_PER_SECOND = 100
+MINIMUM_DURABLE_FRAMES_PER_SECOND = 50
+MAXIMUM_ACK_CONVERGENCE_SECONDS = 5
 
 
 def parse_args() -> argparse.Namespace:
@@ -158,6 +162,14 @@ def process_usage(process: subprocess.Popen[bytes]) -> tuple[int, int]:
     return rss_bytes, descriptors
 
 
+def relay_delivery_count(database: Path) -> int:
+    connection = sqlite3.connect(database)
+    try:
+        return int(connection.execute("SELECT COUNT(*) FROM relay_deliveries").fetchone()[0])
+    finally:
+        connection.close()
+
+
 def routed_envelope(
     template: bytes,
     workspace_id: bytes,
@@ -267,6 +279,58 @@ def main() -> None:
                 peak_rss = max(peak_rss, rss)
                 peak_descriptors = max(peak_descriptors, descriptors)
             elapsed = time.monotonic() - started
+
+            durable_started = time.monotonic()
+            durable_delivered = 0
+            for pair in range(DURABLE_PAIRS):
+                recipient = live[pair * 2 + 1]
+                send_masked_binary(recipient, b"SNC1" + struct.pack(">Q", 0))
+                caught_up = read_websocket_result(recipient)
+                if caught_up != ("binary", b"SND2" + struct.pack(">Q", 0)):
+                    raise RuntimeError("Durable recipient did not initialize at cursor zero")
+            for pair in range(DURABLE_PAIRS):
+                sender = live[pair * 2]
+                recipient = live[pair * 2 + 1]
+                sender_id = devices[pair * 2][0]
+                recipient_id = devices[pair * 2 + 1][0]
+                for delivery_id in range(1, DURABLE_FRAMES_PER_PAIR + 1):
+                    envelope = routed_envelope(
+                        template,
+                        workspace_id,
+                        sender_id,
+                        recipient_id,
+                        FRAMES_PER_PAIR + delivery_id,
+                    )
+                    send_masked_binary(sender, b"SNQ1" + envelope)
+                    result = read_websocket_result(recipient)
+                    expected = b"SND1" + struct.pack(">Q", delivery_id) + envelope
+                    if result != ("binary", expected):
+                        raise RuntimeError("Durable relay did not deliver the committed ciphertext")
+                    caught_up = read_websocket_result(recipient)
+                    if caught_up != ("binary", b"SND2" + struct.pack(">Q", delivery_id)):
+                        raise RuntimeError("Durable relay did not report the exact high-water")
+                    durable_delivered += 1
+            durable_elapsed = time.monotonic() - durable_started
+            expected_queued = DURABLE_PAIRS * DURABLE_FRAMES_PER_PAIR
+            if relay_delivery_count(database) != expected_queued:
+                raise RuntimeError("Durable SQLite queue did not reach the expected high-water")
+
+            ack_started = time.monotonic()
+            for pair in range(DURABLE_PAIRS):
+                send_masked_binary(
+                    live[pair * 2 + 1],
+                    b"SNC2" + struct.pack(">Q", DURABLE_FRAMES_PER_PAIR),
+                )
+            ack_deadline = ack_started + MAXIMUM_ACK_CONVERGENCE_SECONDS
+            while relay_delivery_count(database) != 0:
+                if time.monotonic() >= ack_deadline:
+                    raise RuntimeError("Cumulative ACK did not clear the durable SQLite queue")
+                time.sleep(0.01)
+            ack_elapsed = time.monotonic() - ack_started
+            rss, descriptors = process_usage(process)
+            peak_rss = max(peak_rss, rss)
+            peak_descriptors = max(peak_descriptors, descriptors)
+
             for connection in live:
                 connection.close()
             cleanup_deadline = time.monotonic() + 5
@@ -280,8 +344,14 @@ def main() -> None:
             if delivered != ROUTING_PAIRS * FRAMES_PER_PAIR:
                 raise RuntimeError("Sustained relay delivery count did not converge")
             rate = delivered / elapsed
+            durable_rate = durable_delivered / durable_elapsed
             if rate < MINIMUM_FRAMES_PER_SECOND:
                 raise RuntimeError(f"Sustained relay rate {rate:.1f} frames/s is below baseline")
+            if durable_delivered != DURABLE_PAIRS * DURABLE_FRAMES_PER_PAIR:
+                raise RuntimeError("Durable relay delivery count did not converge")
+            if durable_rate < MINIMUM_DURABLE_FRAMES_PER_SECOND:
+                raise RuntimeError(
+                    f"Durable relay rate {durable_rate:.1f} frames/s is below baseline")
             if peak_rss - baseline_rss > MAX_RSS_GROWTH_BYTES:
                 raise RuntimeError("Server RSS growth exceeded the capacity baseline")
             if final_descriptors - baseline_descriptors > MAX_FINAL_DESCRIPTOR_GROWTH:
@@ -296,6 +366,12 @@ def main() -> None:
                 "delivered_online_frames": delivered,
                 "minimum_frames_per_second": MINIMUM_FRAMES_PER_SECOND,
                 "observed_frames_per_second": round(rate, 1),
+                "delivered_durable_frames": durable_delivered,
+                "durable_queue_high_water": expected_queued,
+                "final_durable_queue_depth": 0,
+                "minimum_durable_frames_per_second": MINIMUM_DURABLE_FRAMES_PER_SECOND,
+                "observed_durable_frames_per_second": round(durable_rate, 1),
+                "ack_convergence_milliseconds": round(ack_elapsed * 1000, 1),
                 "baseline_rss_bytes": baseline_rss,
                 "peak_rss_bytes": peak_rss,
                 "final_rss_bytes": final_rss,

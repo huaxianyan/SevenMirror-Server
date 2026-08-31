@@ -167,8 +167,9 @@ and evidence are in the checklist:
 - the documented Android signing-key backup still requires a verified copy on a
   separate encrypted physical medium;
 - host-local trusted-proxy policy, configurable finite abuse limits, slow-client
-  termination, 32-client reconnect waves and a 2,000-frame single-process relay
-  regression baseline have internal evidence. Distributed proxy coordination and
+  termination, 32-client reconnect waves, 2,000 online frames and 500
+  SQLite-backed durable/ACK frames have a single-process regression baseline.
+  Distributed proxy coordination and
   the actual TLS/load-balancer/container/storage/network workload still require
   deployment-duration capacity evidence;
 - two-real-device OEM background and network-transition validation remains open;

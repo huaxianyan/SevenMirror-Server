@@ -329,8 +329,8 @@ prevent snapshot responses. Recovery detects and reconciles supported gaps but
 cannot guarantee availability. Queue bounds intentionally trade retention for
 bounded Server resources. Configurable finite client buckets, attempt rates,
 pre-authentication slots and HTTP／WebSocket authentication deadlines bound one
-Server process. CI now adds bounded 32-client reconnect waves and sustained
-online-ciphertext regression measurements, but these do not coordinate
+Server process. CI now adds bounded 32-client reconnect waves plus sustained
+online and SQLite-backed durable/ACK regression measurements, but these do not coordinate
 distributed proxies or prove production capacity under the actual TLS, load
 balancer, container, storage and network workload.
 
