@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/huaxianyan/SyncNotifications-Server/internal/adminservice"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/admission"
 )
 
@@ -28,6 +30,35 @@ func (s fixedStore) ListDevices(
 	workspaceID admission.WorkspaceID,
 ) ([]admission.DeviceSummary, error) {
 	return s.devices[workspaceID], nil
+}
+
+func (s fixedStore) IssuePairingCode(
+	_ context.Context,
+	_ admission.WorkspaceID,
+	_ admission.DeviceType,
+	_ string,
+	now time.Time,
+) (adminservice.PairingCode, error) {
+	return adminservice.PairingCode{Code: "JOIN-CODE", ExpiresAt: now.Add(10 * time.Minute)}, nil
+}
+
+func (s fixedStore) ApproveDevice(
+	context.Context,
+	admission.WorkspaceID,
+	string,
+	time.Time,
+) (admission.ApprovedMembership, error) {
+	return admission.ApprovedMembership{}, nil
+}
+
+func (s fixedStore) ChangeDeviceAccess(
+	context.Context,
+	admission.WorkspaceID,
+	string,
+	adminservice.DeviceAccessAction,
+	time.Time,
+) (admission.RevokedDevice, error) {
+	return admission.RevokedDevice{}, nil
 }
 
 func TestAdministratorLogsInOnceAndSeesDeviceStatusWithoutInternalIdentifiers(t *testing.T) {
@@ -51,7 +82,7 @@ func TestAdministratorLogsInOnceAndSeesDeviceStatusWithoutInternalIdentifiers(t 
 	handler, err := NewHandler(store, HandlerConfig{
 		LoginCode: []byte("correct-login-code"), ExpectedOrigin: "http://127.0.0.1:8081",
 		Now:    func() time.Time { return now.Add(3 * time.Minute) },
-		Random: bytes.NewReader(bytes.Repeat([]byte{0x42}, 64)),
+		Random: bytes.NewReader(bytes.Repeat([]byte{0x42}, 96)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -101,11 +132,38 @@ func TestAdministratorLogsInOnceAndSeesDeviceStatusWithoutInternalIdentifiers(t 
 		dashboardResult.Header().Get("X-Frame-Options") != "DENY" {
 		t.Fatalf("security headers=%v", dashboardResult.Header())
 	}
+	csrf := firstCapture(t, text, `name="csrf_token" value="([^"]+)"`)
+	workspaceReference := firstCapture(t, text, `name="workspace_ref" value="([^"]+)"`)
+	pairingResult := postForm(t, handler, "/actions/pairing-code", url.Values{
+		"csrf_token": {csrf}, "workspace_ref": {workspaceReference},
+		"device_type": {"android"}, "device_name": {"手机"},
+	}, cookies[0])
+	if pairingResult.Code != http.StatusSeeOther {
+		t.Fatalf("pairing response=%d body=%s", pairingResult.Code, pairingResult.Body.String())
+	}
+	flashRequest := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8081/", nil)
+	flashRequest.Host = "127.0.0.1:8081"
+	flashRequest.AddCookie(cookies[0])
+	flashResult := httptest.NewRecorder()
+	handler.ServeHTTP(flashResult, flashRequest)
+	if flashBody := flashResult.Body.String(); !strings.Contains(flashBody, "JOIN-CODE") ||
+		strings.Contains(flashBody, "workspace-id-001") {
+		t.Fatalf("pairing flash body=%s", flashBody)
+	}
 
 	logoutWithoutCSRF := postForm(t, handler, "/logout", nil, cookies[0])
 	if logoutWithoutCSRF.Code != http.StatusForbidden {
 		t.Fatalf("logout without CSRF response=%d", logoutWithoutCSRF.Code)
 	}
+}
+
+func firstCapture(t *testing.T, value string, expression string) string {
+	t.Helper()
+	match := regexp.MustCompile(expression).FindStringSubmatch(value)
+	if len(match) != 2 {
+		t.Fatalf("pattern %q not found", expression)
+	}
+	return match[1]
 }
 
 func postForm(

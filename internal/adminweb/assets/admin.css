@@ -8,7 +8,7 @@
 
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; min-height: 100vh; background: #f5f7fb; }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button {
   min-height: 44px;
   padding: 0 1rem;
@@ -22,7 +22,7 @@ button {
 button:hover { background: #2748b7; }
 button:focus-visible, input:focus-visible { outline: 3px solid #8ca5ff; outline-offset: 2px; }
 button.secondary { background: #e4e9f5; color: #172033; }
-input {
+input, select {
   width: 100%;
   min-height: 46px;
   margin: .4rem 0 1rem;
@@ -32,6 +32,8 @@ input {
   background: #fff;
   color: #172033;
 }
+input[type="hidden"], input[type="checkbox"] { min-height: auto; }
+input[type="checkbox"] { width: auto; margin: 0 .35rem 0 0; }
 .centered { display: grid; place-items: center; padding: 1.5rem; }
 .login-card, .workspace, .empty-card {
   width: min(100%, 34rem);
@@ -45,6 +47,12 @@ input {
 .eyebrow { margin: 0; color: #3157d5; font-size: .78rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
 .muted { color: #5d687d; }
 .error { padding: .75rem; border-radius: .5rem; background: #fde7e7; color: #8e1d1d; }
+.notice { padding: 1rem 1.25rem; border: 1px solid #b8c5df; border-radius: .8rem; background: #fff; }
+.notice.success { border-color: #64a77a; background: #edf8f0; }
+.notice.error { border-color: #d28a8a; }
+.notice p { margin: .3rem 0; }
+.secret-label { font-weight: 700; }
+.secret { display: block; overflow-wrap: anywhere; margin: .75rem 0; padding: .85rem; border-radius: .5rem; background: #172033; color: #fff; font-size: 1rem; user-select: all; }
 .topbar {
   display: flex;
   align-items: center;
@@ -58,6 +66,18 @@ input {
 .page { display: grid; gap: 1.5rem; padding: 1.5rem clamp(1rem, 4vw, 3rem) 3rem; }
 .workspace, .empty-card { width: 100%; }
 .section-heading { display: flex; justify-content: space-between; gap: 1rem; }
+.add-device { display: grid; grid-template-columns: minmax(15rem, 1fr) minmax(24rem, 2fr); gap: 1.25rem; margin: 1.25rem 0; padding: 1rem; border: 1px solid #dce1eb; border-radius: .75rem; }
+.add-device h3 { margin-top: 0; }
+.inline-form { display: grid; grid-template-columns: minmax(8rem, .7fr) minmax(12rem, 1fr) auto; align-items: end; gap: .75rem; }
+.inline-form input, .inline-form select { margin-bottom: 0; }
+.actions { display: flex; align-items: flex-start; gap: .5rem; }
+.actions form { margin: 0; }
+details { min-width: 5rem; }
+summary { cursor: pointer; color: #3157d5; font-weight: 650; }
+.confirm-form { display: grid; gap: .75rem; width: 15rem; margin-top: .75rem !important; padding: .75rem; border: 1px solid #dce1eb; border-radius: .6rem; white-space: normal; }
+.confirm-form label { display: flex; align-items: flex-start; }
+button.danger { background: #a92f36; }
+button.danger:hover { background: #88252b; }
 .section-heading h2 { margin-bottom: .25rem; }
 .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(8rem, 1fr)); gap: .75rem; margin: 1.25rem 0; }
 .summary-grid div { padding: 1rem; border-radius: .75rem; background: #edf1fa; }
@@ -72,6 +92,7 @@ tbody th { font-weight: 650; }
 
 @media (max-width: 720px) {
   .summary-grid { grid-template-columns: repeat(2, minmax(7rem, 1fr)); }
+  .add-device, .inline-form { grid-template-columns: 1fr; }
   .topbar { align-items: flex-start; }
   .topbar h1 { font-size: 1.35rem; }
 }
@@ -79,10 +100,13 @@ tbody th { font-weight: 650; }
 @media (prefers-color-scheme: dark) {
   :root, body { background: #101521; color: #edf1fa; }
   .login-card, .workspace, .empty-card, .topbar { background: #171e2d; border-color: #30394c; }
-  input { background: #101521; border-color: #5b667d; color: #edf1fa; }
+  input, select { background: #101521; border-color: #5b667d; color: #edf1fa; }
   button.secondary { background: #30394c; color: #edf1fa; }
   .summary-grid div { background: #222b3e; }
   .muted, .summary-grid dt, thead th, .empty { color: #adb7ca; }
   th, td { border-color: #30394c; }
-  .error { background: #4c2024; color: #ffd8d8; }
+  .error, .notice.error { background: #4c2024; color: #ffd8d8; }
+  .notice { background: #171e2d; border-color: #4e5a72; }
+  .notice.success { background: #183526; border-color: #4d8d64; }
+  .add-device, .confirm-form { border-color: #30394c; }
 }

@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/huaxianyan/SyncNotifications-Server/internal/adminservice"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/adminweb"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/admission"
 )
@@ -35,6 +36,11 @@ func main() {
 		os.Exit(1)
 	}
 	defer store.Close()
+	management, err := adminservice.New(store, config.AuthorityKeyDirectory)
+	if err != nil {
+		logger.Error("configure administration", "error", err)
+		os.Exit(1)
+	}
 
 	loginCode := make([]byte, 32)
 	if _, err := rand.Read(loginCode); err != nil {
@@ -44,7 +50,7 @@ func main() {
 	encodedLoginCode := base64.RawURLEncoding.EncodeToString(loginCode)
 	clear(loginCode)
 	encodedLoginCodeBytes := []byte(encodedLoginCode)
-	handler, err := adminweb.NewHandler(store, adminweb.HandlerConfig{
+	handler, err := adminweb.NewHandler(management, adminweb.HandlerConfig{
 		LoginCode: encodedLoginCodeBytes, ExpectedOrigin: config.ExpectedOrigin,
 	})
 	clear(encodedLoginCodeBytes)

@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -16,10 +17,11 @@ const (
 )
 
 type RuntimeConfig struct {
-	Address         string
-	ExpectedOrigin  string
-	DatabasePath    string
-	ShutdownTimeout time.Duration
+	Address               string
+	ExpectedOrigin        string
+	DatabasePath          string
+	AuthorityKeyDirectory string
+	ShutdownTimeout       time.Duration
 }
 
 func LoadRuntimeConfig() (RuntimeConfig, error) {
@@ -46,9 +48,11 @@ func LoadRuntimeConfig() (RuntimeConfig, error) {
 			return RuntimeConfig{}, errors.New("HTTP NM_ADMIN_ORIGIN must use a loopback IP address")
 		}
 	}
+	databasePath := envOrDefault("NM_DATABASE_PATH", defaultDatabasePath)
 	return RuntimeConfig{
-		Address: address, ExpectedOrigin: originText,
-		DatabasePath:    envOrDefault("NM_DATABASE_PATH", defaultDatabasePath),
+		Address: address, ExpectedOrigin: originText, DatabasePath: databasePath,
+		AuthorityKeyDirectory: envOrDefault(
+			"NM_AUTHORITY_KEY_DIR", filepath.Join(filepath.Dir(databasePath), "authority-keys")),
 		ShutdownTimeout: 10 * time.Second,
 	}, nil
 }

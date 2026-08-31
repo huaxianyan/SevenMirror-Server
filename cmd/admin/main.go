@@ -2,21 +2,18 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
 	"encoding/base64"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
+	"github.com/huaxianyan/SyncNotifications-Server/internal/adminservice"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/admission"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/membership"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/workspacebackup"
-	membershipv1 "github.com/huaxianyan/SyncNotifications-Server/protocol/generated/membership/v1"
 )
 
 func main() {
@@ -44,6 +41,10 @@ func main() {
 		fatal("open admission database", err)
 	}
 	defer store.Close()
+	management, err := adminservice.New(store, authorityKeyDirectory(databasePath))
+	if err != nil {
+		fatal("configure administration", err)
+	}
 
 	switch os.Args[1] {
 	case "init-workspace":
@@ -73,17 +74,17 @@ func main() {
 	case "prepare-authority-rotation":
 		prepareAuthorityRotation(databasePath, os.Args[2:])
 	case "rotate-authority":
-		rotateAuthority(store, databasePath, os.Args[2:])
+		rotateAuthority(store, management, os.Args[2:])
 	case "issue-pairing-code":
-		issuePairingCode(store, os.Args[2:])
+		issuePairingCode(management, os.Args[2:])
 	case "list-devices":
 		listDevices(store, os.Args[2:])
 	case "list-pending-devices":
 		listPendingDevices(store, os.Args[2:])
 	case "approve-device":
-		approveDevice(store, databasePath, os.Args[2:])
+		approveDevice(management, os.Args[2:])
 	case "revoke-device":
-		revokeDevice(store, databasePath, os.Args[2:])
+		revokeDevice(management, os.Args[2:])
 	case "issue-rotation-code":
 		issueRotationCode(store, os.Args[2:])
 	default:
@@ -178,7 +179,11 @@ func prepareAuthorityRotation(databasePath string, args []string) {
 	fmt.Println("result=prepared")
 }
 
-func rotateAuthority(store *admission.Store, databasePath string, args []string) {
+func rotateAuthority(
+	store *admission.Store,
+	management *adminservice.Service,
+	args []string,
+) {
 	flags := flag.NewFlagSet("rotate-authority", flag.ExitOnError)
 	workspaceText := flags.String("workspace", "", "base64url workspace ID")
 	newKeyFile := flags.String("new-key-file", "", "prepared protected Ed25519 PKCS#8 key file")
@@ -199,7 +204,8 @@ func rotateAuthority(store *admission.Store, databasePath string, args []string)
 		printAuthorityRotation(workspace, newPublicKey, completed, "already-rotated")
 		return
 	}
-	previousPrivateKey, err := loadWorkspaceAuthorityPrivateKey(store, databasePath, workspace)
+	previousPrivateKey, err := management.LoadAuthorityPrivateKey(
+		context.Background(), workspace)
 	if err != nil {
 		fatal("load current workspace authority", err)
 	}
@@ -223,26 +229,25 @@ func printAuthorityRotation(workspace admission.WorkspaceID, publicKey membershi
 	fmt.Printf("result=%s\n", result)
 }
 
-func issuePairingCode(store *admission.Store, args []string) {
+func issuePairingCode(management *adminservice.Service, args []string) {
 	flags := flag.NewFlagSet("issue-pairing-code", flag.ExitOnError)
 	workspaceText := flags.String("workspace", "", "base64url workspace ID")
 	deviceType := flags.String("type", "", "android or chrome")
 	name := flags.String("name", "", "optional bound device name")
-	ttl := flags.Duration("ttl", 10*time.Minute, "validity duration (maximum 24h)")
 	flags.Parse(args)
 	if flags.NArg() != 0 {
 		flags.Usage()
 		os.Exit(2)
 	}
 	workspace := parseWorkspaceID(*workspaceText)
-	code, err := store.IssuePairingCode(
-		context.Background(), workspace, admission.DeviceType(*deviceType), *name, time.Now(), *ttl)
+	issued, err := management.IssuePairingCode(
+		context.Background(), workspace, admission.DeviceType(*deviceType), *name, time.Now())
 	if err != nil {
 		fatal("issue pairing code", err)
 	}
 	// The raw single-use secret is printed exactly once and is never stored.
-	fmt.Printf("pairing_code=%s\n", code)
-	fmt.Printf("expires_in=%s\n", ttl.String())
+	fmt.Printf("pairing_code=%s\n", issued.Code)
+	fmt.Println("expires_in=10m")
 }
 
 func listDevices(store *admission.Store, args []string) {
@@ -284,58 +289,22 @@ func listPendingDevices(store *admission.Store, args []string) {
 	}
 }
 
-func approveDevice(store *admission.Store, databasePath string, args []string) {
+func approveDevice(management *adminservice.Service, args []string) {
 	flags := flag.NewFlagSet("approve-device", flag.ExitOnError)
 	workspaceText := flags.String("workspace", "", "base64url workspace ID")
 	reference := flags.String("device-ref", "", "redacted device reference from list-pending-devices")
-	rolesText := flags.String("roles", "", "comma-separated receive,send,invoke,manage roles")
 	flags.Parse(args)
 	if flags.NArg() != 0 {
 		flags.Usage()
 		os.Exit(2)
 	}
-	workspace := parseWorkspaceID(*workspaceText)
-	privateKey, err := loadWorkspaceAuthorityPrivateKey(store, databasePath, workspace)
-	if err != nil {
-		fatal("load workspace authority", err)
-	}
-	defer clear(privateKey)
-	approved, err := store.ApprovePendingMembership(context.Background(), admission.ApprovePendingDevice{
-		WorkspaceID: workspace, DeviceReference: *reference, Roles: parseRoles(*rolesText),
-		AuthorityPrivateKey: privateKey, Now: time.Now(),
-	})
+	approved, err := management.ApproveDevice(
+		context.Background(), parseWorkspaceID(*workspaceText), *reference, time.Now())
 	if err != nil {
 		fatal("approve device", err)
 	}
 	fmt.Printf("device_ref=%s result=approved roster_epoch=%d\n",
 		approved.DeviceReference, approved.RosterEpoch)
-}
-
-func parseRoles(value string) []membershipv1.DeviceRole {
-	roleValues := map[string]membershipv1.DeviceRole{
-		"send":    membershipv1.DeviceRole_DEVICE_ROLE_SEND_NOTIFICATIONS,
-		"receive": membershipv1.DeviceRole_DEVICE_ROLE_RECEIVE_NOTIFICATIONS,
-		"invoke":  membershipv1.DeviceRole_DEVICE_ROLE_INVOKE_NOTIFICATION_ACTIONS,
-		"manage":  membershipv1.DeviceRole_DEVICE_ROLE_MANAGE_DEVICES,
-	}
-	seen := make(map[membershipv1.DeviceRole]struct{})
-	roles := make([]membershipv1.DeviceRole, 0)
-	for _, item := range strings.Split(value, ",") {
-		role, ok := roleValues[strings.TrimSpace(item)]
-		if !ok {
-			fatalMessage("--roles must be a non-empty comma-separated subset of send,receive,invoke,manage")
-		}
-		if _, duplicate := seen[role]; duplicate {
-			fatalMessage("--roles must not contain duplicates")
-		}
-		seen[role] = struct{}{}
-		roles = append(roles, role)
-	}
-	if len(roles) == 0 {
-		fatalMessage("--roles must be a non-empty comma-separated subset of send,receive,invoke,manage")
-	}
-	slices.Sort(roles)
-	return roles
 }
 
 func authorityKeyDirectory(databasePath string) string {
@@ -345,21 +314,7 @@ func authorityKeyDirectory(databasePath string) string {
 	return filepath.Join(filepath.Dir(databasePath), "authority-keys")
 }
 
-func loadWorkspaceAuthorityPrivateKey(
-	store *admission.Store,
-	databasePath string,
-	workspace admission.WorkspaceID,
-) (ed25519.PrivateKey, error) {
-	publicKey, err := store.WorkspaceAuthorityPublicKey(context.Background(), workspace)
-	if err != nil {
-		return nil, err
-	}
-	privateKeyPath := membership.AuthorityPrivateKeyPath(
-		authorityKeyDirectory(databasePath), membership.AuthorityKeyID(publicKey))
-	return membership.LoadAuthorityPrivateKey(privateKeyPath, publicKey)
-}
-
-func revokeDevice(store *admission.Store, databasePath string, args []string) {
+func revokeDevice(management *adminservice.Service, args []string) {
 	flags := flag.NewFlagSet("revoke-device", flag.ExitOnError)
 	workspaceText := flags.String("workspace", "", "base64url workspace ID")
 	reference := flags.String("device-ref", "", "redacted device reference from list-devices")
@@ -369,15 +324,9 @@ func revokeDevice(store *admission.Store, databasePath string, args []string) {
 		os.Exit(2)
 	}
 	workspace := parseWorkspaceID(*workspaceText)
-	privateKey, err := loadWorkspaceAuthorityPrivateKey(store, databasePath, workspace)
-	if err != nil && !errors.Is(err, admission.ErrWorkspaceAuthorityUnavailable) {
-		fatal("load workspace authority", err)
-	}
-	defer clear(privateKey)
-	revoked, err := store.RevokeDevice(context.Background(), admission.RevokeDeviceInput{
-		WorkspaceID: workspace, DeviceReference: *reference,
-		AuthorityPrivateKey: privateKey, Now: time.Now(),
-	})
+	revoked, err := management.ChangeDeviceAccess(
+		context.Background(), workspace, *reference,
+		adminservice.RevokeCurrent, time.Now())
 	if err != nil {
 		fatal("revoke device", err)
 	}
@@ -432,10 +381,10 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin restore-workspace-backup --workspace <id> --backup <directory> --database <new-file> --authority-key-directory <directory>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin prepare-authority-rotation")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin rotate-authority --workspace <id> --new-key-file <path>")
-	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin issue-pairing-code --workspace <id> --type android|chrome [--name name] [--ttl 10m]")
+	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin issue-pairing-code --workspace <id> --type android|chrome [--name name]")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin list-devices --workspace <id>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin list-pending-devices --workspace <id>")
-	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin approve-device --workspace <id> --device-ref <ref> --roles receive,invoke")
+	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin approve-device --workspace <id> --device-ref <ref>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin revoke-device --workspace <id> --device-ref <ref>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin issue-rotation-code --workspace <id> --device-ref <ref> [--ttl 10m]")
 	fmt.Fprintln(os.Stderr, "")

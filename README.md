@@ -11,7 +11,7 @@ Repository: <https://github.com/huaxianyan/SevenMirror-Server>
 - `GET /healthz` and `GET /readyz`
 - SQLite/WAL schema migration and durable private device registry with pending-proof, pending-approval, approved, and revoked membership states; schema v8 revokes historical `legacy_active` rows and prevents their recreation, while schema v9 records nullable successful-authentication and sampled activity times
 - Local admin CLI for workspace initialization with a unique Ed25519 authority and 192-bit, short-lived, one-time pairing codes
-- Separate, on-demand, loopback-only [`admin-web`](docs/admin-web.md) read-only console with a single-use login code, in-memory session, and device status overview
+- Separate, on-demand, loopback-only [`admin-web`](docs/admin-web.md) console with a single-use login code, in-memory session, device status, pairing-code issuance, fixed-policy approval, rejection, and certified removal
 - Authority-controlled ADR-005 `POST /v1/membership/register|prove|state` enrollment flow; the former `/v1/devices/register` route is not mounted and no open registration mode exists
 - First-binary-frame WebSocket authentication at `GET /v1/relay`
 - Bounded opaque ciphertext routing with workspace/device sender binding
@@ -39,7 +39,7 @@ The default bind address is `127.0.0.1:8080`; the service is not exposed publicl
 go run ./cmd/server
 ```
 
-The initial read-only management console is a separate process:
+The management console is a separate process:
 
 ```sh
 NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin-web
@@ -84,7 +84,7 @@ Initialize a private workspace and issue one device-type-bound code from the loc
 ```sh
 go run ./cmd/admin init-workspace
 NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
-  issue-pairing-code --workspace <base64url-id> --type android --name Pixel --ttl 10m
+  issue-pairing-code --workspace <base64url-id> --type android --name Pixel
 ```
 
 Workspace initialization stores only the authority public key in SQLite and writes the private key to an exclusive owner-only PKCS#8 file. The CLI prints its location and domain-separated public key ID, never private key material. Existing pre-schema-v3 workspaces are not silently assigned an authority.
@@ -129,11 +129,10 @@ The membership admin commands operate on pending records created only through `/
 NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
   list-pending-devices --workspace <base64url-workspace-id>
 NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
-  approve-device --workspace <base64url-workspace-id> --device-ref <redacted-ref> \
-  --roles receive,invoke
+  approve-device --workspace <base64url-workspace-id> --device-ref <redacted-ref>
 ```
 
-Approval loads the exact workspace authority key from `NM_AUTHORITY_KEY_DIR`, signs the device certificate, advances and signs the roster, and commits the certificate, device state, and roster in one SQLite transaction. It prints only the redacted device reference and roster epoch. `revoke-device` uses the same authority custody path for certified members: one SQLite transaction removes the exact certificate from the active set, appends its revocation, advances and signs the roster, and marks the device revoked. Historical uncertified devices are fail-closed and migrated directly to revoked state; they cannot re-enroll without a new pairing code and identity.
+Approval loads the exact workspace authority key from `NM_AUTHORITY_KEY_DIR`, applies the product-fixed Android `send` or Chrome `receive,invoke` role template, signs the device certificate, advances and signs the roster, and commits the certificate, device state, and roster in one SQLite transaction. It prints only the redacted device reference and roster epoch. `revoke-device` uses the same authority custody path for certified members: one SQLite transaction removes the exact certificate from the active set, appends its revocation, advances and signs the roster, and marks the device revoked. Historical uncertified devices are fail-closed and migrated directly to revoked state; they cannot re-enroll without a new pairing code and identity.
 
 The list and revoke commands never print a full device ID, transport credential, or E2EE public key. Revocation is durable and idempotent. New authentication fails immediately; the running server revalidates active peers every 250 ms, atomically removes a revoked peer from ciphertext routing, and closes its WebSocket with a fixed policy response. Authorization lookup failures disconnect only the affected peer fail-closed.
 

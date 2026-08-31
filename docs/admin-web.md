@@ -1,6 +1,6 @@
 # SevenMirror Server 管理端
 
-> 状态：UX-001 只读安全骨架
+> 状态：UX-002 设备准入闭环；设备重命名待名称模型决策
 
 `admin-web` 是与公开 relay 分离的按需管理进程。它直接读取同一个 SQLite registry，但不会挂载到设备注册、Membership 或 WebSocket Handler，也不会读取通知业务密文或 authority private key。
 
@@ -9,11 +9,15 @@
 - 一次性登录码；
 - 仅存内存、最长一小时的管理员会话；
 - 工作区概览；
-- Android／Chrome、待批准和已移除数量；
+- Android／Chrome、待批准和已拒绝或移除数量；
 - 设备申请、批准、最近认证、采样活动和移除时间；
-- 严格 Origin、CSRF、CSP、frame 和登录限速边界。
+- Android／Chrome 十分钟单次加入码；
+- 待处理申请的固定产品权限模板批准；
+- 待处理申请拒绝；
+- 已接入设备的 certified removal；
+- 严格 Origin、CSRF、CSP、frame、登录和管理操作限速边界。
 
-当前切片仍不提供批准、拒绝、重命名和移除。对应写操作将在 UX-002 提取唯一管理业务服务后接入，不能在 Web Handler 中复制 `cmd/admin` 的 authority、事务或 roster 签名逻辑。当前界面先提供简体中文；英文资源与完整文案审校属于 UX-005，在此之前不能把本页面描述为完成发布验收。
+加入码、批准、拒绝和移除统一通过 `internal/adminservice` 实现。管理网页和 `cmd/admin` 不复制 authority key 加载、角色模板、事务或 roster 签名逻辑。当前仍不提供设备重命名：名称位于 authority-signed certificate／roster，而 Android 和 Chrome 也需要修改其他设备名称，必须先确定全工作区权威名称或本地别名模型。当前界面先提供简体中文；英文资源与完整文案审校属于 UX-005，在此之前不能把本页面描述为完成发布验收。
 
 ## 启动
 
@@ -70,6 +74,16 @@ NM_ADMIN_ORIGIN=https://admin.example.com
 - 页面显示的是采样后的最近活动，不表示严格实时在线。
 
 schema v9 新增 nullable `last_authenticated_at_ms` 和 `last_activity_at_ms`。升级前已经存在的设备会显示尚无记录，直到设备下一次成功连接；系统不会用注册时间伪造历史认证时间。
+
+## 设备操作语义
+
+- Android 使用固定 `send` 权限模板；
+- Chrome 使用固定 `receive,invoke` 权限模板；
+- 普通页面不允许编辑裸 role；
+- 拒绝只接受 `pending_proof` 或 `pending_approval` 设备；
+- 移除只接受已批准设备，并签发递增 roster 中的 certified revocation；
+- 页面表单只携带进程内 HMAC 派生的短期 action reference，不把 workspace ID 或持久化 device reference 放进 HTML；
+- 加入码通过会话 flash 只显示一次，刷新后消失。
 
 ## 当前发布边界
 
