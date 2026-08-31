@@ -81,8 +81,10 @@ def build(output: Path, revision: str, repository: Path) -> None:
             f"build\tvcs.revision={revision}",
             "build\tvcs.modified=false",
         )
-        if any(value not in metadata for value in required):
-            raise RuntimeError(f"{name} does not contain the required clean VCS build metadata")
+        missing = [value for value in required if value not in metadata]
+        if missing:
+            raise RuntimeError(
+                f"{name} does not contain required build metadata: {missing}")
         records.append({
             "name": name,
             "sha256": sha256(destination),
