@@ -45,6 +45,8 @@ The current product gate remains:
 - [`android-third-party-actions.md`](android-third-party-actions.md) records the
   internal source, dependency, permission, and update-policy review for Android's
   non-official GitHub Actions.
+- [`server-release-actions.md`](server-release-actions.md) records the pinned
+  attestation/upload Action identities, permissions, inputs and remaining trust.
 - [`server-canary-scan.md`](server-canary-scan.md) defines the real-binary Server
   credential/plaintext scan, narrow allowed one-time outputs, scanned artifacts,
   and remaining client/deployment coverage.

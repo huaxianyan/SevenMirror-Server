@@ -1,0 +1,55 @@
+name: Release artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+
+jobs:
+  build-and-attest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Verify immutable GitHub Action pins
+        run: |
+          if grep -RPn '^\s*(?:-\s*)?uses:\s+(?!\./)[^@\s]+@(?![0-9a-f]{40}(?:\s|$))' .github/workflows; then
+            echo 'Every external GitHub Action must use an immutable 40-character commit.' >&2
+            exit 1
+          fi
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify release tag binding
+        if: github.ref_type == 'tag'
+        run: |
+          protocol_version="$(cat protocol/PROTOCOL_VERSION)"
+          test "$GITHUB_REF_NAME" = "v${protocol_version}"
+          case "$protocol_version" in
+            *-dev) echo 'Development protocol versions cannot be released by tag.' >&2; exit 1 ;;
+          esac
+      - name: Build and verify release artifact set
+        run: |
+          python3 scripts/build_release_artifacts.py \
+            --output "$RUNNER_TEMP/sevenmirror-server-release" \
+            --revision "$GITHUB_SHA"
+      - name: Generate signed GitHub provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: '${{ runner.temp }}/sevenmirror-server-release/*'
+      - name: Upload verified release artifact set
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: sevenmirror-server-${{ github.sha }}
+          path: '${{ runner.temp }}/sevenmirror-server-release/'
+          if-no-files-found: error
+          retention-days: 30

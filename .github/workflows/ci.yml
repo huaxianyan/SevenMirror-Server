@@ -47,6 +47,13 @@ jobs:
         run: |
           go build ./cmd/server
           go build ./cmd/admin
+      - name: Verify release artifact manifest tamper detection
+        run: python3 scripts/test_build_release_artifacts.py
+      - name: Build and verify release artifact manifest
+        run: |
+          python3 scripts/build_release_artifacts.py \
+            --output "$RUNNER_TEMP/sevenmirror-server-release" \
+            --revision "$GITHUB_SHA"
       - name: Verify aggregate-only deployment support bundle
         run: python3 scripts/test_build_support_bundle.py
       - name: Scan runtime and support artifacts for credentials and business plaintext
