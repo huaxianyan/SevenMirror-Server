@@ -82,5 +82,23 @@ jobs:
           python3 scripts/caddy_proxy_canary.py \
             --server ./server \
             --caddy "$RUNNER_TEMP/caddy/caddy"
-      - name: Build container
-        run: docker build .
+      - name: Build and verify OCI container artifacts
+        run: |
+          python3 scripts/test_build_container_artifacts.py
+          builder="sevenmirror-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker buildx create --name "$builder" --driver docker-container --use
+          trap 'docker buildx rm --force "$builder"' EXIT
+          for architecture in amd64 arm64; do
+            docker buildx build \
+              --platform "linux/${architecture}" \
+              --build-arg "SOURCE_REVISION=${GITHUB_SHA}" \
+              --provenance=false \
+              --sbom=false \
+              --output "type=oci,dest=${RUNNER_TEMP}/sevenmirror-${architecture}.oci.tar" \
+              .
+          done
+          python3 scripts/build_container_artifacts.py \
+            --amd64-archive "$RUNNER_TEMP/sevenmirror-amd64.oci.tar" \
+            --arm64-archive "$RUNNER_TEMP/sevenmirror-arm64.oci.tar" \
+            --output "$RUNNER_TEMP/sevenmirror-container-release" \
+            --revision "$GITHUB_SHA"

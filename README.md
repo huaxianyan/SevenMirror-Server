@@ -22,6 +22,7 @@ Repository: <https://github.com/huaxianyan/SevenMirror-Server>
 - Aggregate-only support-summary boundary and operator terminal guidance in [`docs/deployment-artifact-boundary.md`](docs/deployment-artifact-boundary.md)
 - Single-process reconnect and sustained relay regression baseline in [`docs/relay-capacity-baseline.md`](docs/relay-capacity-baseline.md)
 - Server release artifacts, GitHub provenance verification and rollback rules in [`docs/server-release-provenance.md`](docs/server-release-provenance.md)
+- OCI container graph verification, immutable base images and registry digest boundaries in [`docs/server-container-provenance.md`](docs/server-container-provenance.md)
 
 The default bind address is `127.0.0.1:8080`; the service is not exposed publicly by default.
 

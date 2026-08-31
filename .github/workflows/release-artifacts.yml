@@ -43,14 +43,45 @@ jobs:
           python3 scripts/build_release_artifacts.py \
             --output "$RUNNER_TEMP/sevenmirror-server-release" \
             --revision "$GITHUB_SHA"
-      - name: Generate signed GitHub provenance
+      - name: Build and verify OCI container artifact set
+        run: |
+          builder="sevenmirror-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker buildx create --name "$builder" --driver docker-container --use
+          trap 'docker buildx rm --force "$builder"' EXIT
+          for architecture in amd64 arm64; do
+            docker buildx build \
+              --platform "linux/${architecture}" \
+              --build-arg "SOURCE_REVISION=${GITHUB_SHA}" \
+              --provenance=false \
+              --sbom=false \
+              --output "type=oci,dest=${RUNNER_TEMP}/sevenmirror-${architecture}.oci.tar" \
+              .
+          done
+          python3 scripts/test_build_container_artifacts.py
+          python3 scripts/build_container_artifacts.py \
+            --amd64-archive "$RUNNER_TEMP/sevenmirror-amd64.oci.tar" \
+            --arm64-archive "$RUNNER_TEMP/sevenmirror-arm64.oci.tar" \
+            --output "$RUNNER_TEMP/sevenmirror-container-release" \
+            --revision "$GITHUB_SHA"
+      - name: Generate signed binary provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: '${{ runner.temp }}/sevenmirror-server-release/*'
-      - name: Upload verified release artifact set
+      - name: Generate signed container provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: '${{ runner.temp }}/sevenmirror-container-release/*'
+      - name: Upload verified binary artifact set
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: sevenmirror-server-${{ github.sha }}
           path: '${{ runner.temp }}/sevenmirror-server-release/'
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload verified container artifact set
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: sevenmirror-container-${{ github.sha }}
+          path: '${{ runner.temp }}/sevenmirror-container-release/'
           if-no-files-found: error
           retention-days: 30

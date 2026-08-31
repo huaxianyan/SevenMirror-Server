@@ -81,11 +81,19 @@ registry schema it does not support. Restoring registry/authority state requires
 the consistent workspace backup procedure and may cause an explicit availability
 failure for clients whose accepted roster/cursor state is newer.
 
+## Container channel
+
+The same release workflow also builds and separately attests bounded linux/amd64
+and linux/arm64 OCI layout archives. Their content-addressed graph, runtime
+identity, immutable base-image inputs, registry boundary and digest-based rollback
+are defined in [`server-container-provenance.md`](server-container-provenance.md).
+Binary and container artifact sets remain separate verification scopes.
+
 ## Remaining signing work
 
-Sigstore/GitHub provenance is not platform-native code signing and does not sign
-container images. Production release still needs a decision for durable artifact
-hosting, release approval, container digest/signature publication, keyless versus
-long-lived signing policy, revocation, retention and independent verification.
-Android and Chrome require separate channel-specific provenance and signing
-strategies.
+Sigstore/GitHub provenance is not platform-native code signing and the current OCI
+artifacts are not pushed to a production registry. Production release still needs
+durable artifact hosting, protected release approval, registry publication and
+pull-side digest evidence, retention/revocation policy and independent
+verification. Android and Chrome retain their separate channel-specific
+publication boundaries.
