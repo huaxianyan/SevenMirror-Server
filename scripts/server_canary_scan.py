@@ -252,11 +252,16 @@ def websocket_handshake(url_origin: str, path: str) -> tuple[socket.socket, int]
 
 
 def send_masked_binary(connection: socket.socket, payload: bytes) -> None:
-    if len(payload) >= 126:
-        raise RuntimeError("canary WebSocket frame unexpectedly requires extended length")
+    length = len(payload)
+    if length < 126:
+        header = bytes((0x82, 0x80 | length))
+    elif length <= 0xffff:
+        header = bytes((0x82, 0xfe)) + struct.pack("!H", length)
+    else:
+        header = bytes((0x82, 0xff)) + struct.pack("!Q", length)
     mask = secrets.token_bytes(4)
     masked = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
-    connection.sendall(bytes((0x82, 0x80 | len(payload))) + mask + masked)
+    connection.sendall(header + mask + masked)
 
 
 def read_websocket_result(connection: socket.socket) -> tuple[str, bytes | int]:
