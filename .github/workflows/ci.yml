@@ -64,6 +64,7 @@ jobs:
         run: |
           go build ./cmd/server
           go build ./cmd/admin
+          go build ./cmd/admin-web
       - name: Verify aggregate-only deployment support bundle
         run: python3 scripts/test_build_support_bundle.py
       - name: Scan runtime and support artifacts for credentials and business plaintext

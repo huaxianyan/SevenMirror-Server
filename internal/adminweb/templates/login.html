@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>登录 · SevenMirror 管理端</title>
+  <link rel="stylesheet" href="/assets/admin.css">
+</head>
+<body class="centered">
+  <main class="login-card">
+    <p class="eyebrow">SevenMirror</p>
+    <h1>管理私有空间</h1>
+    <p class="muted">输入管理端启动时在终端显示的一次性登录码。</p>
+    {{with .Error}}<p class="error" role="alert">{{.}}</p>{{end}}
+    <form method="post" action="/login">
+      <label for="login-code">一次性登录码</label>
+      <input id="login-code" name="login_code" type="password" autocomplete="one-time-code" required autofocus>
+      <button type="submit">登录</button>
+    </form>
+  </main>
+</body>
+</html>

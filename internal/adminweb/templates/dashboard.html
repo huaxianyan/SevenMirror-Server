@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>概览 · SevenMirror 管理端</title>
+  <link rel="stylesheet" href="/assets/admin.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">SevenMirror</p>
+      <h1>私有空间概览</h1>
+    </div>
+    <form method="post" action="/logout">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <button class="secondary" type="submit">退出</button>
+    </form>
+  </header>
+  <main class="page">
+    {{if .Workspaces}}
+      {{range .Workspaces}}
+      <section class="workspace">
+        <div class="section-heading">
+          <div>
+            <h2>{{.Name}}</h2>
+            <p class="muted">创建于 {{.CreatedAt}}</p>
+          </div>
+        </div>
+        <dl class="summary-grid">
+          <div><dt>Android</dt><dd>{{.AndroidCount}}</dd></div>
+          <div><dt>Chrome</dt><dd>{{.ChromeCount}}</dd></div>
+          <div><dt>等待批准</dt><dd>{{.PendingCount}}</dd></div>
+          <div><dt>已移除</dt><dd>{{.RemovedCount}}</dd></div>
+        </dl>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">设备</th>
+                <th scope="col">类型</th>
+                <th scope="col">状态</th>
+                <th scope="col">申请时间</th>
+                <th scope="col">批准时间</th>
+                <th scope="col">最近认证</th>
+                <th scope="col">最近活动</th>
+                <th scope="col">移除时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{range .Devices}}
+              <tr>
+                <th scope="row">{{.Name}}</th>
+                <td>{{.Type}}</td>
+                <td>{{.Status}}</td>
+                <td>{{.RegisteredAt}}</td>
+                <td>{{.ApprovedAt}}</td>
+                <td>{{.LastAuthenticated}}</td>
+                <td>{{.LastActivity}}</td>
+                <td>{{.RemovedAt}}</td>
+              </tr>
+              {{else}}
+              <tr><td colspan="8" class="empty">还没有设备申请。</td></tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {{end}}
+    {{else}}
+      <section class="empty-card">
+        <h2>还没有私有空间</h2>
+        <p>先在服务器终端运行初始化命令，然后重新启动管理端。</p>
+      </section>
+    {{end}}
+  </main>
+</body>
+</html>

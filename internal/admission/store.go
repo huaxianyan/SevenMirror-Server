@@ -34,7 +34,7 @@ const (
 	maxMembershipRosterPage    = 256
 	maxMembershipRosterPageRaw = 1 << 20
 	maxAuthorityTransitions    = 256
-	currentSchemaVersion       = 8
+	currentSchemaVersion       = 9
 )
 
 var (
@@ -154,17 +154,29 @@ type CredentialRotation struct {
 	Now              time.Time
 }
 
+type WorkspaceSummary struct {
+	ID        WorkspaceID
+	CreatedAt time.Time
+}
+
 type DeviceSummary struct {
-	Reference  string
-	DeviceType DeviceType
-	DeviceName string
-	Revoked    bool
+	Reference           string
+	DeviceType          DeviceType
+	DeviceName          string
+	MembershipState     string
+	RegisteredAt        time.Time
+	ApprovedAt          *time.Time
+	LastAuthenticatedAt *time.Time
+	LastActivityAt      *time.Time
+	RevokedAt           *time.Time
+	Revoked             bool
 }
 
 type PendingDeviceSummary struct {
-	Reference  string
-	DeviceType DeviceType
-	DeviceName string
+	Reference    string
+	DeviceType   DeviceType
+	DeviceName   string
+	RegisteredAt time.Time
 }
 
 type MembershipStateView struct {
@@ -225,6 +237,34 @@ func (s *Store) CreateWorkspace(
 		return WorkspaceID{}, fmt.Errorf("create workspace: %w", err)
 	}
 	return id, nil
+}
+
+func (s *Store) ListWorkspaces(ctx context.Context) ([]WorkspaceSummary, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, created_at_ms FROM workspaces ORDER BY created_at_ms, id`)
+	if err != nil {
+		return nil, fmt.Errorf("list workspaces: %w", err)
+	}
+	defer rows.Close()
+	result := make([]WorkspaceSummary, 0)
+	for rows.Next() {
+		var id []byte
+		var createdAtMillis int64
+		if err := rows.Scan(&id, &createdAtMillis); err != nil {
+			return nil, fmt.Errorf("read workspace: %w", err)
+		}
+		if len(id) != len(WorkspaceID{}) {
+			return nil, errors.New("stored workspace ID has invalid length")
+		}
+		var workspaceID WorkspaceID
+		copy(workspaceID[:], id)
+		result = append(result, WorkspaceSummary{
+			ID: workspaceID, CreatedAt: time.UnixMilli(createdAtMillis),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list workspaces: %w", err)
+	}
+	return result, nil
 }
 
 func (s *Store) WorkspaceAuthorityPublicKey(
@@ -771,7 +811,7 @@ func (s *Store) ListPendingDevices(
 	workspaceID WorkspaceID,
 ) ([]PendingDeviceSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, device_type, device_name FROM devices
+		SELECT id, device_type, device_name, registered_at_ms FROM devices
 		WHERE workspace_id = ? AND membership_state = 'pending_approval'
 			AND revoked_at_ms IS NULL ORDER BY registered_at_ms, id`, workspaceID[:])
 	if err != nil {
@@ -782,7 +822,8 @@ func (s *Store) ListPendingDevices(
 	for rows.Next() {
 		var id []byte
 		var deviceType, deviceName string
-		if err := rows.Scan(&id, &deviceType, &deviceName); err != nil {
+		var registeredAtMillis int64
+		if err := rows.Scan(&id, &deviceType, &deviceName, &registeredAtMillis); err != nil {
 			return nil, fmt.Errorf("read pending device: %w", err)
 		}
 		if len(id) != len(DeviceID{}) {
@@ -791,7 +832,8 @@ func (s *Store) ListPendingDevices(
 		var deviceID DeviceID
 		copy(deviceID[:], id)
 		result = append(result, PendingDeviceSummary{Reference: deviceReference(workspaceID, deviceID),
-			DeviceType: DeviceType(deviceType), DeviceName: deviceName})
+			DeviceType: DeviceType(deviceType), DeviceName: deviceName,
+			RegisteredAt: time.UnixMilli(registeredAtMillis)})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("list pending devices: %w", err)
@@ -916,7 +958,8 @@ func (s *Store) ReadMembershipState(
 
 func (s *Store) ListDevices(ctx context.Context, workspaceID WorkspaceID) ([]DeviceSummary, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, device_type, device_name, revoked_at_ms IS NOT NULL
+		SELECT id, device_type, device_name, membership_state, registered_at_ms,
+			approved_at_ms, last_authenticated_at_ms, last_activity_at_ms, revoked_at_ms
 		FROM devices WHERE workspace_id = ? ORDER BY registered_at_ms, id`, workspaceID[:])
 	if err != nil {
 		return nil, fmt.Errorf("list devices: %w", err)
@@ -926,9 +969,12 @@ func (s *Store) ListDevices(ctx context.Context, workspaceID WorkspaceID) ([]Dev
 	references := make(map[string]struct{})
 	for rows.Next() {
 		var idBytes []byte
-		var deviceType, deviceName string
-		var revoked bool
-		if err := rows.Scan(&idBytes, &deviceType, &deviceName, &revoked); err != nil {
+		var deviceType, deviceName, membershipState string
+		var registeredAtMillis int64
+		var approvedAt, lastAuthenticatedAt, lastActivityAt, revokedAt sql.NullInt64
+		if err := rows.Scan(&idBytes, &deviceType, &deviceName, &membershipState,
+			&registeredAtMillis, &approvedAt, &lastAuthenticatedAt, &lastActivityAt,
+			&revokedAt); err != nil {
 			return nil, fmt.Errorf("read device: %w", err)
 		}
 		if len(idBytes) != len(DeviceID{}) {
@@ -942,10 +988,16 @@ func (s *Store) ListDevices(ctx context.Context, workspaceID WorkspaceID) ([]Dev
 		}
 		references[reference] = struct{}{}
 		devices = append(devices, DeviceSummary{
-			Reference:  reference,
-			DeviceType: DeviceType(deviceType),
-			DeviceName: deviceName,
-			Revoked:    revoked,
+			Reference:           reference,
+			DeviceType:          DeviceType(deviceType),
+			DeviceName:          deviceName,
+			MembershipState:     membershipState,
+			RegisteredAt:        time.UnixMilli(registeredAtMillis),
+			ApprovedAt:          nullableTime(approvedAt),
+			LastAuthenticatedAt: nullableTime(lastAuthenticatedAt),
+			LastActivityAt:      nullableTime(lastActivityAt),
+			RevokedAt:           nullableTime(revokedAt),
+			Revoked:             revokedAt.Valid,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -1316,11 +1368,13 @@ func (s *Store) Authenticate(
 	hash := sha256.Sum256(authToken)
 	var deviceType, deviceName string
 	var credentialVersion int64
+	nowMillis := unixMillis(now)
 	result, err := s.db.ExecContext(ctx, `
-		UPDATE devices SET last_online_at_ms = ?
+		UPDATE devices SET last_online_at_ms = ?, last_authenticated_at_ms = ?,
+			last_activity_at_ms = ?
 		WHERE workspace_id = ? AND id = ? AND auth_token_hash = ? AND revoked_at_ms IS NULL
 			AND membership_state = 'approved'`,
-		unixMillis(now), workspaceID[:], deviceID[:], hash[:])
+		nowMillis, nowMillis, nowMillis, workspaceID[:], deviceID[:], hash[:])
 	if err != nil {
 		return DeviceIdentity{}, fmt.Errorf("authenticate device: %w", err)
 	}
@@ -1343,6 +1397,25 @@ func (s *Store) Authenticate(
 		DeviceName:        deviceName,
 		CredentialVersion: credentialVersion,
 	}, nil
+}
+
+func (s *Store) RecordDeviceActivity(
+	ctx context.Context,
+	workspaceID WorkspaceID,
+	deviceID DeviceID,
+	now time.Time,
+) error {
+	nowMillis := unixMillis(now)
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE devices SET last_activity_at_ms = ?
+		WHERE workspace_id = ? AND id = ? AND revoked_at_ms IS NULL
+			AND membership_state = 'approved'
+			AND (last_activity_at_ms IS NULL OR last_activity_at_ms <= ?)`,
+		nowMillis, workspaceID[:], deviceID[:], nowMillis-time.Minute.Milliseconds())
+	if err != nil {
+		return fmt.Errorf("record device activity: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) initialize(ctx context.Context) error {
@@ -1372,6 +1445,9 @@ func (s *Store) initialize(ctx context.Context) error {
 	}
 	if version == currentSchemaVersion {
 		return nil
+	}
+	if version == 8 {
+		return s.applySchemaVersion9(ctx)
 	}
 	if version == 7 {
 		return s.applySchemaVersion8(ctx)
@@ -1814,7 +1890,40 @@ func (s *Store) applySchemaVersion8(ctx context.Context) error {
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit schema version 8: %w", err)
 	}
+	return s.applySchemaVersion9(ctx)
+}
+
+func (s *Store) applySchemaVersion9(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin schema version 9: %w", err)
+	}
+	defer tx.Rollback()
+	for _, statement := range []string{
+		`ALTER TABLE devices ADD COLUMN last_authenticated_at_ms INTEGER`,
+		`ALTER TABLE devices ADD COLUMN last_activity_at_ms INTEGER`,
+	} {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("apply schema version 9: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (9, ?)`,
+		time.Now().UnixMilli()); err != nil {
+		return fmt.Errorf("record schema version 9: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema version 9: %w", err)
+	}
 	return nil
+}
+
+func nullableTime(value sql.NullInt64) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	result := time.UnixMilli(value.Int64)
+	return &result
 }
 
 func allBytesZero(value []byte) bool {

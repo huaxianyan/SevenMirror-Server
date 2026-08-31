@@ -20,6 +20,10 @@ type ConnectionAuthenticator interface {
 	AuthenticateConnection(context.Context, PeerIdentity, []byte, time.Time) (int64, error)
 }
 
+type ConnectionActivityRecorder interface {
+	RecordConnectionActivity(context.Context, PeerIdentity, time.Time) error
+}
+
 type ConnectionAuthenticatorFunc func(context.Context, PeerIdentity, []byte, time.Time) (int64, error)
 
 func (f ConnectionAuthenticatorFunc) AuthenticateConnection(
@@ -32,13 +36,14 @@ func (f ConnectionAuthenticatorFunc) AuthenticateConnection(
 }
 
 type AuthenticatedWebSocketHandler struct {
-	hub           *Hub
-	authenticator ConnectionAuthenticator
-	now           func() time.Time
-	attempts      *authAttemptLimiter
-	authSlots     chan struct{}
-	authTimeout   time.Duration
-	upgrader      websocket.Upgrader
+	hub              *Hub
+	authenticator    ConnectionAuthenticator
+	activityRecorder ConnectionActivityRecorder
+	now              func() time.Time
+	attempts         *authAttemptLimiter
+	authSlots        chan struct{}
+	authTimeout      time.Duration
+	upgrader         websocket.Upgrader
 }
 
 func NewAuthenticatedWebSocketHandler(
@@ -60,13 +65,15 @@ func NewAuthenticatedWebSocketHandler(
 	if err := limits.validate(); err != nil {
 		return nil, err
 	}
+	activityRecorder, _ := authenticator.(ConnectionActivityRecorder)
 	return &AuthenticatedWebSocketHandler{
-		hub:           hub,
-		authenticator: authenticator,
-		now:           time.Now,
-		attempts:      newAuthAttemptLimiter(clientAddresses, limits),
-		authSlots:     make(chan struct{}, limits.MaxConcurrent),
-		authTimeout:   limits.FrameTimeout,
+		hub:              hub,
+		authenticator:    authenticator,
+		activityRecorder: activityRecorder,
+		now:              time.Now,
+		attempts:         newAuthAttemptLimiter(clientAddresses, limits),
+		authSlots:        make(chan struct{}, limits.MaxConcurrent),
+		authTimeout:      limits.FrameTimeout,
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
@@ -124,7 +131,8 @@ func (h *AuthenticatedWebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http
 	<-h.authSlots
 	authSlotHeld = false
 	_ = connection.SetReadDeadline(time.Time{})
-	_ = ServeAuthenticatedConnection(r.Context(), connection, peer, credentialVersion, h.hub)
+	_ = ServeAuthenticatedConnection(
+		r.Context(), connection, peer, credentialVersion, h.hub, h.activityRecorder)
 }
 
 func EncodeAuthenticationFrame(peer PeerIdentity, token []byte) ([]byte, error) {

@@ -64,6 +64,30 @@ func TestRegisteredCredentialAuthenticatesProductionRelayBoundary(t *testing.T) 
 		}
 		time.Sleep(time.Millisecond)
 	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE devices SET last_activity_at_ms = 0
+		WHERE workspace_id = ? AND id = ?`, workspace[:], registered.DeviceID[:]); err != nil {
+		t.Fatal(err)
+	}
+	authenticator.activityMu.Lock()
+	delete(authenticator.nextActivity, peer)
+	authenticator.activityMu.Unlock()
+	if err := connection.WriteMessage(websocket.BinaryMessage, []byte{'S', 'N', 'H', '1'}); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		devices, listErr := store.ListDevices(ctx, workspace)
+		if listErr != nil {
+			t.Fatal(listErr)
+		}
+		if len(devices) == 1 && devices[0].LastAuthenticatedAt != nil &&
+			devices[0].LastActivityAt != nil && devices[0].LastActivityAt.UnixMilli() > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("authenticated client activity was not recorded")
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func TestDurableRevocationClosesActiveRelayAndRejectsReconnect(t *testing.T) {

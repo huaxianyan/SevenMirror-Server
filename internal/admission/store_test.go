@@ -336,6 +336,8 @@ func TestPendingRegistrationRequiresExactIdentityProofBeforeApproval(t *testing.
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
+		`ALTER TABLE devices DROP COLUMN last_activity_at_ms`,
+		`ALTER TABLE devices DROP COLUMN last_authenticated_at_ms`,
 		`DROP TRIGGER reject_legacy_device_update`,
 		`DROP TRIGGER reject_legacy_device_insert`,
 		`DROP TABLE relay_deliveries`,
@@ -344,7 +346,7 @@ func TestPendingRegistrationRequiresExactIdentityProofBeforeApproval(t *testing.
 		`ALTER TABLE workspaces DROP COLUMN authority_transition_digest`,
 		`ALTER TABLE workspaces DROP COLUMN authority_epoch`,
 		`ALTER TABLE devices DROP COLUMN revoked_membership_epoch`,
-		`DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8)`,
+		`DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9)`,
 	} {
 		if _, err := legacyDB.Exec(statement); err != nil {
 			legacyDB.Close()
@@ -593,6 +595,45 @@ func TestDeviceRevocationIsIdempotentPersistentAndWorkspaceBound(t *testing.T) {
 	}
 	if revokedCount != 1 {
 		t.Fatalf("revoked summaries = %d, want 1", revokedCount)
+	}
+}
+
+func TestDeviceActivityAdvancesAtMostOncePerMinute(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, tempDatabasePath(t))
+	now := time.UnixMilli(1_800_000_000_000)
+	workspace, _ := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
+	code, _ := store.IssuePairingCode(ctx, workspace, DeviceChrome, "Browser", now, time.Minute)
+	registered, err := registerApprovedTestDevice(ctx, store, Registration{
+		PairingCode: code, DeviceType: DeviceChrome, DeviceName: "Browser",
+		E2EEPublicKey: testPublicKey(), Now: now,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Authenticate(ctx, workspace, registered.DeviceID,
+		registered.AuthToken, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordDeviceActivity(ctx, workspace, registered.DeviceID,
+		now.Add(30*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	devices, err := store.ListDevices(ctx, workspace)
+	if err != nil || len(devices) != 1 || devices[0].LastActivityAt == nil {
+		t.Fatalf("device summary=%+v error=%v", devices, err)
+	}
+	if got := devices[0].LastActivityAt.UnixMilli(); got != now.UnixMilli() {
+		t.Fatalf("activity after 30 seconds=%d want=%d", got, now.UnixMilli())
+	}
+	if err := store.RecordDeviceActivity(ctx, workspace, registered.DeviceID,
+		now.Add(61*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	devices, err = store.ListDevices(ctx, workspace)
+	if err != nil || devices[0].LastActivityAt == nil ||
+		devices[0].LastActivityAt.UnixMilli() != now.Add(61*time.Second).UnixMilli() {
+		t.Fatalf("sampled device summary=%+v error=%v", devices, err)
 	}
 }
 
@@ -870,7 +911,7 @@ func TestOpenMigratesSchemaVersionOneAndRevokesLegacyCredential(t *testing.T) {
 		t.Fatalf("migrated legacy state=%q revoked=%v error=%v", state, revoked, err)
 	}
 	var version int
-	if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 8 {
+	if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 9 {
 		t.Fatalf("schema version=%d error=%v", version, err)
 	}
 	if _, err := store.WorkspaceAuthorityPublicKey(context.Background(), workspaceID); !errors.Is(err, ErrWorkspaceAuthorityUnavailable) {
@@ -887,7 +928,7 @@ func TestOpenRejectsNewerSchemaVersion(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (9, 0)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (10, 0)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -935,10 +976,12 @@ func TestSchemaVersionEightRevokesLegacyDeviceAndDeletesRotationCode(t *testing.
 		t.Fatal(err)
 	}
 	for _, statement := range []string{
+		`ALTER TABLE devices DROP COLUMN last_activity_at_ms`,
+		`ALTER TABLE devices DROP COLUMN last_authenticated_at_ms`,
 		`DROP TRIGGER reject_legacy_device_update`,
 		`DROP TRIGGER reject_legacy_device_insert`,
 		`UPDATE devices SET membership_state = 'legacy_active'`,
-		`DELETE FROM schema_migrations WHERE version = 8`,
+		`DELETE FROM schema_migrations WHERE version IN (8, 9)`,
 	} {
 		if _, err := versionSeven.Exec(statement); err != nil {
 			versionSeven.Close()

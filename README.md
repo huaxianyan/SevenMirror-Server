@@ -9,8 +9,9 @@ Repository: <https://github.com/huaxianyan/SevenMirror-Server>
 ## Current functionality
 
 - `GET /healthz` and `GET /readyz`
-- SQLite/WAL schema migration and durable private device registry with pending-proof, pending-approval, approved, and revoked membership states; schema v8 revokes historical `legacy_active` rows and prevents their recreation
+- SQLite/WAL schema migration and durable private device registry with pending-proof, pending-approval, approved, and revoked membership states; schema v8 revokes historical `legacy_active` rows and prevents their recreation, while schema v9 records nullable successful-authentication and sampled activity times
 - Local admin CLI for workspace initialization with a unique Ed25519 authority and 192-bit, short-lived, one-time pairing codes
+- Separate, on-demand, loopback-only [`admin-web`](docs/admin-web.md) read-only console with a single-use login code, in-memory session, and device status overview
 - Authority-controlled ADR-005 `POST /v1/membership/register|prove|state` enrollment flow; the former `/v1/devices/register` route is not mounted and no open registration mode exists
 - First-binary-frame WebSocket authentication at `GET /v1/relay`
 - Bounded opaque ciphertext routing with workspace/device sender binding
@@ -37,6 +38,14 @@ The default bind address is `127.0.0.1:8080`; the service is not exposed publicl
 ```sh
 go run ./cmd/server
 ```
+
+The initial read-only management console is a separate process:
+
+```sh
+NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin-web
+```
+
+It prints one short-lived login code to the operator terminal and defaults to `http://127.0.0.1:8081`. See [`docs/admin-web.md`](docs/admin-web.md) before using SSH forwarding or an HTTPS management origin. The existing release provenance artifact set does not include this new binary yet.
 
 Configuration:
 

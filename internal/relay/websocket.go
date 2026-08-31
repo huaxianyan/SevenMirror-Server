@@ -29,7 +29,15 @@ func ServeAuthenticatedConnection(
 	authenticatedPeer PeerIdentity,
 	credentialVersion int64,
 	hub *Hub,
+	activityRecorders ...ConnectionActivityRecorder,
 ) error {
+	if len(activityRecorders) > 1 {
+		return errors.New("at most one connection activity recorder is allowed")
+	}
+	var activityRecorder ConnectionActivityRecorder
+	if len(activityRecorders) == 1 {
+		activityRecorder = activityRecorders[0]
+	}
 	sessionContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	connection.SetReadLimit(int64(relaydelivery.MaxClientMessageSize))
@@ -191,6 +199,10 @@ func ServeAuthenticatedConnection(
 		message, isHeartbeat, err := readBoundedClientMessage(connection)
 		if err != nil {
 			return err
+		}
+		if activityRecorder != nil {
+			_ = activityRecorder.RecordConnectionActivity(
+				sessionContext, authenticatedPeer, time.Now())
 		}
 		if isHeartbeat {
 			select {
