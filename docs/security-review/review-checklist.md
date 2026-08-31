@@ -62,7 +62,7 @@ Severity is provisional until an independent reviewer assesses realistic impact.
 | SR-011 | High | EXTERNAL | Review registration → possession proof → approval → promotion → `SNO1`, including interruption, replay, concurrent approval/revocation, and stale MV3 Worker deployment. |
 | SR-012 | High | EXTERNAL | Review relay retention, cumulative ACK, eviction, `SNR1`, fixed high-water snapshot recovery, and certified source-key replacement failure. |
 | SR-013 | Medium | PARTIAL | Server CI exercises real pairing/rotation issuance, authority registration, legacy-route `404`, credential rotation, WebSocket authentication and sensitive-state scans. Separate gates cover pinned Caddy TLS/WebSocket/trusted-proxy/reduced logs, consistent local workspace backup/restore, and an aggregate-only support summary derived from real runtime/access logs. The summary drops raw events, details, paths and admin output; the dynamic canary scans it with the same credentials and business plaintext. Android API 29 scans real Keystore-backed stores. Chrome combines deterministic stores, a closed real-profile scan and a local non-headless production-Worker interaction check. External backup transport/retention, real container log drivers/exporters/support portals/operator terminal retention, certificate/log-retention evidence, a pinned Chrome CI browser, Chrome crash/memory/sync/OS artifacts, Android privileged/system/business artifacts and release-baseline execution remain open. |
-| SR-014 | Medium | PARTIAL | Every external Action reference is pinned to an immutable 40-character commit and CI rejects tag/branch references. Server builds a fixed source-bound Linux binary set with offline SHA-256 verification. Chrome now builds a deterministic, file-inventoried Web Store submission ZIP and explicitly separates GitHub provenance from Google-signed CRX／publisher-account evidence; its monotonic-version rollback requires a newly versioned package from an exact approved prior revision. Both release workflows use GitHub-verified `actions/attest v4.2.2` for OIDC/Sigstore SLSA provenance and commit-named upload, with internal Action identity／permission review. Android's unsigned emulator Action retains a visible Moderate `uuid` finding with a 2026-09-29 recheck deadline. Server container signing／durable hosting, Chrome Web Store publication evidence, Android artifact provenance, release-baseline execution and independent review remain open. |
+| SR-014 | Medium | PARTIAL | Every external Action reference is pinned to an immutable 40-character commit and CI rejects tag/branch references. Server builds source-bound Linux binaries; Chrome builds a deterministic file-inventoried Web Store submission ZIP; Android now verifies the signed APK's single certificate DER plus embedded application ID／version／SDK metadata against one canonical public identity file before producing a source-bound APK manifest. All three release workflows use GitHub-verified `actions/attest v4.2.2` for OIDC/Sigstore SLSA provenance and commit-named upload, with internal Action identity／permission review and channel-specific rollback rules. Android does not claim signed APK reproducibility and keeps the separate signing-key backup finding open. Its unsigned emulator Action retains a Moderate `uuid` finding with a 2026-09-29 recheck deadline. Actual default-branch attestation runs, protected release authority, Server container signing／durable hosting, Chrome Web Store publication, Android distribution-channel evidence and independent review remain open. |
 | SR-015 | High | OPEN | Keep third-party notification transport disabled until security findings and two-real-Android OEM/network validation are complete and a reviewed release explicitly changes the gate. |
 
 Accepted-risk decisions must name the affected product claim. “Self-hosted” or
@@ -344,10 +344,14 @@ Primary references:
   drill and prove stale state cannot silently roll clients back. (`PARTIAL`; the
   local consistency/restore control is `EVIDENCE`, operational protection remains
   SR-007)
-- [ ] **K-09 — Release-signing keys.** Verify repository exclusions, CI secret
-  scope, fixed Android certificate fingerprint, Chrome packaging/update policy,
-  rotation/recovery, and independently durable encrypted backup. (`PARTIAL`;
-  SR-009, SR-014)
+- [ ] **K-09 — Release-signing keys.** Android application/version and public
+  certificate fingerprints now have one canonical checked-in identity consumed
+  by Gradle and the APK verifier. CI requires all signing secrets, verifies one
+  signer from certificate DER, binds APK metadata and removes reconstructed JKS
+  state in an `always()` step. Verify protected release authority, repository
+  administration/secret scope, Chrome store identity, rotation/recovery, and an
+  independently durable encrypted Android key backup. (`PARTIAL`; SR-009,
+  SR-014)
 
 ## 11. Plaintext, credential, log, and diagnostic audit
 
@@ -485,17 +489,17 @@ vectors are not secrets.
 - [ ] **B-05 — Generated/vendored protocol.** Verify generation is reproducible,
   diffs are reviewed, upstream hashes fail closed, and temporary generator tools
   cannot enter releases accidentally. (`PARTIAL`)
-- [ ] **B-06 — Artifact signing/provenance.** Server CI builds a fixed Linux
-  binary set with clean embedded VCS metadata and a source-bound SHA-256
-  manifest. Chrome CI builds a deterministic submission ZIP whose outer archive
-  and sorted inner files are source/version bound and offline verifiable. Both
-  manual/tag jobs define OIDC/Sigstore GitHub attestations and commit-named
-  uploads. Server rollback requires exact digest/revision plus schema/backup
-  compatibility; Chrome rollback requires a higher version built from an exact
-  approved prior revision. Verify actual attestation runs after default-branch
-  integration, durable Server hosting/container signing, Android certificate
-  identity/provenance, and Chrome Web Store account/upload/served-CRX identity.
-  (`PARTIAL`; SR-014)
+- [ ] **B-06 — Artifact signing/provenance.** Server CI builds source-bound Linux
+  binaries; Chrome CI builds a deterministic source/version-bound submission
+  ZIP; Android CI binds the exact signed APK digest, single certificate DER,
+  embedded application/version/SDK identity and source revision without claiming
+  APK reproducibility. All three manual/tag jobs define OIDC/Sigstore GitHub
+  attestations and commit-named uploads. Rollback requires exact approved source
+  and digest plus channel compatibility; Chrome and Android additionally require
+  a newly published higher version/versionCode. Verify actual attestation runs
+  after default-branch integration, protected release authority, durable Server
+  hosting/container signing, Android distribution identity, and Chrome Web Store
+  account/upload/served-CRX identity. (`PARTIAL`; SR-014)
 - [ ] **B-07 — Vulnerability intake.** All three public repositories enable
   GitHub Private Vulnerability Reporting and publish repository-local
   `SECURITY.md` entry points. Server owns the single canonical policy; it states
