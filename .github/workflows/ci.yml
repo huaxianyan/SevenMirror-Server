@@ -21,11 +21,6 @@ jobs:
             echo 'Every external GitHub Action must use an immutable 40-character commit.' >&2
             exit 1
           fi
-      - name: Scan Git history for secrets
-        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_VERSION: 8.30.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -35,10 +30,15 @@ jobs:
       - name: Build and verify release artifact manifest
         run: |
           git status --short
-          test -z "$(git status --porcelain=v1 --untracked-files=no)"
+          test -z "$(git status --porcelain=v1)"
           python3 scripts/build_release_artifacts.py \
             --output "$RUNNER_TEMP/sevenmirror-server-release" \
             --revision "$GITHUB_SHA"
+      - name: Scan Git history for secrets
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: 8.30.1
       - name: Scan reachable Go code for known vulnerabilities
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
       - name: Verify project license
