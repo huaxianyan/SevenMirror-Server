@@ -39,6 +39,7 @@ jobs:
           esac
       - name: Build and verify release artifact set
         run: |
+          test -z "$(git status --porcelain=v1 --untracked-files=no)"
           python3 scripts/build_release_artifacts.py \
             --output "$RUNNER_TEMP/sevenmirror-server-release" \
             --revision "$GITHUB_SHA"
