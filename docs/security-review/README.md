@@ -51,6 +51,9 @@ The current product gate remains:
 - [`../caddy-reverse-proxy.md`](../caddy-reverse-proxy.md) defines the checked-in
   Caddy TLS/WebSocket baseline, exact trusted-address policy, reduced access log,
   real-process canary and operator-specific limitations.
+- [`../deployment-artifact-boundary.md`](../deployment-artifact-boundary.md)
+  defines the aggregate-only support summary, forbidden admin-output boundary,
+  and external log/exporter/terminal-retention responsibilities.
 - The Chrome repository's `docs/SENSITIVE_DATA.md` defines its endpoint-local
   credential/plaintext inventory, profile-compromise boundary, deterministic
   store test, isolated real-browser profile canary, and remaining endpoint
@@ -146,9 +149,12 @@ and evidence are in the checklist:
 - Server's real-binary canary covers pairing and credential rotation HTTP,
   old/pending WebSocket authentication and sensitive artifacts. A separate
   pinned Caddy gate now covers real TLS termination, WebSocket forwarding,
-  trusted client-address derivation and reduced access logs. Operator-specific
-  certificate renewal, firewall and backup/support/log-shipping pipelines remain
-  open. Chrome now has local non-headless production-Worker interaction evidence,
+  trusted client-address derivation and reduced access logs. A checked-in support
+  builder derives only aggregate level and method/status counts from those real
+  logs, and the same dynamic canary scans its output. Operator-specific certificate
+  renewal, firewall, external backup, container log driver, exporter, support
+  portal and terminal-retention evidence remain open. Chrome now has local
+  non-headless production-Worker interaction evidence,
   including signed-recipient resolution and canonical one-shot persistence, while
   a pinned CI browser, live relay/Android execution, crash/sync/OS artifacts and
   Android system artifacts remain open;

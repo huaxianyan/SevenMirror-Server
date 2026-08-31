@@ -47,7 +47,9 @@ jobs:
         run: |
           go build ./cmd/server
           go build ./cmd/admin
-      - name: Scan runtime artifacts for credentials and business plaintext
+      - name: Verify aggregate-only deployment support bundle
+        run: python3 scripts/test_build_support_bundle.py
+      - name: Scan runtime and support artifacts for credentials and business plaintext
         run: python3 scripts/server_canary_scan.py --server ./server --admin ./admin
       - name: Verify consistent workspace backup and isolated restore
         run: python3 scripts/workspace_backup_restore_canary.py --admin ./admin

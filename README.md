@@ -19,6 +19,7 @@ Repository: <https://github.com/huaxianyan/SevenMirror-Server>
 - Recipient-specific durable ciphertext delivery, cumulative ACK, bounded history gaps, and explicit snapshot-required recovery
 - Accepted protocol and Chrome recovery decisions in [`docs/adr/ADR-001-protocol-encoding-and-versioning.md`](docs/adr/ADR-001-protocol-encoding-and-versioning.md) and [`docs/adr/ADR-003-chrome-realtime-connection-and-recovery.md`](docs/adr/ADR-003-chrome-realtime-connection-and-recovery.md)
 - P6 threat model, independent-review process, readiness findings, and evidence checklist in [`docs/security-review/`](docs/security-review/README.md)
+- Aggregate-only support-summary boundary and operator terminal guidance in [`docs/deployment-artifact-boundary.md`](docs/deployment-artifact-boundary.md)
 
 The default bind address is `127.0.0.1:8080`; the service is not exposed publicly by default.
 

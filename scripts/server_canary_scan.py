@@ -22,6 +22,8 @@ import time
 import urllib.error
 import urllib.request
 
+from build_support_bundle import build_support_bundle
+
 PUBLIC_P256_POINT = bytes.fromhex(
     "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296"
     "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5"
@@ -526,6 +528,12 @@ def main() -> None:
             proxy = None
             proxy_thread = None
             stop_server(process)
+            build_support_bundle(
+                stdout_path,
+                stderr_path,
+                proxy_log_path,
+                root / "support-bundle",
+            )
             scan_artifacts(root, canaries)
         finally:
             if proxy is not None and proxy_thread is not None:

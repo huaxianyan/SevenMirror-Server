@@ -61,7 +61,7 @@ Severity is provisional until an independent reviewer assesses realistic impact.
 | SR-010 | Medium | PARTIAL | Server accepts one canonical `X-Forwarded-For` address only from explicitly configured canonical proxy CIDRs; direct peers ignore forwarded headers. Membership, rotation and relay-auth attempt rates, bounded client buckets, concurrent unauthenticated sockets, HTTP header/body reads and `SNA1` wait are now configurable with finite defaults and fail-closed validation. Real-process CI covers trusted-address isolation, per-endpoint limits, bucket exhaustion, pre-auth capacity and slow header/body/auth termination. Distributed limiter/proxy topologies, reconnect storms, sustained throughput/file-descriptor capacity and operator-specific firewall validation remain open. |
 | SR-011 | High | EXTERNAL | Review registration → possession proof → approval → promotion → `SNO1`, including interruption, replay, concurrent approval/revocation, and stale MV3 Worker deployment. |
 | SR-012 | High | EXTERNAL | Review relay retention, cumulative ACK, eviction, `SNR1`, fixed high-water snapshot recovery, and certified source-key replacement failure. |
-| SR-013 | Medium | PARTIAL | Server CI exercises real pairing/rotation issuance, authority registration, legacy-route `404`, credential rotation, WebSocket authentication and sensitive-state scans. Separate gates cover pinned Caddy TLS/WebSocket/trusted-proxy/reduced logs and consistent local workspace backup/restore. Android API 29 scans real Keystore-backed stores. Chrome combines deterministic stores, a closed real-profile scan and a local non-headless interaction DOM/reply check; official GitHub runner Chrome no longer loads command-line unpacked extensions, so a pinned CI browser artifact remains open. External backup transport/retention, container/runtime logs, support/observability and certificate/log-retention evidence, Chrome crash/memory/sync/OS artifacts, Android privileged/system/business artifacts and release-baseline execution remain open. |
+| SR-013 | Medium | PARTIAL | Server CI exercises real pairing/rotation issuance, authority registration, legacy-route `404`, credential rotation, WebSocket authentication and sensitive-state scans. Separate gates cover pinned Caddy TLS/WebSocket/trusted-proxy/reduced logs, consistent local workspace backup/restore, and an aggregate-only support summary derived from real runtime/access logs. The summary drops raw events, details, paths and admin output; the dynamic canary scans it with the same credentials and business plaintext. Android API 29 scans real Keystore-backed stores. Chrome combines deterministic stores, a closed real-profile scan and a local non-headless production-Worker interaction check. External backup transport/retention, real container log drivers/exporters/support portals/operator terminal retention, certificate/log-retention evidence, a pinned Chrome CI browser, Chrome crash/memory/sync/OS artifacts, Android privileged/system/business artifacts and release-baseline execution remain open. |
 | SR-014 | Medium | PARTIAL | Every external Action reference is pinned to an immutable 40-character commit and CI rejects tag/branch references. All retained Actions use Node.js 24. Internal source review removed the redundant unsigned `setup-android` after its production dependencies reported a High finding. The unsigned emulator Action reproduced its committed JavaScript, uses fixed workflow inputs with a read-only job, and retains a visible Moderate `uuid` finding whose affected buffered API is not reached; it has a 2026-09-29 recheck deadline. Independent review and release-channel provenance/signing verification remain open. |
 | SR-015 | High | OPEN | Keep third-party notification transport disabled until security findings and two-real-Android OEM/network validation are complete and a reviewed release explicitly changes the gate. |
 
@@ -359,17 +359,19 @@ vectors are not secrets.
 - [ ] **P-02 — Server logs.** CI exercises real binary startup/shutdown,
   registration, successful and replayed rotation, malformed business-canary
   inputs, and old/pending WebSocket authentication. Captured stdout/stderr and
-  fixed HTTP errors contain no raw or encoded canary. Release-baseline and
-  deployment log coverage remain open. (`PARTIAL`; SR-013)
+  fixed HTTP errors contain no raw or encoded canary. The aggregate support
+  summary retains only runtime level and method/status counts. Real container
+  log drivers, exporters and release retention remain open. (`PARTIAL`; SR-013)
 - [ ] **P-03 — Admin stdout.** The canary gate verifies explicit admin commands
-  emit pairing and exact-device rotation codes exactly once, then excludes only
-  those in-memory one-time delivery channels while scanning routine artifacts.
-  Operator terminal/support-bundle handling remains open. (`PARTIAL`; SR-013)
+  emit pairing and exact-device rotation codes exactly once, then keeps those
+  one-time delivery channels in memory. The support builder has no admin-output
+  input and records that admin output is excluded. Actual terminal scrollback,
+  shell/session recording and retention remain operator evidence. (`PARTIAL`; SR-013)
 - [ ] **P-04 — Server SQLite/WAL.** CI searches the live and stopped SQLite, WAL,
-  SHM, authority directory, logs, HTTP errors, and temporary run files for
-  pairing-code and transport-token text/decoded bytes plus unique business
-  plaintext. The durable relay restart test independently scans an encrypted
-  business canary. Database backups and deployment artifacts remain open.
+  SHM, authority directory, logs, HTTP errors, aggregate support summary and
+  temporary run files for pairing-code and transport-token text/decoded bytes
+  plus unique business plaintext. The durable relay restart test independently
+  scans an encrypted business canary. External database backups remain open.
   (`PARTIAL`; SR-013)
 - [ ] **P-05 — URLs and redirects.** The Server canary refuses redirects, records
   exact registration/rotation and direct/proxy WebSocket targets, rejects query
@@ -393,9 +395,11 @@ vectors are not secrets.
   notifications, restarts the browser, and scans the closed profile export. The
   recorded run scanned 17,744,071 bytes: each raw current/pending token and each
   expected title/body/reply appeared in one extension IndexedDB file; encoded
-  token, diagnostic, storage and URL matches were zero. Interaction DOM/reply
-  rendering is blocked in Cent headless mode and remains open with crash/memory,
-  OS notification history, sync/backup, IME and screen-capture artifacts.
+  token, diagnostic, storage and URL matches were zero. The separate non-headless
+  canary crosses the production Worker, verifies authority-certified recipient
+  resolution and canonical one-shot reply persistence, and retains zero URL or
+  diagnostic matches. A pinned CI browser, crash/memory, OS notification history,
+  sync/backup, IME and screen-capture artifacts remain open.
   (`PARTIAL`; SR-008, SR-013)
 - [ ] **P-08 — Test evidence hygiene.** Scan `.tools` acceptance artifacts before
   sharing. Redact credentials, private keys, notification plaintext, and full

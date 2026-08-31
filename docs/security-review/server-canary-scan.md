@@ -54,17 +54,19 @@ The script:
     receive exact binary `SNO1`;
 13. refuses HTTP redirects, rejects query-bearing proxy targets, and records
     each effective HTTP/WebSocket target;
-14. scans live and stopped artifacts for pairing/rotation code text and decoded
-    bytes, current/pending credential text and decoded bytes, and the business
-    canary;
-15. deletes the isolated directory after success or failure.
+14. scans the live artifacts for pairing/rotation code text and decoded bytes,
+    current/pending credential text and decoded bytes, and the business canary;
+15. stops the proxy and Server, then builds the checked-in aggregate-only support
+    summary from the real Server stdout/stderr and reduced access log;
+16. scans the stopped state and derived support summary, then deletes the
+    isolated directory after success or failure.
 
 Scanned artifacts include Server stdout/stderr, registration and rotation error
 bodies, effective HTTP/WebSocket targets, the test proxy access log, SQLite,
-WAL, SHM, authority directory, and every temporary file under the isolated run
-directory. The expected result is zero matches. The script reports only the
-canary class and artifact filename on failure; it does not print the matched
-credential.
+WAL, SHM, authority directory, aggregate support summary, and every temporary
+file under the isolated run directory. The expected result is zero matches. The
+script reports only the canary class and artifact filename on failure; it does
+not print the matched credential.
 
 The access-log proxy is deliberately not a production reverse proxy and does
 not forward WebSocket upgrades. It proves that the repository's recommended
@@ -106,8 +108,12 @@ This slice does not yet close `SR-013`:
   baseline;
 - `scripts/workspace_backup_restore_canary.py` separately proves a locally
   consistent registry/authority backup and isolated restore; encrypted off-host
-  transport, retrieval, retention and deletion, plus container/runtime logs,
-  observability exporters and operator support bundles, remain external evidence;
+  transport, retrieval, retention and deletion remain external evidence;
+- `scripts/build_support_bundle.py` now derives only runtime level counts and
+  method/status counts from real local logs. It excludes raw logs, paths, admin
+  output and event details. This does not validate a production container log
+  driver, observability exporter, support portal, terminal recorder or their
+  retention/deletion policies;
 - WebSocket ciphertext persistence remains covered separately by the opaque
   relay restart test rather than duplicated here;
 - Android privileged/system artifacts and full business-content paths, plus
