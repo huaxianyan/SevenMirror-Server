@@ -1,6 +1,6 @@
 # SevenMirror Server 管理端
 
-> 状态：UX-002 设备准入闭环；设备重命名待 certificate transition 三端实现
+> 状态：UX-002 设备准入与 authority-certified 名称管理闭环
 
 `admin-web` 是与公开 relay 分离的按需管理进程。它直接读取同一个 SQLite registry，但不会挂载到设备注册、Membership 或 WebSocket Handler，也不会读取通知业务密文或 authority private key。
 
@@ -15,9 +15,10 @@
 - 待处理申请的固定产品权限模板批准；
 - 待处理申请拒绝；
 - 已接入设备的 certified removal；
+- 已接入设备的 authority-certified 名称变更；
 - 严格 Origin、CSRF、CSP、frame、登录和管理操作限速边界。
 
-加入码、批准、拒绝和移除统一通过 `internal/adminservice` 实现。管理网页和 `cmd/admin` 不复制 authority key 加载、角色模板、事务或 roster 签名逻辑。当前仍不提供设备重命名。名称模型已冻结为 authority-signed 全工作区权威名称，只能由 Server 管理端修改；Android 和 Chrome 只读展示，不建立本地别名。已批准设备的名称变更必须通过可验证的 certificate transition 和下一份 signed roster 原子生效，待三端接受逻辑完成后再开放网页入口。当前界面先提供简体中文；英文资源与完整文案审校仍需在管理端发布验收前完成。
+加入码、批准、拒绝、重命名和移除统一通过 `internal/adminservice` 实现。管理网页和 `cmd/admin` 不复制 authority key 加载、角色模板、事务或 roster 签名逻辑。名称是 authority-signed 全工作区权威事实，只能由 Server 管理端修改；Android 和 Chrome 只读展示，不建立本地别名。已批准设备重命名时，Server 在一个 SQLite transaction 中签发 replacement certificate、包含 exact `DeviceCertificateTransition` 的下一份 roster，并更新设备记录；任一步失败都不会留下部分生效的名称。当前界面先提供简体中文；英文资源与完整文案审校仍需在管理端发布验收前完成。
 
 ## 启动
 
@@ -82,6 +83,8 @@ schema v9 新增 nullable `last_authenticated_at_ms` 和 `last_activity_at_ms`�
 - 普通页面不允许编辑裸 role；
 - 拒绝只接受 `pending_proof` 或 `pending_approval` 设备；
 - 移除只接受已批准设备，并签发递增 roster 中的 certified revocation；
+- 重命名只接受已批准且未移除的设备，并要求名称发生变化；
+- replacement certificate 只改变 display name、签发时间和 membership epoch，保持设备类型、角色、identity key／key ID、expiry、workspace 和 device ID；
 - 页面表单只携带进程内 HMAC 派生的短期 action reference，不把 workspace ID 或持久化 device reference 放进 HTML；
 - 加入码通过会话 flash 只显示一次，刷新后消失。
 

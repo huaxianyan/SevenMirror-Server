@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/elliptic"
 	"crypto/sha256"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -15,7 +16,7 @@ import (
 	"github.com/huaxianyan/SyncNotifications-Server/protocol/membershipcodec"
 )
 
-func TestProductDeviceAdmissionApprovesFixedRolesThenRejectsAndRemoves(t *testing.T) {
+func TestAdministratorApprovesRenamesRejectsAndRemovesDevices(t *testing.T) {
 	ctx := context.Background()
 	directory := t.TempDir()
 	store, err := admission.Open(ctx, filepath.Join(directory, "registry.db"))
@@ -62,6 +63,36 @@ func TestProductDeviceAdmissionApprovesFixedRolesThenRejectsAndRemoves(t *testin
 		roles[1] != membershipv1.DeviceRole_DEVICE_ROLE_INVOKE_NOTIFICATION_ACTIONS {
 		t.Fatalf("Chrome roles=%v", roles)
 	}
+	renamed, err := service.RenameDevice(
+		ctx, workspaceID, devices[0].Reference, "客厅电脑", now.Add(2*time.Minute))
+	if err != nil || renamed.RosterEpoch != 2 || renamed.CertificateID == approved.CertificateID {
+		t.Fatalf("renamed=%+v error=%v", renamed, err)
+	}
+	renamedState, err := store.ReadMembershipState(
+		ctx, workspaceID, chrome.DeviceID, chrome.AuthToken, 1)
+	if err != nil || len(renamedState.Rosters) != 1 {
+		t.Fatalf("renamed state=%+v error=%v", renamedState, err)
+	}
+	renameRoster, err := membershipcodec.DecodeSignedWorkspaceRoster(
+		renamedState.Rosters[0], authority.PublicKey[:])
+	if err != nil || len(renameRoster.GetRoster().GetCertificateTransitions()) != 1 ||
+		len(renameRoster.GetRoster().GetActiveCertificates()) != 1 ||
+		renameRoster.GetRoster().GetActiveCertificates()[0].GetCertificate().GetDisplayName() != "客厅电脑" {
+		t.Fatalf("rename roster=%+v error=%v", renameRoster, err)
+	}
+	transition := renameRoster.GetRoster().GetCertificateTransitions()[0]
+	if err := membershipcodec.ValidateDisplayNameCertificateTransition(
+		certificate, renameRoster.GetRoster().GetActiveCertificates()[0], transition); err != nil {
+		t.Fatalf("rename transition: %v", err)
+	}
+	devices, err = service.ListDevices(ctx, workspaceID)
+	if err != nil || deviceWithName(devices, "客厅电脑").Reference == "" {
+		t.Fatalf("renamed devices=%+v error=%v", devices, err)
+	}
+	if _, err := service.RenameDevice(ctx, workspaceID, devices[0].Reference,
+		"客厅电脑", now.Add(3*time.Minute)); !errors.Is(err, ErrInvalidDeviceState) {
+		t.Fatalf("unchanged rename error=%v", err)
+	}
 
 	registerPendingApproval(t, ctx, service, store, workspaceID,
 		admission.DeviceAndroid, "备用手机", now.Add(2*time.Minute))
@@ -85,10 +116,10 @@ func TestProductDeviceAdmissionApprovesFixedRolesThenRejectsAndRemoves(t *testin
 		t.Fatalf("rejected device=%+v", deviceWithName(devices, "备用手机"))
 	}
 
-	chromeSummary := deviceWithName(devices, "工作电脑")
+	chromeSummary := deviceWithName(devices, "客厅电脑")
 	removed, err := service.ChangeDeviceAccess(
 		ctx, workspaceID, chromeSummary.Reference, RemoveApproved, now.Add(4*time.Minute))
-	if err != nil || !removed.Changed || removed.RosterEpoch != 2 {
+	if err != nil || !removed.Changed || removed.RosterEpoch != 3 {
 		t.Fatalf("removed=%+v error=%v", removed, err)
 	}
 	if authorized, err := store.IsDeviceAuthorized(ctx, workspaceID, chrome.DeviceID); err != nil || authorized {

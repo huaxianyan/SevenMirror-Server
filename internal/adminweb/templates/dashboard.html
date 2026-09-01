@@ -109,6 +109,21 @@
                     </form>
                   </details>
                   {{end}}
+                  {{if .CanRename}}
+                  <details>
+                    <summary>重命名</summary>
+                    <form method="post" action="/actions/rename" class="confirm-form">
+                      <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                      <input type="hidden" name="workspace_ref" value="{{$workspace.Reference}}">
+                      <input type="hidden" name="device_ref" value="{{.Reference}}">
+                      <label>新名称
+                        <input name="new_name" maxlength="100" autocomplete="off" required>
+                      </label>
+                      <label><input type="checkbox" name="confirm" value="yes" required> 确认将新名称同步到已接入设备</label>
+                      <button type="submit">更新名称</button>
+                    </form>
+                  </details>
+                  {{end}}
                   {{if .CanRemove}}
                   <details>
                     <summary>移除</summary>
@@ -121,7 +136,7 @@
                     </form>
                   </details>
                   {{end}}
-                  {{if and (not .CanApprove) (not .CanReject) (not .CanRemove)}}—{{end}}
+                  {{if and (not .CanApprove) (not .CanReject) (not .CanRename) (not .CanRemove)}}—{{end}}
                 </td>
               </tr>
               {{else}}

@@ -38,6 +38,7 @@ type Manager interface {
 	ListDevices(context.Context, admission.WorkspaceID) ([]admission.DeviceSummary, error)
 	IssuePairingCode(context.Context, admission.WorkspaceID, admission.DeviceType, string, time.Time, time.Duration) (adminservice.PairingCode, error)
 	ApproveDevice(context.Context, admission.WorkspaceID, string, time.Time) (admission.ApprovedMembership, error)
+	RenameDevice(context.Context, admission.WorkspaceID, string, string, time.Time) (admission.RenamedDevice, error)
 	ChangeDeviceAccess(context.Context, admission.WorkspaceID, string, adminservice.DeviceAccessAction, time.Time) (admission.RevokedDevice, error)
 }
 
@@ -108,6 +109,7 @@ type deviceView struct {
 	RemovedAt         string
 	CanApprove        bool
 	CanReject         bool
+	CanRename         bool
 	CanRemove         bool
 }
 
@@ -157,6 +159,7 @@ func NewHandler(manager Manager, config HandlerConfig) (http.Handler, error) {
 	mux.HandleFunc("/actions/pairing-code", handler.issuePairingCode)
 	mux.HandleFunc("/actions/approve", handler.approveDevice)
 	mux.HandleFunc("/actions/reject", handler.rejectDevice)
+	mux.HandleFunc("/actions/rename", handler.renameDevice)
 	mux.HandleFunc("/actions/remove", handler.removeDevice)
 	mux.HandleFunc("/assets/admin.css", handler.stylesheet)
 	mux.HandleFunc("/", handler.dashboard)
@@ -291,6 +294,36 @@ func (h *Handler) rejectDevice(w http.ResponseWriter, r *http.Request) {
 		"申请已拒绝，这台设备不能接入私有空间。")
 }
 
+func (h *Handler) renameDevice(w http.ResponseWriter, r *http.Request) {
+	_, digest, ok := h.authorizeManagementPost(w, r)
+	if !ok {
+		return
+	}
+	if r.PostForm.Get("confirm") != "yes" {
+		h.finishAction(w, r, digest, actionFailure())
+		return
+	}
+	workspaceID, ok := h.resolveWorkspace(r.Context(), r.PostForm.Get("workspace_ref"))
+	if !ok {
+		h.finishAction(w, r, digest, actionFailure())
+		return
+	}
+	deviceReference, ok := h.resolveDeviceReference(
+		r.Context(), workspaceID, r.PostForm.Get("device_ref"))
+	if !ok {
+		h.finishAction(w, r, digest, actionFailure())
+		return
+	}
+	if _, err := h.manager.RenameDevice(r.Context(), workspaceID, deviceReference,
+		r.PostForm.Get("new_name"), h.now()); err != nil {
+		h.finishAction(w, r, digest, actionFailure())
+		return
+	}
+	h.finishAction(w, r, digest, &flashMessage{
+		Kind: "success", Message: "设备名称已更新。已接入设备将在同步后显示新名称。",
+	})
+}
+
 func (h *Handler) removeDevice(w http.ResponseWriter, r *http.Request) {
 	h.changeDeviceAccess(w, r, adminservice.RemoveApproved,
 		"设备已移除，需要重新申请才能再次接入。")
@@ -386,7 +419,9 @@ func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
 				LastActivity:      activityLabel(device.LastActivityAt, h.now()),
 				RemovedAt:         formatOptionalTime(device.RevokedAt),
 				CanApprove:        device.MembershipState == "pending_approval" && !device.Revoked,
-				CanReject:         pending, CanRemove: device.MembershipState == "approved" && !device.Revoked,
+				CanReject:         pending,
+				CanRename:         device.MembershipState == "approved" && !device.Revoked,
+				CanRemove:         device.MembershipState == "approved" && !device.Revoked,
 			})
 		}
 		view.Workspaces = append(view.Workspaces, item)

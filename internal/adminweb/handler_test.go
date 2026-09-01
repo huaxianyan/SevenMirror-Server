@@ -17,8 +17,10 @@ import (
 )
 
 type fixedStore struct {
-	workspaces []admission.WorkspaceSummary
-	devices    map[admission.WorkspaceID][]admission.DeviceSummary
+	workspaces       []admission.WorkspaceSummary
+	devices          map[admission.WorkspaceID][]admission.DeviceSummary
+	renamedReference string
+	renamedName      string
 }
 
 func (s fixedStore) ListWorkspaces(context.Context) ([]admission.WorkspaceSummary, error) {
@@ -52,6 +54,18 @@ func (s fixedStore) ApproveDevice(
 	return admission.ApprovedMembership{}, nil
 }
 
+func (s *fixedStore) RenameDevice(
+	_ context.Context,
+	_ admission.WorkspaceID,
+	deviceReference string,
+	displayName string,
+	_ time.Time,
+) (admission.RenamedDevice, error) {
+	s.renamedReference = deviceReference
+	s.renamedName = displayName
+	return admission.RenamedDevice{}, nil
+}
+
 func (s fixedStore) ChangeDeviceAccess(
 	context.Context,
 	admission.WorkspaceID,
@@ -69,7 +83,7 @@ func TestAdministratorLogsInOnceAndSeesDeviceStatusWithoutInternalIdentifiers(t 
 	lastActivity := now.Add(3 * time.Minute)
 	var workspaceID admission.WorkspaceID
 	copy(workspaceID[:], []byte("workspace-id-001"))
-	store := fixedStore{
+	store := &fixedStore{
 		workspaces: []admission.WorkspaceSummary{{ID: workspaceID, CreatedAt: now}},
 		devices: map[admission.WorkspaceID][]admission.DeviceSummary{
 			workspaceID: {{
@@ -135,6 +149,16 @@ func TestAdministratorLogsInOnceAndSeesDeviceStatusWithoutInternalIdentifiers(t 
 	}
 	csrf := firstCapture(t, text, `name="csrf_token" value="([^"]+)"`)
 	workspaceReference := firstCapture(t, text, `name="workspace_ref" value="([^"]+)"`)
+	deviceReference := firstCapture(t, text, `name="device_ref" value="([^"]+)"`)
+	renameResult := postForm(t, handler, "/actions/rename", url.Values{
+		"csrf_token": {csrf}, "workspace_ref": {workspaceReference},
+		"device_ref": {deviceReference}, "new_name": {"客厅电脑"}, "confirm": {"yes"},
+	}, cookies[0])
+	if renameResult.Code != http.StatusSeeOther || store.renamedReference != "secret-reference" ||
+		store.renamedName != "客厅电脑" {
+		t.Fatalf("rename response=%d reference=%q name=%q", renameResult.Code,
+			store.renamedReference, store.renamedName)
+	}
 	pairingResult := postForm(t, handler, "/actions/pairing-code", url.Values{
 		"csrf_token": {csrf}, "workspace_ref": {workspaceReference},
 		"device_type": {"android"}, "device_name": {"手机"},

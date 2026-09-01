@@ -108,6 +108,21 @@ type ApprovedMembership struct {
 	RosterDigest    [sha256.Size]byte
 }
 
+type RenameDeviceInput struct {
+	WorkspaceID         WorkspaceID
+	DeviceReference     string
+	DisplayName         string
+	AuthorityPrivateKey ed25519.PrivateKey
+	Now                 time.Time
+}
+
+type RenamedDevice struct {
+	DeviceReference string
+	CertificateID   [sha256.Size]byte
+	RosterEpoch     int64
+	RosterDigest    [sha256.Size]byte
+}
+
 type RevokeDeviceInput struct {
 	WorkspaceID         WorkspaceID
 	DeviceReference     string
@@ -1004,6 +1019,153 @@ func (s *Store) ListDevices(ctx context.Context, workspaceID WorkspaceID) ([]Dev
 		return nil, fmt.Errorf("list devices: %w", err)
 	}
 	return devices, nil
+}
+
+func (s *Store) RenameDevice(
+	ctx context.Context,
+	input RenameDeviceInput,
+) (RenamedDevice, error) {
+	deviceID, err := s.resolveDeviceReference(ctx, input.WorkspaceID, input.DeviceReference)
+	if err != nil {
+		return RenamedDevice{}, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return RenamedDevice{}, fmt.Errorf("begin device rename: %w", err)
+	}
+	defer tx.Rollback()
+
+	var authorityPublicKey, certificateID, signedCertificate []byte
+	var state, storedName string
+	var revoked bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT w.authority_public_key, d.certificate_id, d.signed_certificate,
+			d.membership_state, d.device_name, d.revoked_at_ms IS NOT NULL
+		FROM devices d JOIN workspaces w ON w.id = d.workspace_id
+		WHERE d.workspace_id = ? AND d.id = ?`, input.WorkspaceID[:], deviceID[:]).Scan(
+		&authorityPublicKey, &certificateID, &signedCertificate, &state, &storedName,
+		&revoked); err != nil {
+		return RenamedDevice{}, ErrDeviceNotFound
+	}
+	if state != "approved" || revoked || storedName == input.DisplayName {
+		return RenamedDevice{}, ErrDeviceNotFound
+	}
+	if len(input.AuthorityPrivateKey) != ed25519.PrivateKeySize ||
+		len(authorityPublicKey) != ed25519.PublicKeySize ||
+		!bytes.Equal(input.AuthorityPrivateKey.Public().(ed25519.PublicKey), authorityPublicKey) {
+		return RenamedDevice{}, ErrWorkspaceAuthorityUnavailable
+	}
+	previousCertificate, err := membershipcodec.DecodeSignedDeviceCertificate(
+		signedCertificate, authorityPublicKey)
+	if err != nil || !bytes.Equal(previousCertificate.GetCertificateId(), certificateID) ||
+		!bytes.Equal(previousCertificate.GetCertificate().GetWorkspaceId(), input.WorkspaceID[:]) ||
+		!bytes.Equal(previousCertificate.GetCertificate().GetDeviceId(), deviceID[:]) ||
+		previousCertificate.GetCertificate().GetDisplayName() != storedName {
+		return RenamedDevice{}, errors.New("stored device certificate is invalid")
+	}
+	nextRoster, err := prepareNextWorkspaceRoster(ctx, tx, input.WorkspaceID, authorityPublicKey)
+	if err != nil {
+		return RenamedDevice{}, err
+	}
+	if nextRoster.Epoch == 1 {
+		return RenamedDevice{}, errors.New("approved device has no workspace roster")
+	}
+
+	activeCertificates := make([]*membershipv1.SignedDeviceCertificate, 0,
+		len(nextRoster.ActiveCertificates))
+	found := false
+	for _, activeCertificate := range nextRoster.ActiveCertificates {
+		if !bytes.Equal(activeCertificate.GetCertificate().GetDeviceId(), deviceID[:]) {
+			activeCertificates = append(activeCertificates, activeCertificate)
+			continue
+		}
+		encoded, encodeErr := membershipcodec.EncodeSignedDeviceCertificate(
+			activeCertificate, authorityPublicKey)
+		if encodeErr != nil || !bytes.Equal(encoded, signedCertificate) {
+			return RenamedDevice{}, errors.New("active roster certificate does not match the device record")
+		}
+		found = true
+	}
+	if !found {
+		return RenamedDevice{}, errors.New("approved device certificate is not active in the workspace roster")
+	}
+
+	issuedAt := uint64(unixMillis(input.Now))
+	replacementBody := proto.Clone(previousCertificate.GetCertificate()).(*membershipv1.DeviceCertificate)
+	replacementBody.DisplayName = input.DisplayName
+	replacementBody.IssuedAtUnixMs = issuedAt
+	replacementBody.MembershipEpoch = uint64(nextRoster.Epoch)
+	replacement, err := membershipcodec.SignDeviceCertificate(
+		replacementBody, input.AuthorityPrivateKey)
+	if err != nil {
+		return RenamedDevice{}, fmt.Errorf("sign replacement device certificate: %w", err)
+	}
+	transition := &membershipv1.DeviceCertificateTransition{
+		ProtocolVersion:       membershipcodec.ProtocolVersion,
+		WorkspaceId:           append([]byte(nil), input.WorkspaceID[:]...),
+		DeviceId:              append([]byte(nil), deviceID[:]...),
+		PreviousCertificateId: append([]byte(nil), previousCertificate.GetCertificateId()...),
+		NewCertificateId:      append([]byte(nil), replacement.GetCertificateId()...),
+		ActivationRosterEpoch: uint64(nextRoster.Epoch),
+		PreviousRosterDigest:  append([]byte(nil), nextRoster.PreviousDigest...),
+		Reason:                membershipv1.DeviceCertificateTransitionReason_DEVICE_CERTIFICATE_TRANSITION_REASON_DISPLAY_NAME,
+		IssuedAtUnixMs:        issuedAt,
+	}
+	if err := membershipcodec.ValidateDisplayNameCertificateTransition(
+		previousCertificate, replacement, transition); err != nil {
+		return RenamedDevice{}, err
+	}
+	activeCertificates = append(activeCertificates, replacement)
+	sort.Slice(activeCertificates, func(left, right int) bool {
+		return bytes.Compare(activeCertificates[left].GetCertificate().GetDeviceId(),
+			activeCertificates[right].GetCertificate().GetDeviceId()) < 0
+	})
+	roster, err := membershipcodec.SignWorkspaceRoster(&membershipv1.WorkspaceRoster{
+		ProtocolVersion:        membershipcodec.ProtocolVersion,
+		WorkspaceId:            append([]byte(nil), input.WorkspaceID[:]...),
+		RosterEpoch:            uint64(nextRoster.Epoch),
+		PreviousRosterDigest:   append([]byte(nil), nextRoster.PreviousDigest...),
+		ActiveCertificates:     activeCertificates,
+		Revocations:            nextRoster.Revocations,
+		CertificateTransitions: []*membershipv1.DeviceCertificateTransition{transition},
+	}, input.AuthorityPrivateKey)
+	if err != nil {
+		return RenamedDevice{}, fmt.Errorf("sign device rename roster: %w", err)
+	}
+	replacementEncoded, err := membershipcodec.EncodeSignedDeviceCertificate(
+		replacement, authorityPublicKey)
+	if err != nil {
+		return RenamedDevice{}, err
+	}
+	rosterEncoded, err := membershipcodec.EncodeSignedWorkspaceRoster(roster, authorityPublicKey)
+	if err != nil {
+		return RenamedDevice{}, err
+	}
+	updated, err := tx.ExecContext(ctx, `
+		UPDATE devices SET device_name = ?, certificate_id = ?, signed_certificate = ?
+		WHERE workspace_id = ? AND id = ? AND membership_state = 'approved'
+			AND revoked_at_ms IS NULL AND certificate_id = ?`, input.DisplayName,
+		replacement.GetCertificateId(), replacementEncoded, input.WorkspaceID[:], deviceID[:],
+		previousCertificate.GetCertificateId())
+	if err != nil {
+		return RenamedDevice{}, fmt.Errorf("update renamed device certificate: %w", err)
+	}
+	if rows, rowsErr := updated.RowsAffected(); rowsErr != nil || rows != 1 {
+		return RenamedDevice{}, ErrDeviceNotFound
+	}
+	if err := insertWorkspaceRoster(ctx, tx, input.WorkspaceID, nextRoster.Epoch,
+		nextRoster.PreviousDigest, roster, rosterEncoded, input.Now); err != nil {
+		return RenamedDevice{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return RenamedDevice{}, fmt.Errorf("commit device rename: %w", err)
+	}
+	var newCertificateID, rosterDigest [sha256.Size]byte
+	copy(newCertificateID[:], replacement.GetCertificateId())
+	copy(rosterDigest[:], roster.GetRosterDigest())
+	return RenamedDevice{DeviceReference: input.DeviceReference,
+		CertificateID: newCertificateID, RosterEpoch: nextRoster.Epoch,
+		RosterDigest: rosterDigest}, nil
 }
 
 func (s *Store) RevokeDevice(

@@ -96,6 +96,31 @@ func (s *Service) ApproveDevice(
 	})
 }
 
+func (s *Service) RenameDevice(
+	ctx context.Context,
+	workspaceID admission.WorkspaceID,
+	deviceReference string,
+	displayName string,
+	now time.Time,
+) (admission.RenamedDevice, error) {
+	device, err := s.device(ctx, workspaceID, deviceReference)
+	if err != nil {
+		return admission.RenamedDevice{}, err
+	}
+	if device.MembershipState != "approved" || device.Revoked || device.DeviceName == displayName {
+		return admission.RenamedDevice{}, ErrInvalidDeviceState
+	}
+	privateKey, err := s.LoadAuthorityPrivateKey(ctx, workspaceID)
+	if err != nil {
+		return admission.RenamedDevice{}, err
+	}
+	defer clear(privateKey)
+	return s.store.RenameDevice(ctx, admission.RenameDeviceInput{
+		WorkspaceID: workspaceID, DeviceReference: deviceReference,
+		DisplayName: displayName, AuthorityPrivateKey: privateKey, Now: now,
+	})
+}
+
 func (s *Service) ChangeDeviceAccess(
 	ctx context.Context,
 	workspaceID admission.WorkspaceID,
