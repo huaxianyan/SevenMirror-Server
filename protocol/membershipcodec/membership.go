@@ -18,16 +18,17 @@ import (
 )
 
 const (
-	ProtocolVersion          = 1
-	IdentifierSize           = 16
-	DigestSize               = 32
-	P256PublicKeySize        = 65
-	Ed25519SignatureSize     = 64
-	MaxDisplayNameBytes      = 100
-	MaxMembershipMessageSize = 1 << 20
-	MaxActiveCertificates    = 256
-	MaxRevocations           = 4096
-	MaxChallengeLifetime     = 10 * time.Minute
+	ProtocolVersion           = 1
+	IdentifierSize            = 16
+	DigestSize                = 32
+	P256PublicKeySize         = 65
+	Ed25519SignatureSize      = 64
+	MaxDisplayNameBytes       = 100
+	MaxMembershipMessageSize  = 1 << 20
+	MaxActiveCertificates     = 256
+	MaxCertificateTransitions = 256
+	MaxRevocations            = 4096
+	MaxChallengeLifetime      = 10 * time.Minute
 )
 
 const (
@@ -434,6 +435,40 @@ func validateDeviceCertificate(value *membershipv1.DeviceCertificate) error {
 	return nil
 }
 
+func ValidateDisplayNameCertificateTransition(
+	previous *membershipv1.SignedDeviceCertificate,
+	current *membershipv1.SignedDeviceCertificate,
+	transition *membershipv1.DeviceCertificateTransition,
+) error {
+	if previous == nil || current == nil || transition == nil {
+		return errors.New("device certificate transition requires previous and current certificates")
+	}
+	oldCertificate := previous.GetCertificate()
+	newCertificate := current.GetCertificate()
+	if oldCertificate == nil || newCertificate == nil ||
+		!bytes.Equal(transition.GetWorkspaceId(), oldCertificate.GetWorkspaceId()) ||
+		!bytes.Equal(transition.GetDeviceId(), oldCertificate.GetDeviceId()) ||
+		!bytes.Equal(oldCertificate.GetWorkspaceId(), newCertificate.GetWorkspaceId()) ||
+		!bytes.Equal(oldCertificate.GetDeviceId(), newCertificate.GetDeviceId()) ||
+		!bytes.Equal(transition.GetPreviousCertificateId(), previous.GetCertificateId()) ||
+		!bytes.Equal(transition.GetNewCertificateId(), current.GetCertificateId()) ||
+		transition.GetReason() != membershipv1.DeviceCertificateTransitionReason_DEVICE_CERTIFICATE_TRANSITION_REASON_DISPLAY_NAME ||
+		oldCertificate.GetDisplayName() == newCertificate.GetDisplayName() ||
+		newCertificate.GetMembershipEpoch() != transition.GetActivationRosterEpoch() ||
+		newCertificate.GetIssuedAtUnixMs() != transition.GetIssuedAtUnixMs() {
+		return errors.New("device display-name transition binding is invalid")
+	}
+	oldComparable := proto.Clone(oldCertificate).(*membershipv1.DeviceCertificate)
+	newComparable := proto.Clone(newCertificate).(*membershipv1.DeviceCertificate)
+	oldComparable.DisplayName, newComparable.DisplayName = "", ""
+	oldComparable.IssuedAtUnixMs, newComparable.IssuedAtUnixMs = 0, 0
+	oldComparable.MembershipEpoch, newComparable.MembershipEpoch = 0, 0
+	if !proto.Equal(oldComparable, newComparable) {
+		return errors.New("display-name transition changes protected certificate fields")
+	}
+	return nil
+}
+
 func validateSignedWorkspaceRoster(value *membershipv1.SignedWorkspaceRoster, authorityPublicKey ed25519.PublicKey) error {
 	if value == nil || len(value.ProtoReflect().GetUnknown()) != 0 {
 		return errors.New("signed workspace roster is missing or contains unknown fields")
@@ -478,6 +513,7 @@ func validateWorkspaceRoster(value *membershipv1.WorkspaceRoster, authorityPubli
 	}
 	var previousDeviceID []byte
 	activeCertificateIDs := make(map[string]struct{}, len(certificates))
+	activeCertificatesByDevice := make(map[string]*membershipv1.SignedDeviceCertificate, len(certificates))
 	for _, certificate := range certificates {
 		if err := validateSignedDeviceCertificate(certificate, authorityPublicKey); err != nil {
 			return err
@@ -491,6 +527,35 @@ func validateWorkspaceRoster(value *membershipv1.WorkspaceRoster, authorityPubli
 		}
 		previousDeviceID = body.GetDeviceId()
 		activeCertificateIDs[string(certificate.GetCertificateId())] = struct{}{}
+		activeCertificatesByDevice[string(body.GetDeviceId())] = certificate
+	}
+	transitions := value.GetCertificateTransitions()
+	if len(transitions) > MaxCertificateTransitions || (value.GetRosterEpoch() == 1 && len(transitions) != 0) {
+		return errors.New("workspace roster certificate transitions are invalid for its epoch")
+	}
+	var previousTransitionDeviceID []byte
+	for _, transition := range transitions {
+		if transition == nil || len(transition.ProtoReflect().GetUnknown()) != 0 ||
+			transition.GetProtocolVersion() != ProtocolVersion ||
+			!bytes.Equal(transition.GetWorkspaceId(), value.GetWorkspaceId()) ||
+			len(transition.GetDeviceId()) != IdentifierSize || allZero(transition.GetDeviceId()) ||
+			len(transition.GetPreviousCertificateId()) != DigestSize || allZero(transition.GetPreviousCertificateId()) ||
+			len(transition.GetNewCertificateId()) != DigestSize || allZero(transition.GetNewCertificateId()) ||
+			bytes.Equal(transition.GetPreviousCertificateId(), transition.GetNewCertificateId()) ||
+			transition.GetActivationRosterEpoch() != value.GetRosterEpoch() ||
+			!bytes.Equal(transition.GetPreviousRosterDigest(), value.GetPreviousRosterDigest()) ||
+			transition.GetReason() != membershipv1.DeviceCertificateTransitionReason_DEVICE_CERTIFICATE_TRANSITION_REASON_DISPLAY_NAME ||
+			transition.GetIssuedAtUnixMs() == 0 || transition.GetIssuedAtUnixMs() > math.MaxInt64 {
+			return errors.New("workspace roster contains an invalid certificate transition")
+		}
+		if previousTransitionDeviceID != nil && bytes.Compare(previousTransitionDeviceID, transition.GetDeviceId()) >= 0 {
+			return errors.New("certificate transitions must be unique and strictly sorted by device ID")
+		}
+		active := activeCertificatesByDevice[string(transition.GetDeviceId())]
+		if active == nil || !bytes.Equal(active.GetCertificateId(), transition.GetNewCertificateId()) {
+			return errors.New("certificate transition does not identify the active replacement certificate")
+		}
+		previousTransitionDeviceID = transition.GetDeviceId()
 	}
 	revocations := value.GetRevocations()
 	if len(revocations) > MaxRevocations {

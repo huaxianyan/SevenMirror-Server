@@ -76,6 +76,14 @@ before resuming business traffic. A certified revocation closes active relay
 sessions within the authorization monitor's bounded 250-millisecond polling
 window plus one local lookup; the system does not claim a zero-time window.
 
+Device display names are workspace-wide authority facts, not client-local
+aliases. Only the Server management boundary may change a name. For an approved
+device, a rename replaces the active certificate through an authority-certified
+transition in the next roster; clients accept it only when device identity,
+type, roles, expiry, workspace, and device ID remain unchanged. Android and
+Chrome display the accepted name read-only and do not maintain a second naming
+model.
+
 The relay may know administrative device metadata and authorization state. It
 must still not parse, log, or persist notification titles, bodies, replies,
 actions, operation results, snapshot contents, icons, or other encrypted

@@ -1,6 +1,6 @@
 # SevenMirror Server 管理端
 
-> 状态：UX-002 设备准入闭环；设备重命名待名称模型决策
+> 状态：UX-002 设备准入闭环；设备重命名待 certificate transition 三端实现
 
 `admin-web` 是与公开 relay 分离的按需管理进程。它直接读取同一个 SQLite registry，但不会挂载到设备注册、Membership 或 WebSocket Handler，也不会读取通知业务密文或 authority private key。
 
@@ -17,7 +17,7 @@
 - 已接入设备的 certified removal；
 - 严格 Origin、CSRF、CSP、frame、登录和管理操作限速边界。
 
-加入码、批准、拒绝和移除统一通过 `internal/adminservice` 实现。管理网页和 `cmd/admin` 不复制 authority key 加载、角色模板、事务或 roster 签名逻辑。当前仍不提供设备重命名：名称位于 authority-signed certificate／roster，而 Android 和 Chrome 也需要修改其他设备名称，必须先确定全工作区权威名称或本地别名模型。当前界面先提供简体中文；英文资源与完整文案审校属于 UX-005，在此之前不能把本页面描述为完成发布验收。
+加入码、批准、拒绝和移除统一通过 `internal/adminservice` 实现。管理网页和 `cmd/admin` 不复制 authority key 加载、角色模板、事务或 roster 签名逻辑。当前仍不提供设备重命名。名称模型已冻结为 authority-signed 全工作区权威名称，只能由 Server 管理端修改；Android 和 Chrome 只读展示，不建立本地别名。已批准设备的名称变更必须通过可验证的 certificate transition 和下一份 signed roster 原子生效，待三端接受逻辑完成后再开放网页入口。当前界面先提供简体中文；英文资源与完整文案审校仍需在管理端发布验收前完成。
 
 ## 启动
 

@@ -224,6 +224,47 @@ func TestWorkspaceMembershipRejectsCanonicalAndAuthorizationBoundaryViolations(t
 	if _, err := SignWorkspaceRoster(activeAndRevoked, privateKey); err == nil {
 		t.Fatal("simultaneously active and revoked certificate accepted")
 	}
+
+	replacementBody := proto.Clone(certificate.GetCertificate()).(*membershipv1.DeviceCertificate)
+	replacementBody.DisplayName = "Renamed browser"
+	replacementBody.IssuedAtUnixMs++
+	replacementBody.MembershipEpoch = 2
+	replacement, err := SignDeviceCertificate(replacementBody, privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certificateTransition := &membershipv1.DeviceCertificateTransition{
+		ProtocolVersion:       ProtocolVersion,
+		WorkspaceId:           append([]byte(nil), replacementBody.GetWorkspaceId()...),
+		DeviceId:              append([]byte(nil), replacementBody.GetDeviceId()...),
+		PreviousCertificateId: append([]byte(nil), certificate.GetCertificateId()...),
+		NewCertificateId:      append([]byte(nil), replacement.GetCertificateId()...),
+		ActivationRosterEpoch: 2,
+		PreviousRosterDigest:  append([]byte(nil), initial.GetRosterDigest()...),
+		Reason:                membershipv1.DeviceCertificateTransitionReason_DEVICE_CERTIFICATE_TRANSITION_REASON_DISPLAY_NAME,
+		IssuedAtUnixMs:        replacementBody.GetIssuedAtUnixMs(),
+	}
+	if err := ValidateDisplayNameCertificateTransition(
+		certificate, replacement, certificateTransition); err != nil {
+		t.Fatal(err)
+	}
+	renameRoster := &membershipv1.WorkspaceRoster{
+		ProtocolVersion:        ProtocolVersion,
+		WorkspaceId:            append([]byte(nil), replacementBody.GetWorkspaceId()...),
+		RosterEpoch:            2,
+		PreviousRosterDigest:   append([]byte(nil), initial.GetRosterDigest()...),
+		ActiveCertificates:     []*membershipv1.SignedDeviceCertificate{replacement},
+		CertificateTransitions: []*membershipv1.DeviceCertificateTransition{certificateTransition},
+	}
+	if _, err := SignWorkspaceRoster(renameRoster, privateKey); err != nil {
+		t.Fatal(err)
+	}
+	invalidTransition := proto.Clone(renameRoster).(*membershipv1.WorkspaceRoster)
+	invalidTransition.CertificateTransitions[0].Reason =
+		membershipv1.DeviceCertificateTransitionReason_DEVICE_CERTIFICATE_TRANSITION_REASON_UNSPECIFIED
+	if _, err := SignWorkspaceRoster(invalidTransition, privateKey); err == nil {
+		t.Fatal("unsupported certificate transition accepted")
+	}
 }
 
 func readMembershipVector(t *testing.T) membershipVector {
