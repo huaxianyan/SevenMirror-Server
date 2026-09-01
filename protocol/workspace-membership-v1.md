@@ -249,7 +249,8 @@ business traffic indefinitely from an unrefreshed roster.
 
 `test-vectors/workspace-membership-v1.json` contains public test-only authority
 seed, device identity scalar, deterministic Base-HPKE challenge ciphertext,
-challenge/proof, signed Chrome certificate, initial roster, and next-epoch
-revoked roster. It fixes HPKE info/encapsulation/ciphertext, all canonical bytes,
-digests, certificate ID, signatures, and previous-roster linkage. None of its
+challenge/proof, signed Chrome certificate, initial roster, next-epoch
+display-name certificate transition, and independent next-epoch revoked roster.
+It fixes HPKE info/encapsulation/ciphertext, all canonical bytes, digests,
+certificate IDs, signatures, and previous-roster linkage. None of its
 keys or secrets may be used outside tests.

@@ -24,6 +24,11 @@ type membershipVector struct {
 	InitialRosterDigestHex              string `json:"initialRosterDigestHex"`
 	RevokedRosterEncodedHex             string `json:"revokedRosterEncodedHex"`
 	RevokedRosterDigestHex              string `json:"revokedRosterDigestHex"`
+	RenamedCertificateEncodedHex        string `json:"renamedCertificateEncodedHex"`
+	RenamedCertificateIDHex             string `json:"renamedCertificateIdHex"`
+	RenameTransitionEncodedHex          string `json:"renameTransitionEncodedHex"`
+	RenameRosterEncodedHex              string `json:"renameRosterEncodedHex"`
+	RenameRosterDigestHex               string `json:"renameRosterDigestHex"`
 	NewAuthorityPublicKeyHex            string `json:"newAuthorityPublicKeyHex"`
 	AuthorityTransitionEncodedHex       string `json:"authorityTransitionEncodedHex"`
 	AuthorityTransitionDigestHex        string `json:"authorityTransitionDigestHex"`
@@ -105,6 +110,28 @@ func TestWorkspaceMembershipCanonicalVector(t *testing.T) {
 	}
 	encodedRevoked, encodeErr := EncodeSignedWorkspaceRoster(revoked, publicKey)
 	assertEncoded(t, revokedBytes, encodedRevoked, encodeErr)
+
+	renamedCertificateBytes := decodeVectorHex(t, vector.RenamedCertificateEncodedHex)
+	renamedCertificate, err := DecodeSignedDeviceCertificate(renamedCertificateBytes, publicKey)
+	if err != nil || !bytes.Equal(renamedCertificate.GetCertificateId(), decodeVectorHex(t, vector.RenamedCertificateIDHex)) {
+		t.Fatalf("renamed certificate differs from vector: %v", err)
+	}
+	renameRosterBytes := decodeVectorHex(t, vector.RenameRosterEncodedHex)
+	renameRoster, err := DecodeSignedWorkspaceRoster(renameRosterBytes, publicKey)
+	if err != nil || !bytes.Equal(renameRoster.GetRosterDigest(), decodeVectorHex(t, vector.RenameRosterDigestHex)) ||
+		len(renameRoster.GetRoster().GetCertificateTransitions()) != 1 {
+		t.Fatalf("rename roster differs from vector: %v", err)
+	}
+	renameTransition := renameRoster.GetRoster().GetCertificateTransitions()[0]
+	if err := ValidateDisplayNameCertificateTransition(certificate, renamedCertificate, renameTransition); err != nil {
+		t.Fatal(err)
+	}
+	renameTransitionBytes, err := deterministic.Marshal(renameTransition)
+	if err != nil || !bytes.Equal(renameTransitionBytes, decodeVectorHex(t, vector.RenameTransitionEncodedHex)) {
+		t.Fatalf("rename transition differs from vector: %v", err)
+	}
+	encodedRenameRoster, encodeErr := EncodeSignedWorkspaceRoster(renameRoster, publicKey)
+	assertEncoded(t, renameRosterBytes, encodedRenameRoster, encodeErr)
 
 	transitionBytes := decodeVectorHex(t, vector.AuthorityTransitionEncodedHex)
 	transition, err := DecodeSignedAuthorityKeyTransition(transitionBytes)
