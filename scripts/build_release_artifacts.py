@@ -14,8 +14,10 @@ import subprocess
 ARTIFACTS = (
     ("server", "linux", "amd64"),
     ("admin", "linux", "amd64"),
+    ("admin-web", "linux", "amd64"),
     ("server", "linux", "arm64"),
     ("admin", "linux", "arm64"),
+    ("admin-web", "linux", "arm64"),
 )
 REVISION = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -117,9 +119,11 @@ def verify(output: Path, revision: str) -> None:
         raise RuntimeError("release artifact directory must be a non-symlink directory")
     if not REVISION.fullmatch(revision):
         raise RuntimeError("expected revision must be a canonical commit")
-    expected_names = {
-        artifact_name(command, goos, goarch) for command, goos, goarch in ARTIFACTS
+    expected_targets = {
+        artifact_name(command, goos, goarch): (command, goos, goarch)
+        for command, goos, goarch in ARTIFACTS
     }
+    expected_names = set(expected_targets)
     expected_entries = expected_names | {"release-manifest.json", "SHA256SUMS"}
     actual_entries = {path.name for path in output.iterdir()}
     if actual_entries != expected_entries or any(
@@ -142,7 +146,9 @@ def verify(output: Path, revision: str) -> None:
         name = record.get("name")
         digest = record.get("sha256")
         size = record.get("size")
+        target = (record.get("command"), record.get("goos"), record.get("goarch"))
         if name not in expected_names or name in seen or \
+                expected_targets.get(name) != target or \
                 not isinstance(digest, str) or not DIGEST.fullmatch(digest) or \
                 not isinstance(size, int) or size < 1:
             raise RuntimeError("release manifest artifact binding is invalid")

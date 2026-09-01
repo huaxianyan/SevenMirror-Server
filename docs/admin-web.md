@@ -90,4 +90,4 @@ schema v9 新增 nullable `last_authenticated_at_ms` 和 `last_activity_at_ms`�
 
 ## 当前发布边界
 
-`cmd/admin-web` 已进入源码构建和 `Makefile`，但尚未加入既有 release provenance artifact set。完成 UX-002 和管理端发布审查前，不宣称当前签名 Server release candidate 已包含管理网页。
+`cmd/admin-web` 已进入源码构建、`Makefile` 和 release provenance artifact set。Release workflow 分别生成 `sevenmirror-admin-web-linux-amd64` 与 `sevenmirror-admin-web-linux-arm64`，将二者写入 exact manifest／`SHA256SUMS`，并与其他 Server 二进制一起生成 GitHub provenance attestation。下载后必须按 [`server-release-provenance.md`](server-release-provenance.md) 校验每个文件。纳入 artifact set 不代表管理端已经通过独立安全评审，也不改变默认不启动、仅监听 loopback 的部署边界。

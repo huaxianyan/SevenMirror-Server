@@ -45,7 +45,7 @@ The management console is a separate process:
 NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin-web
 ```
 
-It prints one short-lived login code to the operator terminal and defaults to `http://127.0.0.1:8081`. See [`docs/admin-web.md`](docs/admin-web.md) before using SSH forwarding or an HTTPS management origin. The existing release provenance artifact set does not include this new binary yet.
+It prints one short-lived login code to the operator terminal and defaults to `http://127.0.0.1:8081`. See [`docs/admin-web.md`](docs/admin-web.md) before using SSH forwarding or an HTTPS management origin. Verified release artifact sets include separate `admin-web` binaries for linux/amd64 and linux/arm64; the management process remains disabled unless an operator starts it explicitly.
 
 Configuration:
 

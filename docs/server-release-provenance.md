@@ -10,12 +10,16 @@ Go toolchain required by `go.mod`:
 
 - `sevenmirror-server-linux-amd64`
 - `sevenmirror-admin-linux-amd64`
+- `sevenmirror-admin-web-linux-amd64`
 - `sevenmirror-server-linux-arm64`
 - `sevenmirror-admin-linux-arm64`
+- `sevenmirror-admin-web-linux-arm64`
 
 Every binary uses `-trimpath`, `-buildvcs=true` and stripped symbols. The builder
 requires embedded Go metadata to bind the expected command, GOOS, GOARCH, exact
-40-character source revision and `vcs.modified=false`.
+40-character source revision and `vcs.modified=false`. The `admin-web` artifact
+is the independent, loopback-only management process; it is not linked into or
+mounted on the public relay handler.
 
 `release-manifest.json` records the source repository, source revision, protocol
 version, Go version and each artifact's name, SHA-256, size, command and target.
