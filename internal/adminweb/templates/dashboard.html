@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>设备管理 · SevenMirror 管理端</title>
+  <link rel="stylesheet" href="/assets/admin.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">SevenMirror</p>
+      <h1>设备管理</h1>
+    </div>
+    <form method="post" action="/logout">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <button class="secondary" type="submit">退出</button>
+    </form>
+  </header>
+  <main class="page">
+    {{with .Flash}}
+      <section class="notice {{.Kind}}" role="status">
+        <p>{{.Message}}</p>
+        {{with .Secret}}
+          <p class="secret-label">一次性加入码</p>
+          <code class="secret">{{.}}</code>
+          <p class="muted">请立即复制。离开或刷新此页面后不会再次显示。</p>
+        {{end}}
+      </section>
+    {{end}}
+    {{if .Workspaces}}
+      {{range .Workspaces}}
+      {{$workspace := .}}
+      <section class="workspace">
+        <div class="section-heading">
+          <div>
+            <h2>{{.Name}}</h2>
+            <p class="muted">创建于 {{.CreatedAt}}</p>
+          </div>
+        </div>
+        <dl class="summary-grid">
+          <div><dt>已接入 Android</dt><dd>{{.AndroidCount}}</dd></div>
+          <div><dt>已接入 Chrome</dt><dd>{{.ChromeCount}}</dd></div>
+          <div><dt>待处理申请</dt><dd>{{.PendingCount}}</dd></div>
+          <div><dt>已拒绝或移除</dt><dd>{{.RemovedCount}}</dd></div>
+        </dl>
+
+        <section class="add-device">
+          <div>
+            <h3>允许新设备申请</h3>
+            <p class="muted">加入码十分钟内有效，只能提交一次申请。批准前设备不能同步通知。</p>
+          </div>
+          <form method="post" action="/actions/pairing-code" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+            <input type="hidden" name="workspace_ref" value="{{.Reference}}">
+            <label>设备类型
+              <select name="device_type" required>
+                <option value="android">Android</option>
+                <option value="chrome">Chrome</option>
+              </select>
+            </label>
+            <label>预设名称（可选）
+              <input name="device_name" maxlength="100" autocomplete="off">
+            </label>
+            <button type="submit">生成加入码</button>
+          </form>
+        </section>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">设备</th>
+                <th scope="col">类型</th>
+                <th scope="col">状态</th>
+                <th scope="col">申请时间</th>
+                <th scope="col">最近认证</th>
+                <th scope="col">最近活动</th>
+                <th scope="col">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {{range .Devices}}
+              <tr>
+                <th scope="row">{{.Name}}</th>
+                <td>{{.Type}}</td>
+                <td>{{.Status}}</td>
+                <td>{{.RegisteredAt}}</td>
+                <td>{{.LastAuthenticated}}</td>
+                <td>{{.LastActivity}}</td>
+                <td class="actions">
+                  {{if .CanApprove}}
+                  <form method="post" action="/actions/approve">
+                    <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                    <input type="hidden" name="workspace_ref" value="{{$workspace.Reference}}">
+                    <input type="hidden" name="device_ref" value="{{.Reference}}">
+                    <button type="submit">批准</button>
+                  </form>
+                  {{end}}
+                  {{if .CanReject}}
+                  <details>
+                    <summary>拒绝</summary>
+                    <form method="post" action="/actions/reject" class="confirm-form">
+                      <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                      <input type="hidden" name="workspace_ref" value="{{$workspace.Reference}}">
+                      <input type="hidden" name="device_ref" value="{{.Reference}}">
+                      <label><input type="checkbox" name="confirm" value="yes" required> 确认拒绝这项申请</label>
+                      <button class="danger" type="submit">拒绝申请</button>
+                    </form>
+                  </details>
+                  {{end}}
+                  {{if .CanRename}}
+                  <details>
+                    <summary>重命名</summary>
+                    <form method="post" action="/actions/rename" class="confirm-form">
+                      <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                      <input type="hidden" name="workspace_ref" value="{{$workspace.Reference}}">
+                      <input type="hidden" name="device_ref" value="{{.Reference}}">
+                      <label>新名称
+                        <input name="new_name" maxlength="100" autocomplete="off" required>
+                      </label>
+                      <label><input type="checkbox" name="confirm" value="yes" required> 确认将新名称同步到已接入设备</label>
+                      <button type="submit">更新名称</button>
+                    </form>
+                  </details>
+                  {{end}}
+                  {{if .CanRemove}}
+                  <details>
+                    <summary>移除</summary>
+                    <form method="post" action="/actions/remove" class="confirm-form">
+                      <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                      <input type="hidden" name="workspace_ref" value="{{$workspace.Reference}}">
+                      <input type="hidden" name="device_ref" value="{{.Reference}}">
+                      <label><input type="checkbox" name="confirm" value="yes" required> 确认停止这台设备的同步</label>
+                      <button class="danger" type="submit">移除设备</button>
+                    </form>
+                  </details>
+                  {{end}}
+                  {{if and (not .CanApprove) (not .CanReject) (not .CanRename) (not .CanRemove)}}—{{end}}
+                </td>
+              </tr>
+              {{else}}
+              <tr><td colspan="7" class="empty">还没有设备申请。</td></tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {{end}}
+    {{else}}
+      <section class="empty-card">
+        <h2>还没有私有空间</h2>
+        <p>先在服务器终端运行初始化命令，然后重新启动管理端。</p>
+      </section>
+    {{end}}
+  </main>
+</body>
+</html>

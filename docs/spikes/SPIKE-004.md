@@ -1,0 +1,97 @@
+# SPIKE-004: Android/Chrome authenticated E2EE interoperability
+
+Status: cross-platform core, production-key persistence, and canonical trusted-device transcript validated
+
+## Question
+
+Can Android API 29+ and Chrome MV3 use a mature common E2EE construction that keeps all business payloads opaque to the server, authenticates senders, rejects tampering, and supports per-device removal?
+
+## Candidate
+
+RFC 9180 HPKE Auth mode:
+
+```text
+DHKEM(P-256, HKDF-SHA256)
+HKDF-SHA256
+AES-128-GCM
+info = "SyncNotifications-E2EE-v1"
+```
+
+Implementations:
+
+- Android: `org.bouncycastle:bcprov-jdk18on:1.85`
+- Chrome: `@hpke/core:1.9.0` using WebCrypto
+
+See `docs/adr/ADR-002-device-identity-and-e2ee.md` for the trust and lifecycle proposal.
+
+Trusted-device approval uses the independent `Trusted Device Pairing v1` transcript. A 133-byte offer and 149-byte approval bind the workspace, both device identities, both P-256 public keys, independent nonces, a maximum ten-minute validity window, and the exact offer hash. Canonical `sntrust1:` QR payloads transport records without establishing trust. Both users must explicitly compare the same transcript-derived 60-bit Crockford Base32 safety code before either local immutable pin is written.
+
+## Automated evidence
+
+Canonical vectors:
+
+```text
+protocol/test-vectors/hpke-auth-p256-aes128gcm.json
+protocol/test-vectors/routing-header-v1.json
+protocol/test-vectors/encrypted-payload-v1.json
+protocol/test-vectors/encrypted-envelope-v1.json
+```
+
+It contains only public test key material and includes:
+
+1. deterministic Chrome-generated sender, recipient, and ephemeral keys;
+2. an authenticated Chrome ciphertext opened by Android;
+3. a captured Android-generated authenticated ciphertext opened by Chrome;
+4. fixed HPKE `info`, AAD, and plaintext bytes.
+
+Validated behavior:
+
+- both platforms derive identical RFC 9180 P-256 keys from fixed IKM;
+- each platform opens ciphertext emitted by the other;
+- a substituted sender public key fails authentication;
+- modified AAD fails authentication;
+- modified ciphertext fails authentication;
+- duplicate and expired message policy prototypes behave as expected;
+- Android SQLite and Chrome IndexedDB ledgers atomically retain replay tuples across store reconstruction, serialize concurrent attempts, purge expired records, and fail closed at capacity;
+- Go, Kotlin, and TypeScript encode and decode the same fixed 160-byte Routing Header v1 vector;
+- routing metadata is fixed-width, business message type remains encrypted, malformed headers fail closed, and any byte modification is rejected when the original header is used as HPKE AAD;
+- Go, Kotlin, and TypeScript encode the same bounded Encrypted Envelope v1 frame; truncation, trailing bytes, bad magic, invalid P-256 points, and ciphertext outside 16..524288 bytes fail closed;
+- Android and Chrome receiver pipelines return plaintext only after identity checks, HPKE authentication, and an atomic accepted replay-ledger write; tampered ciphertext does not consume replay state;
+- Go, Kotlin, and TypeScript encode and strictly validate canonical protobuf `action.invoke`, `action.result`, and `action_result_ack` payloads. The ACK binds the same non-zero idempotency key to SHA-256 of the exact canonical result payload; malformed, unknown, duplicate, zero, and wrong-length fields fail closed. General relay cursors remain separate from this per-operation acknowledgement;
+- the canonical HPKE envelope now contains that payload, so Android opens and parses the exact Chrome-produced action frame;
+- Android commits both the envelope replay tuple and a persistent 30-day operation-idempotency tuple before exposing an action to the side-effect callback; completed canonical results are cached and recovered for logical duplicates, while a reserved operation with no result returns `OUTCOME_UNKNOWN` without re-execution;
+- Android assigns random 16-byte action IDs for every notification revision and resolves encrypted requests only against its process-local `PendingIntent`/`RemoteInput` table; instrumented tests cover one successful invocation, duplicate result recovery, stale revision, and unknown action rejection;
+- the Go WebSocket adapter caps reads at 524521 bytes before routing, rejects oversized/text/malformed frames, binds authenticated workspace and sender device IDs to the header, and forwards ciphertext unchanged;
+- a durable SQLite/WAL private registry now hashes pairing/device credentials, transactionally consumes one-time 192-bit codes, validates P-256 identities, and survives restart; raw-credential persistence is explicitly scanned in tests;
+- the mounted relay requires a bounded 68-byte first-message `SNA1` credential within five seconds, rejects ordinary web origins, rate-limits authentication, maintains Ping/Pong liveness, and has an integration test from durable registration through Hub identity establishment;
+- successful authentication and Hub registration produce fixed binary `SNO1` as the first server data message, allowing clients to distinguish socket-open/local-enqueue from server-confirmed authentication without exposing identity or secret details;
+- after `SNO1`, the relay consumes exact four-byte `SNH1` heartbeat requests and returns `SNH2` through the sole writer goroutine without calling `Hub.Route`; text, malformed heartbeat-like data, and non-canonical envelopes still fail closed. The heartbeat carries no identity, credential, cursor, operation, or business content and is not a delivery acknowledgement;
+- the local admin CLI lists only domain-separated 96-bit device references and bounded quoted names, then durably and idempotently revokes one exact workspace/device tuple without loading or printing raw credentials, complete device IDs, or E2EE keys. Store tests cover cross-workspace rejection, duplicate revoke, unaffected peers, restart persistence, and post-revoke authentication denial. The running server rechecks only connected peers every 250 ms; Hub atomically removes unauthorized recipients before signaling the sole WebSocket writer to issue a fixed policy close. Authorization lookup failure is fail-closed for that peer. Integration coverage proves an active authenticated socket closes, ciphertext routing stops, the same credential cannot receive `SNO1` on reconnect, and other sessions remain connected;
+- E2EE Identity Key Transition v1 defines a three-message continuity protocol independent from transport rotation: an old-key-authenticated transition, a peer ACK encrypted to the proposed new key, and a new-key-authenticated commit bound to that peer's exact ACK. Canonical `EncryptedPayload` schema v2 fixes all three payloads, while schema v1 remains exclusive to action bodies. Go validation covers non-zero fixed-width IDs, a valid P-256 successor, exact public-key SHA-256 binding, distinct old/new keys, digest bounds, schema/body mismatch, unknown fields, and non-canonical encoding. Durable lifecycle rules retain both private keys until every snapshot peer ACKs, prohibit silent peer removal or rollback, and enter a blocked state after seven days. A lost old key is explicitly not rotation: it requires transport revocation, a new device tuple, old-pin removal, and fresh out-of-band approval. Client persistence and HPKE routing integration remain pending;
+- Transport Credential Rotation v1 adds a schema-v2 positive credential version and hash-only, exact-device-bound, 192-bit single-use rotation authorization. A client-generated pending credential, current proof, and code are checked and switched in one transaction; wrong-current/device/workspace, same-token, expiry, duplicate, concurrent use, revocation, and restart boundaries fail closed. Raw secrets are absent from SQLite/WAL fixtures. Every authenticated Hub session retains its observed credential version, so the authorization monitor atomically removes and policy-closes an old-version socket. Integration coverage proves old active close, old reconnect denial, and pending `SNO1`; the device tuple and E2EE identity row are not replaced. HTTP parsing is bounded, exact `application/json`, canonical base64url, unknown/trailing-field rejecting, rate limited, and returns one generic proof denial. The canonical LF spec hash is `6f8fb759ce11ca2b7f8470b830ae99feaf199ec2272318224deb2ae0cd190294`. Android and Chrome durable dual-slot storage, exact pending recovery, `SNO1`-gated promotion, old-credential denial, process/Worker reconstruction, and committed-response-loss recovery are now validated against a real Server process;
+- Go implements the canonical Trusted Device Pairing v1 offer/approval codecs, strict QR parsing, P-256 point validation, exact-offer binding, TTL/workspace/device/key constraints, and the transcript-derived safety code; the public vector fixes `4AFH-Q91K-PGVG`, and mutation, invalid-point, wrong-hash, padding, and whitespace cases fail closed. Transport admission remains incapable of creating these local trust records.
+
+## Runtime evidence
+
+- Android 10 / API 29 emulator HPKE and Keystore persistence instrumented tests: passed
+- Pixel 10 Pro, Android 16 / API 36 HPKE and Keystore persistence instrumented tests: passed
+- Android/JVM unit tests: passed
+- Chrome non-extractable CryptoKey + IndexedDB unit path: passed
+- Chrome Vitest and TypeScript: passed
+- Chrome production Vite build: passed
+- Real Chrome unpacked extension retained the same non-extractable identity fingerprint after MV3 Worker termination and full browser restart: passed (2026-08-06)
+- Real Chrome replay ledger returned `accepted`, then `duplicate`, and remained `duplicate` after full browser restart; explicit Worker-only termination was unavailable, but full exit necessarily terminated the Worker: passed (2026-08-06)
+- Real loopback relay interruption exposed that browser socket state and one-shot alarms could remain stale after MV3 suspension. `SNH1` every 20 seconds plus a 10-second `SNH2` deadline fixed the liveness gap: after more than 70 seconds offline, the same registry recovered and both Android and Chrome re-established server connections without user reconnect; Chrome reported `Online` approximately 45 seconds after relay readiness (2026-08-17)
+- The non-loopback slice adds optional native HTTPS/WSS with an explicit certificate/key pair and TLS 1.2 minimum. Configuration rejects a partial pair, performs no certificate generation or HTTP redirect, and preserves the default loopback plaintext listener for local reverse-proxy deployments. Unit tests cover disabled, complete, and incomplete TLS configuration; Go tests and vet pass. `docs/non-loopback-https-recovery.md` defines the dedicated-workspace, exact-origin, no-`adb reverse`, relay-outage, Android network-transition, and state-convergence acceptance matrix.
+- The blocking physical-device matrix then passed against a dedicated private-PKI endpoint at the host's LAN address. Android and an isolated Cent Browser profile registered with separately type/name-bound single-use codes, completed reciprocal E2EE approval, and established exactly two TLS/WSS connections with zero `adb reverse` entries. A deliberately wrong Android bound name was rejected before code consumption or device creation; retry with the exact bound name reached post-`SNO1` `ONLINE`. One synthetic invoke/result/ACK completed with one Android side effect and an exact empty live outbox plus one ACK tombstone. The relay was absent for more than 112 seconds; Android became `OFFLINE`, then the same database/certificate/origin restored both connections in approximately 33 seconds without Retry, Reconnect, reload, or process restart. Android remained at outbox `reservations/completed/due/dormant = 0/0/0/0`, `acknowledged=1`, accepted sends `0`, and side-effect count `1`. In the separate network transition, Wi-Fi obtained its LAN address 2.6 seconds after enable and Android restored authenticated WSS 4.2 seconds later through `ConnectivityManager.onAvailable()`. The user's Chrome Popup observation independently confirmed `0.1.11 non-loopback auto-recovered Online`. Only app-owned synthetic data was used. After validation, the dedicated relay/database/profile, codes, credentials, certificate and CA private keys, copied CA file, and test logs were deleted; the exact temporary CA was removed from Windows CurrentUser Root and the user independently removed it from Android's user trust store.
+- On 2026-08-18, a second dedicated LAN TLS matrix validated transport credential rotation against real Server, Android, and isolated Cent Browser processes. Baseline, relay-unavailable pre-commit failure, exact pending retry, Android process reconstruction, Chrome MV3 Worker reconstruction, relay recovery, and post-promotion restarts all passed. A test-only TLS reverse proxy forwarded each rotation transaction to the unmodified Server, then for one Android and one Chrome attempt closed the client connection only after receiving the Server's successful response and rejected new WSS for 30 seconds. SQLite credential versions had already advanced, while both clients retained durable `attempted` pending state. After Android force-stop or Worker termination, each client authenticated that pending, received exact `SNO1`, atomically promoted, and returned online without the HTTP response. Restoring older client credential records yielded only offline authentication, while restoring current records recovered online. Android advanced from credential version `1` to `4`, Chrome from `1` to `5`; their `device_ref`, workspace/device tuple, HPKE identity binding, and reciprocal approved-peer pins remained unchanged. Final client stores contained no pending phase. This is real-process evidence separate from Server integration tests; only synthetic data was used.
+
+## Important scope boundary
+
+The spike APIs that serialize private keys exist only for reproducible vectors. They are not approved production key storage. Server admission and transport authentication are provisional under ADR-004 and do not establish E2EE device trust. Real notification content remains blocked until client credential storage, trusted-device approval, revocation/rotation, offline transport, and security-review gates pass.
+
+## Remaining exit evidence
+
+- administrator-secret lifecycle, trusted-proxy policy, E2EE identity-key rotation, lost-device recovery, and client revocation UX
+- generic relay cursor and 2 Android × 2 Chrome offline convergence, separate from the completed per-operation result ACK path
+- camera QR UX and independent security review

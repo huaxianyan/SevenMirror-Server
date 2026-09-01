@@ -1,10 +1,39 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/huaxianyan/SyncNotifications-Server/internal/admission"
+	"github.com/huaxianyan/SyncNotifications-Server/internal/clientaddress"
 )
+
+func TestLegacyDeviceRegistrationEndpointIsNotMounted(t *testing.T) {
+	store, err := admission.Open(context.Background(), t.TempDir()+"/admission.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	handler, err := NewProductionHandler(
+		store,
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+		clientaddress.New(nil),
+		DefaultRateLimits(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/devices/register", nil)
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("legacy registration status = %d, want %d", response.Code, http.StatusNotFound)
+	}
+}
 
 func TestHealth(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)

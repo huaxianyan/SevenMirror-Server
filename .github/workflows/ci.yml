@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,13 +12,50 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version: '1.21.x'
+          fetch-depth: 0
+      - name: Verify immutable GitHub Action pins
+        run: |
+          if grep -RPn '^\s*(?:-\s*)?uses:\s+(?!\./)[^@\s]+@(?![0-9a-f]{40}(?:\s|$))' .github/workflows; then
+            echo 'Every external GitHub Action must use an immutable 40-character commit.' >&2
+            exit 1
+          fi
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
           cache: true
+      - name: Verify release artifact manifest tamper detection
+        run: python3 scripts/test_build_release_artifacts.py
+      - name: Build and verify release artifact manifest
+        run: |
+          git status --short
+          test -z "$(git status --porcelain=v1)"
+          python3 scripts/build_release_artifacts.py \
+            --output "$RUNNER_TEMP/sevenmirror-server-release" \
+            --revision "$GITHUB_SHA"
+      - name: Scan Git history for secrets
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: 8.30.1
+      - name: Validate vulnerability exception governance
+        run: |
+          python3 scripts/test_validate_vulnerability_exceptions.py
+          python3 scripts/validate_vulnerability_exceptions.py
+      - name: Scan reachable Go code with database freshness evidence
+        run: |
+          python3 scripts/test_govulncheck_gate.py
+          python3 scripts/govulncheck_gate.py \
+            --output "$RUNNER_TEMP/server-vulnerability-evidence.json" \
+            --revision "$GITHUB_SHA"
+      - name: Verify project license
+        run: |
+          echo '3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986  LICENSE' | sha256sum --check -
+          grep -Fq 'GPL-3.0-only' LICENSE-TRANSITION.md
+          grep -Fq 'a057ab234c237b16f54e3786e54263d84c64e1e8' LICENSE-TRANSITION.md
       - name: Check formatting
-        run: test -z "$(gofmt -l cmd internal)"
+        run: test -z "$(gofmt -l cmd internal protocol)"
       - name: Vet
         run: go vet ./...
       - name: Test
@@ -26,3 +64,50 @@ jobs:
         run: |
           go build ./cmd/server
           go build ./cmd/admin
+          go build ./cmd/admin-web
+      - name: Verify aggregate-only deployment support bundle
+        run: python3 scripts/test_build_support_bundle.py
+      - name: Scan runtime and support artifacts for credentials and business plaintext
+        run: python3 scripts/server_canary_scan.py --server ./server --admin ./admin
+      - name: Verify consistent workspace backup and isolated restore
+        run: python3 scripts/workspace_backup_restore_canary.py --admin ./admin
+      - name: Verify abuse limits and slow-client timeouts
+        run: python3 scripts/abuse_limit_canary.py --server ./server
+      - name: Verify reconnect waves and online/durable relay capacity
+        run: python3 scripts/relay_capacity_canary.py --server ./server --admin ./admin
+      - name: Verify production Caddy TLS and trusted-proxy baseline
+        env:
+          CADDY_VERSION: 2.11.4
+          CADDY_LINUX_AMD64_SHA512: 8220d1f013b6f27510247b2360c9e0ca9f018feebd82515f07635318b34ff9777ccc8fd0b6e6f2486ce3a33fe389fbb7db12d05baa474f4587509fb4f5ebf1c9
+        run: |
+          archive="$RUNNER_TEMP/caddy.tar.gz"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+            --output "$archive" \
+            "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz"
+          echo "${CADDY_LINUX_AMD64_SHA512}  ${archive}" | sha512sum --check --strict -
+          mkdir "$RUNNER_TEMP/caddy"
+          tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP/caddy" caddy
+          test "$("$RUNNER_TEMP/caddy/caddy" version | cut -d' ' -f1)" = "v${CADDY_VERSION}"
+          python3 scripts/caddy_proxy_canary.py \
+            --server ./server \
+            --caddy "$RUNNER_TEMP/caddy/caddy"
+      - name: Build and verify OCI container artifacts
+        run: |
+          python3 scripts/test_build_container_artifacts.py
+          builder="sevenmirror-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker buildx create --name "$builder" --driver docker-container --use
+          trap 'docker buildx rm --force "$builder"' EXIT
+          for architecture in amd64 arm64; do
+            docker buildx build \
+              --platform "linux/${architecture}" \
+              --build-arg "SOURCE_REVISION=${GITHUB_SHA}" \
+              --provenance=false \
+              --sbom=false \
+              --output "type=oci,dest=${RUNNER_TEMP}/sevenmirror-${architecture}.oci.tar" \
+              .
+          done
+          python3 scripts/build_container_artifacts.py \
+            --amd64-archive "$RUNNER_TEMP/sevenmirror-amd64.oci.tar" \
+            --arm64-archive "$RUNNER_TEMP/sevenmirror-arm64.oci.tar" \
+            --output "$RUNNER_TEMP/sevenmirror-container-release" \
+            --revision "$GITHUB_SHA"

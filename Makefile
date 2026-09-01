@@ -9,6 +9,7 @@ test:
 build:
 	go build -o bin/server ./cmd/server
 	go build -o bin/admin ./cmd/admin
+	go build -o bin/admin-web ./cmd/admin-web
 
 run:
 	go run ./cmd/server
