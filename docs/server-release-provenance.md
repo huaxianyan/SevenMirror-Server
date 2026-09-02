@@ -1,6 +1,22 @@
 # Server release provenance and rollback
 
-Status: **release-channel engineering baseline; independent review still required**
+Status: **protected release-candidate baseline; independent review still required**
+
+## Release authority
+
+The release job targets the GitHub `release-candidate` environment. That
+environment accepts deployments only from protected branches and requires an
+explicit approval from the repository administrator before a runner can access
+the job permissions or produce attestations. The `main` branch separately
+requires a pull request and its Server CI check, blocks force-push and deletion,
+and applies those rules to administrators.
+
+Only `huaxianyan` currently has repository access, so the environment approval
+is a deliberate second step by the same identity, not independent approval. It
+reduces accidental dispatch and direct-push risk but cannot establish separation
+of duties. Before production release, add a second trusted reviewer, require at
+least one approval from someone other than the last pusher, enable environment
+self-review prevention, and verify the resulting audit trail.
 
 ## Artifact set
 
