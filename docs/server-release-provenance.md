@@ -125,7 +125,7 @@ Sigstore/GitHub provenance is not platform-native code signing. Default-branch
 run `33587546197` published the public GHCR candidate, verified the registry graph
 and runtime scan, and produced attestations that passed after download. A separate
 anonymous pull also matched the complete graph. Production release still needs
-durable binary hosting, independent release approval, an approved GHCR
-retention/deletion/emergency-revocation policy and disposition of the builder
-finding. Android and Chrome retain their separate channel-specific publication
-boundaries.
+durable binary hosting, independent release approval, independent approval of
+the checked-in GHCR governance baseline, a verified off-registry archive and
+disposition of the builder finding. Android and Chrome retain their separate
+channel-specific publication boundaries.

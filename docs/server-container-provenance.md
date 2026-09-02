@@ -1,6 +1,6 @@
 # Server OCI container provenance and rollback
 
-Status: **public GHCR candidate and pull-side graph/runtime evidence verified; retention policy and independent review remain required**
+Status: **public GHCR candidate and pull-side graph/runtime evidence verified; governed ledger exists, durable archive and independent review remain required**
 
 ## Immutable build inputs
 
@@ -176,14 +176,24 @@ shows the exact source-revision tag and index digest.
 
 GitHub artifact storage remains limited to 30 days and is not durable binary
 hosting. GHCR supplies public digest-addressed retrieval, but owner-level package
-mutation/deletion remains possible and no independent retention or emergency
-revocation policy has been approved. Production deployment must use the immutable
+mutation/deletion remains possible. Production deployment must use the immutable
 index digest, never the source-revision tag.
+
+[`registry-release-governance.md`](registry-release-governance.md) now defines the
+internal retention, normal deletion, ownership-transfer and emergency-revocation
+procedure. `security/registry-release-ledger.json` durably records candidate,
+approved, retired and revoked digest decisions; CI validates identity, ordering,
+platform manifests, independent approval for `approved`／`retired`, preserved
+evidence before removal, and blocks republishing a retired or revoked revision.
+Current entries are candidates only. Ordinary deletion is prohibited until exact
+OCI and evidence sets exist in independently durable storage and pass a retrieval
+drill. Package deletion is explicitly not treated as revocation because already
+pulled or mirrored content cannot be recalled.
 
 Registry credentials must not enter source, release manifests, support bundles or
 command logs. The package remains a candidate channel until independent approval,
-retention/deletion/emergency-revocation policy and a second authorized release
-reviewer are established.
+durable off-registry retention, a second authorized release reviewer and
+owner-permission verification are established.
 
 ## Rollback
 

@@ -60,6 +60,10 @@ The current product gate remains:
 - [`../deployment-artifact-boundary.md`](../deployment-artifact-boundary.md)
   defines the aggregate-only support summary, forbidden admin-output boundary,
   and external log/exporter/terminal-retention responsibilities.
+- [`../registry-release-governance.md`](../registry-release-governance.md)
+  defines GHCR digest retention, source-controlled release decisions, normal
+  deletion, ownership transfer and emergency revocation without treating package
+  deletion as recall of already distributed images.
 - The Chrome repository's `docs/SENSITIVE_DATA.md` defines its endpoint-local
   credential/plaintext inventory, profile-compromise boundary, deterministic
   store test, isolated real-browser profile canary, and remaining endpoint

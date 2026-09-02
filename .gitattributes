@@ -6,5 +6,6 @@
 *.yml text eol=lf
 protocol/**/*.json text eol=lf
 protocol/**/*.md text eol=lf
+security/*.json text eol=lf
 Dockerfile text eol=lf
 Makefile text eol=lf

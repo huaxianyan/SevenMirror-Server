@@ -44,7 +44,10 @@ jobs:
           test -z "$(git status --porcelain=v1)"
           python3 scripts/test_base_image_evidence.py
           python3 scripts/test_registry_publication_evidence.py
+          python3 scripts/test_validate_registry_release_ledger.py
           python3 scripts/validate_vulnerability_exceptions.py
+          python3 scripts/validate_registry_release_ledger.py \
+            --publication-revision "$GITHUB_SHA"
           mkdir "$RUNNER_TEMP/sevenmirror-security-evidence"
           python3 scripts/govulncheck_gate.py \
             --output "$RUNNER_TEMP/sevenmirror-security-evidence/server-vulnerability-evidence.json" \

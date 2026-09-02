@@ -1,0 +1,52 @@
+{
+  "entries": [
+    {
+      "archive_reference": null,
+      "decision_actors": [],
+      "decision_reference": null,
+      "decided_at": null,
+      "index_digest": "sha256:37499955cf4b8e18b4f008d1d35425c41d2faeeeb2d3e7b9f8e5ca4c46817f9d",
+      "platforms": [
+        {
+          "architecture": "amd64",
+          "manifest_digest": "sha256:bd598b9e4f2d70345ab8f23a0e71fa3a1b53f4472f2969535dffd35d0297601d"
+        },
+        {
+          "architecture": "arm64",
+          "manifest_digest": "sha256:319dd03546cbb2dea50ecd53866bac8ae796a25e9cb90c0febd0e43d0b245ac2"
+        }
+      ],
+      "publication_run": "https://github.com/huaxianyan/SevenMirror-Server/actions/runs/33587546197",
+      "published_at": "2026-09-02T03:36:30Z",
+      "registry_availability": "expected",
+      "replacement_index_digest": null,
+      "source_revision": "b489de1fbab02614b1bad3aa69347c50a732a8a1",
+      "state": "candidate"
+    },
+    {
+      "archive_reference": null,
+      "decision_actors": [],
+      "decision_reference": null,
+      "decided_at": null,
+      "index_digest": "sha256:7c769e1ec56c882291c960e8928669849f076269427e89a4aa1a2a0154328b00",
+      "platforms": [
+        {
+          "architecture": "amd64",
+          "manifest_digest": "sha256:30703ae36a795c3fad3de3e6ba1fa1d45b9936e1e5bd448b9e861e65bb6c9ed3"
+        },
+        {
+          "architecture": "arm64",
+          "manifest_digest": "sha256:69468f324d568f59c57b7091e5fcad32238974ffedc1ea7f02c9b2afd707c75b"
+        }
+      ],
+      "publication_run": "https://github.com/huaxianyan/SevenMirror-Server/actions/runs/33641200130",
+      "published_at": "2026-09-02T14:22:01Z",
+      "registry_availability": "expected",
+      "replacement_index_digest": null,
+      "source_revision": "c0d20463b935929eed035a152a1e7ec2e00e10e9",
+      "state": "candidate"
+    }
+  ],
+  "registry_repository": "ghcr.io/huaxianyan/sevenmirror-server",
+  "schema": "sevenmirror-registry-release-ledger-v1"
+}
