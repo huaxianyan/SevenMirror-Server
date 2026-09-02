@@ -50,6 +50,10 @@ The current product gate remains:
 - [`server-canary-scan.md`](server-canary-scan.md) defines the real-binary Server
   credential/plaintext scan, narrow allowed one-time outputs, scanned artifacts,
   and remaining client/deployment coverage.
+- [`server-builder-openssl-advisory-analysis.md`](server-builder-openssl-advisory-analysis.md)
+  maps `CVE-2026-14456` to its OpenSSL QUIC listener prerequisites, the current
+  static builder-output boundary, machine-enforced invalidation triggers, and
+  the still-open independent disposition requirement.
 - [`../caddy-reverse-proxy.md`](../caddy-reverse-proxy.md) defines the checked-in
   Caddy TLS/WebSocket baseline, exact trusted-address policy, reduced access log,
   real-process canary and operator-specific limitations.

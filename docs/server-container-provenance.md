@@ -82,7 +82,10 @@ vulnerability reports.
 `base-image-manifest.json` binds the exact source revision, requested image index
 digests, architecture, Trivy version, Trivy database identity and update time,
 UTC observation time, package/component counts, severity counts, raw evidence
-filenames and SHA-256 values. The gate rejects a database older than 7 days or
+filenames and SHA-256 values. Schema v2 also binds the checked Dockerfile builder
+output controls: both copied executables use `CGO_ENABLED=0`, only the declared
+`/out` directory crosses the stage boundary, and the runtime remains distroless
+static. The gate rejects a database older than 7 days or
 future-dated by more than 5 minutes. Critical and High findings in the runtime
 base fail unless the exact purl and vulnerability ID map to an active Server
 `base-image` entry in the canonical vulnerability exception registry. Build-stage
@@ -107,8 +110,13 @@ The first default-branch execution on 2026-09-02 correctly stopped before
 artifact construction: the pinned Alpine builder contains `libcrypto3` and
 `libssl3` `3.5.7-r0`, for which Trivy reports High `CVE-2026-14456` and upstream
 fix `3.5.8-r0`. These are build-stage packages and do not enter the distroless
-runtime image or statically linked `CGO_ENABLED=0` binaries. They remain open
-build-tool findings rather than being suppressed or mislabeled as runtime risk.
+runtime image or statically linked `CGO_ENABLED=0` binaries. The affected code is
+an OpenSSL QUIC server listener, which the build does not start and the produced
+binaries do not link. The exact applicability analysis and fail-closed control
+triggers are recorded in
+[`security-review/server-builder-openssl-advisory-analysis.md`](security-review/server-builder-openssl-advisory-analysis.md).
+The records remain open build-tool findings rather than being suppressed,
+downgraded, or mislabeled as runtime risk.
 
 Corrected default-branch run
 [`33584395156`](https://github.com/huaxianyan/SevenMirror-Server/actions/runs/33584395156)

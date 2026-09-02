@@ -46,6 +46,46 @@ class BaseImageEvidenceTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "sha256 digest"):
                 MODULE.dockerfile_images(dockerfile)
 
+    def test_builder_output_controls_fail_closed_on_boundary_changes(self) -> None:
+        valid = (
+            "FROM --platform=$BUILDPLATFORM example.test/build:1@sha256:"
+            + "1" * 64
+            + " AS build\n"
+            + "RUN test -n \"$SOURCE_REVISION\" \\\n"
+            + "    && CGO_ENABLED=0 GOOS=\"$TARGETOS\" GOARCH=\"$TARGETARCH\" go build -trimpath -o /out/server ./cmd/server \\\n"
+            + "    && CGO_ENABLED=0 GOOS=\"$TARGETOS\" GOARCH=\"$TARGETARCH\" go build -trimpath -o /out/admin ./cmd/admin \\\n"
+            + "    && mkdir /out/data\n"
+            + "FROM gcr.io/distroless/static-debian12:nonroot@sha256:"
+            + "2" * 64
+            + "\n"
+            + "COPY --chown=nonroot:nonroot --from=build /out /app\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            dockerfile = Path(directory) / "Dockerfile"
+            dockerfile.write_text(valid, encoding="utf-8")
+            self.assertEqual(
+                MODULE.builder_output_controls(dockerfile),
+                {
+                    "advisory": "CVE-2026-14456",
+                    "build_commands": ["./cmd/server", "./cmd/admin"],
+                    "cgo_enabled": False,
+                    "copied_builder_path": "/out",
+                    "runtime_path": "/app",
+                    "runtime_type": "distroless-static",
+                },
+            )
+
+            for changed, message in (
+                (valid.replace("CGO_ENABLED=0", "CGO_ENABLED=1", 1), "CGO boundary"),
+                (valid.replace("mkdir /out/data", "cp /usr/bin/openssl /out/openssl && mkdir /out/data"),
+                 "undeclared producer"),
+                (valid.replace("distroless/static-debian12", "distroless/base-debian12"),
+                 "distroless static"),
+            ):
+                dockerfile.write_text(changed, encoding="utf-8")
+                with self.assertRaisesRegex(RuntimeError, message):
+                    MODULE.builder_output_controls(dockerfile)
+
     def test_vulnerability_summary_preserves_inventory_and_blocks_high(self) -> None:
         report = {
             "Results": [

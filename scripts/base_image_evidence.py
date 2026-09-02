@@ -23,9 +23,16 @@ IMAGE = re.compile(
     re.IGNORECASE,
 )
 REVISION = re.compile(r"^[0-9a-f]{40}$")
-SCHEMA = "sevenmirror-base-image-evidence-v1"
+SCHEMA = "sevenmirror-base-image-evidence-v2"
 TRIVY_VERSION = "0.74.0"
 TRIVY_DATABASE = "ghcr.io/aquasecurity/trivy-db:2"
+BUILDER_ADVISORY = "CVE-2026-14456"
+GO_BUILD = re.compile(
+    r"^(?:&&\s+)?CGO_ENABLED=(\S+)\s+GOOS=\S+\s+GOARCH=\S+\s+go build\s+.*?"
+    r"\s-o\s+(\S+)\s+(\S+)\s+\\$",
+)
+BUILDER_COPY = re.compile(r"^COPY\s+--chown=\S+\s+--from=build\s+(\S+)\s+(\S+)$")
+OUT_PATH = re.compile(r"(?<![A-Za-z0-9_.-])(/out(?:/[A-Za-z0-9_.-]+)?)")
 
 
 def parse_args() -> argparse.Namespace:
@@ -89,6 +96,48 @@ def dockerfile_images(path: Path = DOCKERFILE) -> list[dict[str, str]]:
     if [record["role"] for record in records] != ["build", "runtime"]:
         raise RuntimeError("Dockerfile must contain exact build and runtime base images")
     return records
+
+
+def builder_output_controls(path: Path = DOCKERFILE) -> dict[str, object]:
+    lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines()]
+    if not lines or not lines[0].startswith("FROM --platform=$BUILDPLATFORM ") or not \
+            lines[0].endswith(" AS build"):
+        raise RuntimeError("builder must remain isolated to the Docker build platform")
+
+    builds: list[tuple[str, str, str]] = []
+    for line in lines:
+        if "go build" not in line:
+            continue
+        match = GO_BUILD.fullmatch(line)
+        if match is None:
+            raise RuntimeError("every builder Go command must use the guarded static-build form")
+        builds.append(match.groups())
+    expected_builds = [
+        ("0", "/out/server", "./cmd/server"),
+        ("0", "/out/admin", "./cmd/admin"),
+    ]
+    if builds != expected_builds:
+        raise RuntimeError("builder outputs or CGO boundary changed")
+
+    copies = [BUILDER_COPY.fullmatch(line) for line in lines if "--from=build" in line]
+    if len(copies) != 1 or copies[0] is None or copies[0].groups() != ("/out", "/app"):
+        raise RuntimeError("runtime must copy only the bounded builder output directory")
+
+    out_paths = [match.group(1) for line in lines for match in OUT_PATH.finditer(line)]
+    if out_paths != ["/out/server", "/out/admin", "/out/data", "/out"]:
+        raise RuntimeError("builder output directory contains an undeclared producer or copy")
+
+    images = dockerfile_images(path)
+    if not images[1]["reference"].startswith("gcr.io/distroless/static-"):
+        raise RuntimeError("runtime base must remain a distroless static image")
+    return {
+        "advisory": BUILDER_ADVISORY,
+        "build_commands": ["./cmd/server", "./cmd/admin"],
+        "cgo_enabled": False,
+        "copied_builder_path": "/out",
+        "runtime_path": "/app",
+        "runtime_type": "distroless-static",
+    }
 
 
 def active_exceptions(path: Path = EXCEPTIONS) -> dict[tuple[str, str], str]:
@@ -243,6 +292,7 @@ def build(output: Path, revision: str, trivy: Path, cache_dir: Path) -> None:
     observed_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     require_fresh_database(updated_at, observed_at)
     manifest = {
+        "builder_output_controls": builder_output_controls(),
         "database": TRIVY_DATABASE,
         "database_metadata": "trivy-db-metadata.json",
         "database_metadata_sha256": sha256_file(output / "trivy-db-metadata.json"),
@@ -267,10 +317,11 @@ def verify(output: Path, revision: str) -> None:
         raise RuntimeError("base-image evidence must be a non-symlink directory")
     manifest = read_json(output / "base-image-manifest.json", "base-image manifest")
     if not isinstance(manifest, dict) or set(manifest) != {
-        "database", "database_metadata", "database_metadata_sha256", "database_updated_at",
-        "observed_at", "schema", "source_revision", "trivy_version", "scans",
+        "builder_output_controls", "database", "database_metadata", "database_metadata_sha256",
+        "database_updated_at", "observed_at", "schema", "source_revision", "trivy_version", "scans",
     } or manifest.get("schema") != SCHEMA or manifest.get("source_revision") != revision or \
-            manifest.get("trivy_version") != TRIVY_VERSION or manifest.get("database") != TRIVY_DATABASE:
+            manifest.get("trivy_version") != TRIVY_VERSION or manifest.get("database") != TRIVY_DATABASE or \
+            manifest.get("builder_output_controls") != builder_output_controls():
         raise RuntimeError("base-image manifest identity is invalid")
     require_fresh_database(manifest["database_updated_at"], manifest["observed_at"])
     scans = manifest.get("scans")
