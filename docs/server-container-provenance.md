@@ -1,6 +1,6 @@
 # Server OCI container provenance and rollback
 
-Status: **base-image scan mechanism merged; passing attested candidate, registry publication and independent review remain required**
+Status: **attested base-image candidate verified; registry publication, build-tool disposition and independent review remain required**
 
 ## Immutable build inputs
 
@@ -109,6 +109,16 @@ artifact construction: the pinned Alpine builder contains `libcrypto3` and
 fix `3.5.8-r0`. These are build-stage packages and do not enter the distroless
 runtime image or statically linked `CGO_ENABLED=0` binaries. They remain open
 build-tool findings rather than being suppressed or mislabeled as runtime risk.
+
+Corrected default-branch run
+[`33584395156`](https://github.com/huaxianyan/SevenMirror-Server/actions/runs/33584395156)
+for revision `ac4596db8ca618a1195af79dea13009266d78927` generated and attested the
+complete baseline. Each builder architecture has 17 inventoried OS packages and
+20 findings: 2 High, 6 Medium and 12 Low. Each distroless runtime architecture
+has 5 inventoried OS packages and zero findings. The database update time is
+`2026-09-02T01:09:54.983119421Z`; observation completed at
+`2026-09-02T02:46:34Z`. The downloaded set passed the checked-in offline verifier,
+and all 11 files passed `gh attestation verify` against this repository.
 
 The evidence describes the pinned upstream base images. It does not replace a
 scan of the published registry manifest, prove that a registry served the same

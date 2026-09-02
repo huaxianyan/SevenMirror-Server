@@ -51,7 +51,7 @@ Severity is provisional until an independent reviewer assesses realistic impact.
 | --- | --- | --- | --- |
 | SR-001 | High | OPEN | Complete independent protocol and cryptographic review of Auth HPKE, canonical encodings, identity binding, replay, and domain separation before v1 freeze. |
 | SR-002 | Medium | EVIDENCE | All three CI workflows now run SHA-pinned Gitleaks Action v3.0.0 with scanner v8.30.1 over full Git history. The only path allowlist is the published deterministic `protocol/test-vectors/` tree; Server documentation false positives use exact fingerprints. Independent review and release-candidate execution remain required. |
-| SR-003 | Medium | PARTIAL | Server's pinned govulncheck emits bounded JSON evidence and rejects stale/future vuln.go.dev state, toolchain drift or reachable findings; 19 current module-only informational IDs remain visible beside reachable count zero. Server release candidates scan both architectures of both Dockerfile digest-pinned base images with checksum-pinned Trivy 0.74.0, generating separately attested CycloneDX SBOMs, complete raw findings, database freshness, package/severity summaries and exact exception bindings. The first default-branch run stopped on High `CVE-2026-14456` in builder-only Alpine `libcrypto3`／`libssl3` `3.5.7-r0`; fixed `3.5.8-r0` is not yet in the pinned upstream index. Build-stage findings now remain visible as non-shipped build-tool inventory while runtime Critical／High findings block; the Server finding still needs remediation or independent disposition before production. The canonical exception registry remains empty. Chrome's locked npm audit evidence currently reports zero findings. Android's 90-package runtime OSV gate remains zero, while its complete audit reports 21 affected build-tool packages／86 records pending individual disposition. Published-manifest scanning, Android OSV query-time evidence, all build-tool dispositions and release-channel scans remain open. |
+| SR-003 | Medium | PARTIAL | Server's pinned govulncheck emits bounded JSON evidence and rejects stale/future vuln.go.dev state, toolchain drift or reachable findings; 19 current module-only informational IDs remain visible beside reachable count zero. Server release candidates scan both architectures of both Dockerfile digest-pinned base images with checksum-pinned Trivy 0.74.0, generating separately attested CycloneDX SBOMs, complete raw findings, database freshness, package/severity summaries and exact exception bindings. Run `33584395156` confirmed 20 findings per builder architecture（2 High／6 Medium／12 Low）and zero findings in both runtime architectures; the downloaded 11-file set passed offline and attestation verification. High `CVE-2026-14456` remains in builder-only Alpine `libcrypto3`／`libssl3` `3.5.7-r0`; fixed `3.5.8-r0` is not yet in the pinned upstream index. Build-stage findings remain visible as non-shipped build-tool inventory while runtime Critical／High findings block; the Server finding still needs remediation or independent disposition before production. The canonical exception registry remains empty. Chrome's locked npm audit evidence currently reports zero findings. Android's 90-package runtime OSV gate remains zero, while its complete audit reports 21 affected build-tool packages／86 records pending individual disposition. Published-manifest scanning, Android OSV query-time evidence, all build-tool dispositions and release-channel scans remain open. |
 | SR-004 | Medium | EVIDENCE | Server publishes the canonical `SECURITY.md`; Android and Chrome link to it from repository-local policies and expose component-specific private-report links. All three repositories have GitHub Private Vulnerability Reporting enabled. The policy states that no production version is currently supported, defines response targets, coordinated disclosure, research boundaries, report hygiene, and future security-update trust. Release-baseline verification remains required. |
 | SR-005 | High | EVIDENCE | `/v1/devices/register` is no longer mounted. Schema v8 revokes historical `legacy_active` rows, removes their outstanding rotation codes, and installs insert/update rejection triggers. Authentication, session authorization, rotation-code issuance, and rotation now require `approved`. Unit tests cover route absence, migration rejection, credential denial, and schema enforcement; the real-binary canary also requires legacy-route `404`. Release-baseline execution and independent review remain required. |
 | SR-006 | Medium | PARTIAL | Review Android HPKE private-scalar unwrap, in-memory copies, zeroization limits, crash diagnostics, and the absence of hardware-backed P-256 HPKE operations. |
@@ -455,11 +455,12 @@ vectors are not secrets.
 - [ ] **B-01 — Dependency inventory.** Go, npm, Gradle/plugin and retained GitHub
   Action inventories are locked. Server now pins the multi-platform OCI index
   digests for its Go 1.25.13 Alpine builder and distroless Debian 12 nonroot
-  runtime and records the resolved content-addressed image graph. Complete
+  runtime and records the resolved content-addressed image graph. A
   checksum-pinned Trivy release gate now produces four CycloneDX base-image SBOMs
   and four complete vulnerability reports with database freshness and exact
-  exception binding. Default-branch evidence, published-manifest scanning and
-  cryptographic-library baseline review remain open. (`PARTIAL`)
+  exception binding. The default-branch set has passed offline and attestation
+  verification; published-manifest scanning and cryptographic-library baseline
+  review remain open. (`PARTIAL`)
 - [ ] **B-02 — Vulnerability scan.** Server CI runs `govulncheck v1.1.4` against
   reachable Go code. Its first run found 12 reachable standard-library findings
   under Go 1.24.13; `go.mod`, CI, and the container builder now enforce the fixed
@@ -480,7 +481,7 @@ vectors are not secrets.
   exact finding/purl/scope, distinct owner/approver and expiry. Server's
   base-image mechanism preserves all severities and blocks unapproved runtime
   Critical／High findings. High `CVE-2026-14456` remains visible in two
-  builder-only Alpine packages; passing default-branch evidence,
+  builder-only Alpine packages. Default-branch evidence is verified;
   published-manifest evidence, Android OSV query-time evidence and all build-tool
   dispositions remain open. (`PARTIAL`; SR-003)
 - [ ] **B-03 — Secret scan gate.** All three pull-request/push workflows now scan
