@@ -170,6 +170,10 @@ def vulnerability_summary(value: object, exceptions: dict[tuple[str, str], str])
     }
 
 
+def release_blocking(role: str, summary: dict[str, object]) -> bool:
+    return role == "runtime" and bool(summary["blocking_findings"])
+
+
 def validate_sbom(value: object) -> int:
     if not isinstance(value, dict) or value.get("bomFormat") != "CycloneDX" or \
             not isinstance(value.get("specVersion"), str) or not isinstance(value.get("components"), list):
@@ -224,12 +228,9 @@ def build(output: Path, revision: str, trivy: Path, cache_dir: Path) -> None:
             vulnerability_value = read_json(output / vulnerability_name, "Trivy vulnerability report")
             sbom_value = read_json(output / sbom_name, "Trivy CycloneDX SBOM")
             summary = vulnerability_summary(vulnerability_value, exceptions)
-            if summary["blocking_findings"]:
-                raise RuntimeError(
-                    f"{image['role']} linux/{architecture} has unapproved Critical/High findings",
-                )
             scans.append({
                 "architecture": architecture,
+                "gate_scope": "build-tool" if image["role"] == "build" else "release-runtime",
                 "image": image["reference"],
                 "role": image["role"],
                 "sbom": sbom_name,
@@ -283,7 +284,10 @@ def verify(output: Path, revision: str) -> None:
     exceptions = active_exceptions()
     expected_names = {"base-image-manifest.json", "SHA256SUMS", "trivy-db-metadata.json"}
     for scan, expected in zip(scans, expected_pairs, strict=True):
-        if not isinstance(scan, dict) or (scan.get("role"), scan.get("architecture"), scan.get("image")) != expected:
+        expected_scope = "build-tool" if expected[0] == "build" else "release-runtime"
+        if not isinstance(scan, dict) or \
+                (scan.get("role"), scan.get("architecture"), scan.get("image")) != expected or \
+                scan.get("gate_scope") != expected_scope:
             raise RuntimeError("base-image scan target binding is invalid")
         vulnerability_name = evidence_name(expected[0], expected[1], "vulnerabilities")
         sbom_name = evidence_name(expected[0], expected[1], "sbom.cdx")
@@ -293,8 +297,8 @@ def verify(output: Path, revision: str) -> None:
         summary = vulnerability_summary(
             read_json(output / vulnerability_name, "Trivy vulnerability report"), exceptions,
         )
-        if summary["blocking_findings"]:
-            raise RuntimeError("base-image evidence contains unapproved Critical/High findings")
+        if release_blocking(expected[0], summary):
+            raise RuntimeError("runtime base image has unapproved Critical/High findings")
         if any(scan.get(key) != value for key, value in summary.items()) or \
                 scan.get("sbom_component_count") != validate_sbom(
                     read_json(output / sbom_name, "Trivy CycloneDX SBOM"),
