@@ -1,6 +1,6 @@
 # Server OCI container provenance and rollback
 
-Status: **attested base-image candidate verified; registry publication, build-tool disposition and independent review remain required**
+Status: **protected GHCR publication mechanism; real publication, package policy and independent review remain required**
 
 ## Immutable build inputs
 
@@ -126,24 +126,37 @@ content, or independently disposition build-tool, Medium or lower findings.
 
 ## Registry publication boundary
 
-The current workflow does not push to a production registry. GitHub artifact
-storage is limited to 30 days and is not a container registry or durable release
-host. The base-image scan must succeed before OCI candidate construction, but a
-separate scan of the exact published manifest remains mandatory. Before
-production deployment, operator evidence must record:
+The protected release workflow publishes to
+`ghcr.io/huaxianyan/sevenmirror-server`. It does not rebuild for publication.
+After both architecture-specific OCI archives pass the offline graph verifier,
+checksum-pinned `regctl 0.11.5` copies their exact manifests and blobs into one
+local OCI index. The workflow computes that index digest before upload, uses the
+40-character source revision only as a retrieval tag, and refuses to overwrite an
+existing revision tag with different content. `GITHUB_TOKEN` receives only
+`packages: write`; `regctl` stores it under an ephemeral runner directory that is
+removed when the step exits.
 
-1. registry namespace and access-control policy;
-2. exact uploaded per-architecture image-manifest digests;
-3. multi-architecture index digest, if one is created;
-4. pull-side verification that the registry serves the approved manifests and
-   config/layer digests unchanged;
-5. retention, deletion, immutability, vulnerability scanning and emergency
-   revocation policy;
-6. deployment configuration pinned by digest, never by a mutable tag.
+The workflow then pulls `repository@sha256:<index>` into a new OCI layout rather
+than trusting the upload response or mutable tag. The checked-in verifier follows
+the pulled index, both platform manifests, configs and every layer. It requires
+the exact pre-publication per-architecture manifest/config digests, layer counts,
+platforms, runtime user, entrypoint and source revision, and rejects unreferenced
+content. It separately scans both registry-served runtime platforms with Trivy;
+all severities remain in the evidence and unapproved Critical／High findings fail.
+The bounded evidence set records the immutable reference, index bytes/digest,
+regctl and Trivy versions, database freshness, SBOMs, complete findings and
+checksums, and receives separate GitHub attestations.
+
+A real default-branch run is still required before this is publication evidence.
+After first creation, verify the GHCR package visibility, repository linkage,
+write/admin access, retention and deletion policy. GitHub artifact storage remains
+limited to 30 days and is not durable release hosting. Production deployment must
+use the immutable index digest, never the source-revision tag.
 
 Registry credentials must not enter source, release manifests, support bundles or
-command logs. Adding a registry push Action requires its own immutable pin,
-permission, dependency and credential-flow review.
+command logs. The package remains a candidate channel until independent approval,
+retention/emergency-revocation policy and a pull from an environment without
+repository write credentials are evidenced.
 
 ## Rollback
 

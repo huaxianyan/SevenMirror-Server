@@ -43,6 +43,7 @@ jobs:
         run: |
           python3 scripts/test_validate_vulnerability_exceptions.py
           python3 scripts/test_base_image_evidence.py
+          python3 scripts/test_registry_publication_evidence.py
           python3 scripts/validate_vulnerability_exceptions.py
       - name: Scan reachable Go code with database freshness evidence
         run: |

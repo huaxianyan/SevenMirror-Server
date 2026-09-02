@@ -11,6 +11,7 @@ permissions:
   id-token: write
   attestations: write
   artifact-metadata: write
+  packages: write
 
 jobs:
   build-and-attest:
@@ -42,6 +43,7 @@ jobs:
         run: |
           test -z "$(git status --porcelain=v1)"
           python3 scripts/test_base_image_evidence.py
+          python3 scripts/test_registry_publication_evidence.py
           python3 scripts/validate_vulnerability_exceptions.py
           mkdir "$RUNNER_TEMP/sevenmirror-security-evidence"
           python3 scripts/govulncheck_gate.py \
@@ -89,10 +91,79 @@ jobs:
             --arm64-archive "$RUNNER_TEMP/sevenmirror-arm64.oci.tar" \
             --output "$RUNNER_TEMP/sevenmirror-container-release" \
             --revision "$GITHUB_SHA"
+      - name: Publish verified OCI graph and verify registry-served runtime
+        env:
+          REGCTL_LINUX_AMD64_SHA256: c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467
+          REGCTL_VERSION: 0.11.5
+          REGISTRY_REPOSITORY: ghcr.io/huaxianyan/sevenmirror-server
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          regctl="$RUNNER_TEMP/regctl"
+          curl --fail --location --proto '=https' --tlsv1.2 --retry 3 \
+            --output "$regctl" \
+            "https://github.com/regclient/regclient/releases/download/v${REGCTL_VERSION}/regctl-linux-amd64"
+          echo "${REGCTL_LINUX_AMD64_SHA256}  ${regctl}" | sha256sum --check --strict -
+          chmod 0700 "$regctl"
+          test "$("$regctl" version --format '{{.VCSTag}}')" = "v${REGCTL_VERSION}"
+
+          export DOCKER_CONFIG="$RUNNER_TEMP/registry-auth"
+          mkdir -m 0700 "$DOCKER_CONFIG"
+          trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+          printf '%s' "$REGISTRY_TOKEN" | "$regctl" registry login ghcr.io \
+            --user "$GITHUB_ACTOR" --pass-stdin
+
+          combined="$RUNNER_TEMP/sevenmirror-registry-source"
+          mkdir -m 0700 "$combined"
+          for architecture in amd64 arm64; do
+            source_layout="$RUNNER_TEMP/sevenmirror-source-${architecture}"
+            mkdir -m 0700 "$source_layout"
+            tar --extract --file \
+              "$RUNNER_TEMP/sevenmirror-container-release/sevenmirror-server-linux-${architecture}.oci.tar" \
+              --directory "$source_layout"
+            manifest_digest="$(jq -er \
+              --arg architecture "$architecture" \
+              '.images[] | select(.architecture == $architecture) | .manifest_digest' \
+              "$RUNNER_TEMP/sevenmirror-container-release/container-manifest.json")"
+            "$regctl" image copy \
+              "ocidir://${source_layout}@${manifest_digest}" \
+              "ocidir://${combined}:${architecture}"
+          done
+          "$regctl" index create "ocidir://${combined}:${GITHUB_SHA}" \
+            --ref "ocidir://${combined}:amd64" \
+            --ref "ocidir://${combined}:arm64" \
+            --platform linux/amd64 \
+            --platform linux/arm64
+          expected_index_digest="$("$regctl" image digest "ocidir://${combined}:${GITHUB_SHA}")"
+          published_ref="${REGISTRY_REPOSITORY}:${GITHUB_SHA}"
+          existing_digest="$("$regctl" image digest "$published_ref" 2>/dev/null || true)"
+          if test -n "$existing_digest" && test "$existing_digest" != "$expected_index_digest"; then
+            echo 'The source-revision registry tag already points to different content.' >&2
+            exit 1
+          fi
+          if test -z "$existing_digest"; then
+            "$regctl" image copy "ocidir://${combined}:${GITHUB_SHA}" "$published_ref"
+          fi
+          test "$("$regctl" image digest "$published_ref")" = "$expected_index_digest"
+
+          pulled="$RUNNER_TEMP/sevenmirror-registry-pull"
+          "$regctl" image copy \
+            "${REGISTRY_REPOSITORY}@${expected_index_digest}" \
+            "ocidir://${pulled}:${GITHUB_SHA}"
+          python3 scripts/registry_publication_evidence.py \
+            --container-release "$RUNNER_TEMP/sevenmirror-container-release" \
+            --pulled-layout "$pulled" \
+            --trivy "$RUNNER_TEMP/trivy" \
+            --cache-dir "$RUNNER_TEMP/trivy-cache" \
+            --output "$RUNNER_TEMP/sevenmirror-registry-evidence" \
+            --revision "$GITHUB_SHA"
       - name: Generate signed base-image evidence provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: '${{ runner.temp }}/sevenmirror-base-image-evidence/*'
+      - name: Generate signed registry publication evidence provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: '${{ runner.temp }}/sevenmirror-registry-evidence/*'
       - name: Generate signed binary provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
@@ -110,6 +181,13 @@ jobs:
         with:
           name: sevenmirror-base-image-evidence-${{ github.sha }}
           path: '${{ runner.temp }}/sevenmirror-base-image-evidence/'
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload verified registry publication evidence
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: sevenmirror-registry-evidence-${{ github.sha }}
+          path: '${{ runner.temp }}/sevenmirror-registry-evidence/'
           if-no-files-found: error
           retention-days: 30
       - name: Upload verified binary artifact set

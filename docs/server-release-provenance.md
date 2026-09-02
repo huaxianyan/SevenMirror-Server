@@ -112,13 +112,19 @@ The same release workflow also builds and separately attests bounded linux/amd64
 and linux/arm64 OCI layout archives. Their content-addressed graph, runtime
 identity, immutable base-image inputs, registry boundary and digest-based rollback
 are defined in [`server-container-provenance.md`](server-container-provenance.md).
-Binary and container artifact sets remain separate verification scopes.
+Binary and container artifact sets remain separate verification scopes. After
+OCI verification, the protected job uses the exact archives to create one GHCR
+multi-architecture index, pulls it back by index digest, revalidates the complete
+graph and scans both registry-served runtime platforms. Registry evidence is a
+fourth separately attested and uploaded scope; the source-revision tag is not the
+deployment identity.
 
 ## Remaining signing work
 
-Sigstore/GitHub provenance is not platform-native code signing and the current OCI
-artifacts are not pushed to a production registry. Production release still needs
-durable artifact hosting, protected release approval, registry publication and
-pull-side digest evidence, retention/revocation policy and independent
-verification. Android and Chrome retain their separate channel-specific
+Sigstore/GitHub provenance is not platform-native code signing. The GHCR workflow
+mechanism still requires one successful default-branch execution and package
+policy verification before it becomes publication evidence. Production release
+also needs durable artifact hosting, independent release approval,
+retention/deletion/emergency-revocation policy and an independently credentialed
+pull verification. Android and Chrome retain their separate channel-specific
 publication boundaries.
