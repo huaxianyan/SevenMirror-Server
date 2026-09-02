@@ -1,6 +1,6 @@
 # Server OCI container provenance and rollback
 
-Status: **protected GHCR publication mechanism; real publication, package policy and independent review remain required**
+Status: **public GHCR candidate and pull-side graph/runtime evidence verified; retention policy and independent review remain required**
 
 ## Immutable build inputs
 
@@ -120,9 +120,9 @@ has 5 inventoried OS packages and zero findings. The database update time is
 `2026-09-02T02:46:34Z`. The downloaded set passed the checked-in offline verifier,
 and all 11 files passed `gh attestation verify` against this repository.
 
-The evidence describes the pinned upstream base images. It does not replace a
-scan of the published registry manifest, prove that a registry served the same
-content, or independently disposition build-tool, Medium or lower findings.
+The evidence describes the pinned upstream base images. Registry publication has
+its own pull-side graph and runtime scan below. Neither evidence independently
+dispositions build-tool, Medium or lower findings.
 
 ## Registry publication boundary
 
@@ -147,16 +147,35 @@ The bounded evidence set records the immutable reference, index bytes/digest,
 regctl and Trivy versions, database freshness, SBOMs, complete findings and
 checksums, and receives separate GitHub attestations.
 
-A real default-branch run is still required before this is publication evidence.
-After first creation, verify the GHCR package visibility, repository linkage,
-write/admin access, retention and deletion policy. GitHub artifact storage remains
-limited to 30 days and is not durable release hosting. Production deployment must
-use the immutable index digest, never the source-revision tag.
+Protected default-branch run
+[`33587546197`](https://github.com/huaxianyan/SevenMirror-Server/actions/runs/33587546197)
+published revision `b489de1fbab02614b1bad3aa69347c50a732a8a1`. The immutable identities are:
+
+- multi-architecture index:
+  `sha256:37499955cf4b8e18b4f008d1d35425c41d2faeeeb2d3e7b9f8e5ca4c46817f9d`;
+- linux/amd64 manifest:
+  `sha256:bd598b9e4f2d70345ab8f23a0e71fa3a1b53f4472f2969535dffd35d0297601d`;
+- linux/arm64 manifest:
+  `sha256:319dd03546cbb2dea50ecd53866bac8ae796a25e9cb90c0febd0e43d0b245ac2`.
+
+Both pulled runtime platforms contain 5 OS packages／6 CycloneDX components and
+zero Trivy findings. The downloaded 8-file registry evidence set passed the
+offline verifier and every file passed GitHub attestation verification. A second
+pull used a clean HOME／Docker config with no registry credential; its complete
+OCI graph again matched the index and both pre-publication manifests. The public
+GHCR page identifies the package as `Public`, links it to this repository and
+shows the exact source-revision tag and index digest.
+
+GitHub artifact storage remains limited to 30 days and is not durable binary
+hosting. GHCR supplies public digest-addressed retrieval, but owner-level package
+mutation/deletion remains possible and no independent retention or emergency
+revocation policy has been approved. Production deployment must use the immutable
+index digest, never the source-revision tag.
 
 Registry credentials must not enter source, release manifests, support bundles or
 command logs. The package remains a candidate channel until independent approval,
-retention/emergency-revocation policy and a pull from an environment without
-repository write credentials are evidenced.
+retention/deletion/emergency-revocation policy and a second authorized release
+reviewer are established.
 
 ## Rollback
 
