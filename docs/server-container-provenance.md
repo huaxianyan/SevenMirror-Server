@@ -1,6 +1,6 @@
 # Server OCI container provenance and rollback
 
-Status: **offline OCI artifact baseline; registry publication and independent review remain required**
+Status: **attested OCI and base-image scan baseline; registry publication and independent review remain required**
 
 ## Immutable build inputs
 
@@ -65,14 +65,52 @@ content-addressed OCI graph.
 BuildKit's embedded provenance and SBOM outputs are disabled for this bounded OCI
 layout so the verifier can require that every blob belongs to the one runtime
 image. GitHub provenance is generated externally for the archives, manifest and
-checksum. A future SBOM must be a separately named, verified and attested subject;
-it must not be silently introduced as an unreferenced OCI blob.
+checksum. Base-image SBOMs are separately named, verified and attested subjects;
+they are not silently introduced as unreferenced OCI blobs.
+
+## Base-image SBOM and vulnerability evidence
+
+The release-candidate workflow downloads exact Trivy `0.74.0` Linux amd64 bytes
+with checked SHA-256
+`2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a`.
+`scripts/base_image_evidence.py` reads the two image references directly from the
+Dockerfile, so the digest-pinned build and runtime inputs retain one definition
+point. It scans the linux/amd64 and linux/arm64 variants of both indexes with the
+OS-package scanner and produces four CycloneDX SBOMs plus four complete Trivy JSON
+vulnerability reports.
+
+`base-image-manifest.json` binds the exact source revision, requested image index
+digests, architecture, Trivy version, Trivy database identity and update time,
+UTC observation time, package/component counts, severity counts, raw evidence
+filenames and SHA-256 values. The gate rejects a database older than 7 days or
+future-dated by more than 5 minutes. Critical and High findings fail unless the
+exact purl and vulnerability ID map to an active Server `base-image` entry in the
+canonical vulnerability exception registry. Applied exception IDs remain visible
+beside the original finding counts; an exception does not turn the report into a
+false zero.
+
+The verifier rejects stale database evidence, changed Dockerfile inputs, missing
+or extra files, links, checksum or summary drift, malformed finding identities,
+and unapproved Critical or High findings. From the approved source checkout, run:
+
+```sh
+python3 scripts/base_image_evidence.py \
+  --output ./sevenmirror-base-image-evidence \
+  --revision <40-character-commit> \
+  --verify-only
+```
+
+The evidence describes the pinned upstream base images. It does not replace a
+scan of the published registry manifest, prove that a registry served the same
+content, or independently disposition Medium and lower findings.
 
 ## Registry publication boundary
 
 The current workflow does not push to a production registry. GitHub artifact
 storage is limited to 30 days and is not a container registry or durable release
-host. Before production deployment, operator evidence must record:
+host. The base-image scan must succeed before OCI candidate construction, but a
+separate scan of the exact published manifest remains mandatory. Before
+production deployment, operator evidence must record:
 
 1. registry namespace and access-control policy;
 2. exact uploaded per-architecture image-manifest digests;
