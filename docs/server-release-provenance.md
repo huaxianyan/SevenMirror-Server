@@ -121,10 +121,11 @@ deployment identity.
 
 ## Remaining signing work
 
-Sigstore/GitHub provenance is not platform-native code signing. The GHCR workflow
-mechanism still requires one successful default-branch execution and package
-policy verification before it becomes publication evidence. Production release
-also needs durable artifact hosting, independent release approval,
-retention/deletion/emergency-revocation policy and an independently credentialed
-pull verification. Android and Chrome retain their separate channel-specific
-publication boundaries.
+Sigstore/GitHub provenance is not platform-native code signing. Default-branch
+run `33587546197` published the public GHCR candidate, verified the registry graph
+and runtime scan, and produced attestations that passed after download. A separate
+anonymous pull also matched the complete graph. Production release still needs
+durable binary hosting, independent release approval, an approved GHCR
+retention/deletion/emergency-revocation policy and disposition of the builder
+finding. Android and Chrome retain their separate channel-specific publication
+boundaries.
