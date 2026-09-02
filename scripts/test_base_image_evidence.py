@@ -68,6 +68,8 @@ class BaseImageEvidenceTest(unittest.TestCase):
         }
         summary = MODULE.vulnerability_summary(report, {})
         self.assertEqual(summary["applied_exceptions"], [])
+        self.assertFalse(MODULE.release_blocking("build", summary))
+        self.assertTrue(MODULE.release_blocking("runtime", summary))
         self.assertEqual(summary["package_count"], 2)
         self.assertEqual(summary["finding_count"], 2)
         self.assertEqual(

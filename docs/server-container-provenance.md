@@ -1,6 +1,6 @@
 # Server OCI container provenance and rollback
 
-Status: **attested OCI and base-image scan baseline; registry publication and independent review remain required**
+Status: **base-image scan mechanism merged; passing attested candidate, registry publication and independent review remain required**
 
 ## Immutable build inputs
 
@@ -83,15 +83,18 @@ vulnerability reports.
 digests, architecture, Trivy version, Trivy database identity and update time,
 UTC observation time, package/component counts, severity counts, raw evidence
 filenames and SHA-256 values. The gate rejects a database older than 7 days or
-future-dated by more than 5 minutes. Critical and High findings fail unless the
-exact purl and vulnerability ID map to an active Server `base-image` entry in the
-canonical vulnerability exception registry. Applied exception IDs remain visible
-beside the original finding counts; an exception does not turn the report into a
-false zero.
+future-dated by more than 5 minutes. Critical and High findings in the runtime
+base fail unless the exact purl and vulnerability ID map to an active Server
+`base-image` entry in the canonical vulnerability exception registry. Build-stage
+findings remain visible as `build-tool` inventory and require remediation or an
+approved disposition before production, but do not masquerade as shipped runtime
+packages. Applied exception IDs remain visible beside the original finding
+counts; an exception does not turn the report into a false zero.
 
 The verifier rejects stale database evidence, changed Dockerfile inputs, missing
 or extra files, links, checksum or summary drift, malformed finding identities,
-and unapproved Critical or High findings. From the approved source checkout, run:
+and unapproved runtime Critical or High findings. From the approved source
+checkout, run:
 
 ```sh
 python3 scripts/base_image_evidence.py \
@@ -100,9 +103,16 @@ python3 scripts/base_image_evidence.py \
   --verify-only
 ```
 
+The first default-branch execution on 2026-09-02 correctly stopped before
+artifact construction: the pinned Alpine builder contains `libcrypto3` and
+`libssl3` `3.5.7-r0`, for which Trivy reports High `CVE-2026-14456` and upstream
+fix `3.5.8-r0`. These are build-stage packages and do not enter the distroless
+runtime image or statically linked `CGO_ENABLED=0` binaries. They remain open
+build-tool findings rather than being suppressed or mislabeled as runtime risk.
+
 The evidence describes the pinned upstream base images. It does not replace a
 scan of the published registry manifest, prove that a registry served the same
-content, or independently disposition Medium and lower findings.
+content, or independently disposition build-tool, Medium or lower findings.
 
 ## Registry publication boundary
 
