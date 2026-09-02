@@ -39,9 +39,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_VERSION: 8.30.1
-      - name: Validate vulnerability exception governance
+      - name: Validate vulnerability and base-image evidence governance
         run: |
           python3 scripts/test_validate_vulnerability_exceptions.py
+          python3 scripts/test_base_image_evidence.py
           python3 scripts/validate_vulnerability_exceptions.py
       - name: Scan reachable Go code with database freshness evidence
         run: |

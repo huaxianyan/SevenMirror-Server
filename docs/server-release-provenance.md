@@ -80,8 +80,13 @@ tag is immutable, or that the binary is safe. The exact manifest source revision
 and digest remain the release and rollback identity.
 
 The workflow also uploads the complete set under an artifact name containing the
-full source commit. GitHub retention is currently 30 days; durable release
-hosting and retention must be decided before production publication.
+full source commit. Before building release artifacts, it generates a separate
+`sevenmirror-base-image-evidence-<commit>` set containing four CycloneDX SBOMs,
+four complete Trivy reports, database metadata, a bounded manifest and checksums.
+Every evidence file receives its own GitHub attestation and can be checked with
+`scripts/base_image_evidence.py --verify-only`; it is not part of the binary or
+OCI graph. GitHub retention is currently 30 days, so durable release hosting and
+retention must be decided before production publication.
 
 ## Rollback rule
 
