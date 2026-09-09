@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -36,6 +38,8 @@ func (f ConnectionAuthenticatorFunc) AuthenticateConnection(
 }
 
 type AuthenticatedWebSocketHandler struct {
+	// Configure before serving; only bounded metadata is passed to this logger.
+	Logger           *slog.Logger
 	hub              *Hub
 	authenticator    ConnectionAuthenticator
 	activityRecorder ConnectionActivityRecorder
@@ -67,6 +71,7 @@ func NewAuthenticatedWebSocketHandler(
 	}
 	activityRecorder, _ := authenticator.(ConnectionActivityRecorder)
 	return &AuthenticatedWebSocketHandler{
+		Logger:           slog.Default(),
 		hub:              hub,
 		authenticator:    authenticator,
 		activityRecorder: activityRecorder,
@@ -131,8 +136,34 @@ func (h *AuthenticatedWebSocketHandler) ServeHTTP(w http.ResponseWriter, r *http
 	<-h.authSlots
 	authSlotHeld = false
 	_ = connection.SetReadDeadline(time.Time{})
-	_ = ServeAuthenticatedConnection(
+	started := time.Now()
+	err = ServeAuthenticatedConnection(
 		r.Context(), connection, peer, credentialVersion, h.hub, h.activityRecorder)
+	h.Logger.Info("relay session ended",
+		"reason", relaySessionEndReason(err),
+		"duration_ms", time.Since(started).Milliseconds())
+}
+
+// Never include error text: it may contain endpoint or client-controlled data.
+func relaySessionEndReason(err error) string {
+	var networkError net.Error
+	switch {
+	case err == nil:
+		return "completed"
+	case errors.Is(err, ErrAlreadyConnected):
+		return "already_connected"
+	case errors.Is(err, ErrDeviceDisconnected):
+		return "authorization_revoked"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	case errors.As(err, &networkError) && networkError.Timeout():
+		return "timeout"
+	case errors.Is(err, io.EOF) || websocket.IsCloseError(err,
+		websocket.CloseNormalClosure, websocket.CloseGoingAway):
+		return "peer_closed"
+	default:
+		return "transport_error"
+	}
 }
 
 func EncodeAuthenticationFrame(peer PeerIdentity, token []byte) ([]byte, error) {

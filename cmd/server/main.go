@@ -91,6 +91,7 @@ func main() {
 		logger.Error("configure authenticated relay", "error", err)
 		os.Exit(1)
 	}
+	relayHandler.Logger = logger
 
 	apiLimits := configuredHTTPRateLimits(cfg.AbuseLimits)
 	productionHandler, err := httpapi.NewProductionHandler(
