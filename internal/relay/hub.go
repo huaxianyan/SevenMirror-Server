@@ -11,7 +11,7 @@ import (
 	"github.com/huaxianyan/SyncNotifications-Server/protocol/routingheader"
 )
 
-// Bound admitted work while a retiring session waits for its operations to finish.
+// Bound storage and activity work independently of the existing socket write timeout.
 const sessionOperationTimeout = 5 * time.Second
 
 var (
@@ -150,7 +150,7 @@ func (h *Hub) Disconnect(observed ConnectedSession) bool {
 
 // The read lock spans the actual operation, not just the identity check. A new
 // session cannot occupy this slot until all admitted old work has returned.
-func (h *Hub) beginOperation(ctx context.Context, observed ConnectedSession) (context.Context, func(), error) {
+func (h *Hub) beginOperation(ctx context.Context, observed ConnectedSession, timeout time.Duration) (context.Context, func(), error) {
 	if observed.session == nil || observed.session.ctx.Err() != nil {
 		return nil, nil, ErrSessionOffline
 	}
@@ -166,7 +166,7 @@ func (h *Hub) beginOperation(ctx context.Context, observed ConnectedSession) (co
 		session.operations.RUnlock()
 		return nil, nil, ErrSessionOffline
 	}
-	operationContext, cancel := context.WithTimeout(ctx, sessionOperationTimeout)
+	operationContext, cancel := context.WithTimeout(ctx, timeout)
 	stop := context.AfterFunc(session.ctx, cancel)
 	return operationContext, func() {
 		stop()
@@ -181,7 +181,7 @@ func (h *Hub) RouteOnline(ctx context.Context, authenticatedSender ConnectedSess
 	if err != nil {
 		return err
 	}
-	_, finish, err := h.beginOperation(ctx, authenticatedSender)
+	_, finish, err := h.beginOperation(ctx, authenticatedSender, sessionOperationTimeout)
 	if err != nil {
 		return err
 	}
@@ -212,7 +212,7 @@ func (h *Hub) RouteDurable(
 	if err != nil {
 		return err
 	}
-	ctx, finish, err := h.beginOperation(ctx, authenticatedSender)
+	ctx, finish, err := h.beginOperation(ctx, authenticatedSender, sessionOperationTimeout)
 	if err != nil {
 		return err
 	}
@@ -249,7 +249,7 @@ func (h *Hub) ResumeDeliveries(
 	cursor uint64,
 	now time.Time,
 ) (DeliveryBatch, error) {
-	ctx, finish, err := h.beginOperation(ctx, recipient)
+	ctx, finish, err := h.beginOperation(ctx, recipient, sessionOperationTimeout)
 	if err != nil {
 		return DeliveryBatch{}, err
 	}
@@ -263,7 +263,7 @@ func (h *Hub) ReadDeliveries(
 	after uint64,
 	now time.Time,
 ) (DeliveryBatch, error) {
-	ctx, finish, err := h.beginOperation(ctx, recipient)
+	ctx, finish, err := h.beginOperation(ctx, recipient, sessionOperationTimeout)
 	if err != nil {
 		return DeliveryBatch{}, err
 	}
@@ -276,7 +276,7 @@ func (h *Hub) AcknowledgeDelivery(
 	recipient ConnectedSession,
 	cursor uint64,
 ) error {
-	ctx, finish, err := h.beginOperation(ctx, recipient)
+	ctx, finish, err := h.beginOperation(ctx, recipient, sessionOperationTimeout)
 	if err != nil {
 		return err
 	}

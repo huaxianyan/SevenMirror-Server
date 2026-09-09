@@ -95,9 +95,11 @@ It then takes that instance's exclusive operation lock, waiting for admitted
 operations to return before removing the exact map entry. Buffered batches cannot
 bypass retirement at their subsequent socket writes. Normal unregister
 uses the same path. The global Hub lock is not held during storage work or while
-waiting for it. Pending operations get a five-second budget (or a shorter caller
-deadline), and retirement cancels them immediately rather than waiting for that
-budget to expire. Canceled/expired socket writes close the transport to unblock IO,
+waiting for it. Storage and activity work get a five-second budget (or a shorter
+caller deadline). Socket writes retain their existing ten-second budget, so this
+change does not silently halve the time available for a large frame on a slow
+link. Retirement cancels both immediately rather than waiting for their budgets
+to expire. Canceled/expired socket writes close the transport to unblock IO,
 and writer failures cancel the serving context as well. The old slot remains
 reserved while cancellation cleanup runs.
 An old operation may complete before retirement; it cannot complete a mutation

@@ -54,7 +54,7 @@ func ServeAuthenticatedConnection(
 	}
 	defer unregister()
 	writeMessage := func(kind int, encoded []byte) error {
-		operationContext, finish, err := hub.beginOperation(sessionContext, session)
+		operationContext, finish, err := hub.beginOperation(sessionContext, session, writeTimeout)
 		if err != nil {
 			return err
 		}
@@ -208,7 +208,7 @@ func ServeAuthenticatedConnection(
 			return err
 		}
 		if activityRecorder != nil {
-			activityContext, finish, err := hub.beginOperation(sessionContext, session)
+			activityContext, finish, err := hub.beginOperation(sessionContext, session, sessionOperationTimeout)
 			if err != nil {
 				return err
 			}
