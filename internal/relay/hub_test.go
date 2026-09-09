@@ -98,7 +98,11 @@ func TestHubDisconnectRemovesRoutingAndSignalsExactSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer unregister()
-	if !hub.Disconnect(recipient) {
+	observed := make(map[PeerIdentity]ConnectedSession)
+	for _, session := range hub.ConnectedSessions() {
+		observed[session.Peer] = session
+	}
+	if !hub.Disconnect(observed[recipient]) {
 		t.Fatal("connected recipient was not disconnected")
 	}
 	select {
@@ -112,13 +116,13 @@ func TestHubDisconnectRemovesRoutingAndSignalsExactSession(t *testing.T) {
 	if err := hub.RouteOnline(sender, frame); !errors.Is(err, ErrRecipientOffline) {
 		t.Fatalf("route after recipient disconnect error = %v", err)
 	}
-	if !hub.Disconnect(sender) {
+	if !hub.Disconnect(observed[sender]) {
 		t.Fatal("connected sender was not disconnected")
 	}
 	if err := hub.RouteOnline(sender, frame); !errors.Is(err, ErrSenderOffline) {
 		t.Fatalf("route after sender disconnect error = %v", err)
 	}
-	if hub.Disconnect(recipient) {
+	if hub.Disconnect(observed[recipient]) {
 		t.Fatal("duplicate disconnect reported a change")
 	}
 }

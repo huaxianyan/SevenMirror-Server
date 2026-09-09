@@ -10,7 +10,7 @@ type SessionAuthorizer func(context.Context, ConnectedSession) (bool, error)
 
 // RunAuthorizationMonitor bounds the lifetime of a session revoked by the
 // out-of-process local admin CLI. Authorization lookup errors fail closed for
-// the affected active peer.
+// the observed connection instance, not a later connection of the same peer.
 func RunAuthorizationMonitor(
 	ctx context.Context,
 	hub *Hub,
@@ -33,7 +33,7 @@ func RunAuthorizationMonitor(
 			for _, session := range hub.ConnectedSessions() {
 				authorized, err := authorize(ctx, session)
 				if err != nil || !authorized {
-					hub.Disconnect(session.Peer)
+					hub.Disconnect(session)
 				}
 			}
 		}

@@ -131,7 +131,7 @@ func main() {
 				authorized, err := store.IsSessionAuthorized(
 					checkContext, workspaceID, deviceID, session.CredentialVersion)
 				if err != nil {
-					logger.Warn("device authorization check failed; disconnecting active peer")
+					logger.Warn("device authorization check failed for observed session")
 				}
 				return authorized, err
 			},

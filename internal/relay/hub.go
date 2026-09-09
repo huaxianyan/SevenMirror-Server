@@ -40,6 +40,8 @@ type deviceSession struct {
 type ConnectedSession struct {
 	Peer              PeerIdentity
 	CredentialVersion int64
+	// Retaining this instance prevents an old observation from targeting a reconnect.
+	session *deviceSession
 }
 
 type Hub struct {
@@ -112,21 +114,22 @@ func (h *Hub) ConnectedSessions() []ConnectedSession {
 		sessions = append(sessions, ConnectedSession{
 			Peer:              peer,
 			CredentialVersion: session.credentialVersion,
+			session:           session,
 		})
 	}
 	return sessions
 }
 
-// Disconnect atomically removes an active device from routing and signals its
-// transport session. It is idempotent for offline or already-disconnected peers.
-func (h *Hub) Disconnect(identity PeerIdentity) bool {
+// Disconnect atomically removes only the observed connection instance. A delayed
+// authorization result cannot remove a replacement, even at the same credential version.
+func (h *Hub) Disconnect(observed ConnectedSession) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	session, exists := h.devices[identity]
-	if !exists {
+	session, exists := h.devices[observed.Peer]
+	if !exists || session != observed.session {
 		return false
 	}
-	delete(h.devices, identity)
+	delete(h.devices, observed.Peer)
 	close(session.disconnected)
 	return true
 }

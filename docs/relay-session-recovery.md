@@ -62,11 +62,23 @@ implemented:
    behalf of the new session. Current Hub methods identify callers by device,
    not by a distinct connection lease; replacing a map entry alone is insufficient.
 3. A late authorization-monitor result or old cleanup must not disconnect or
-   unregister the replacement. The monitor currently observes a session then
-   calls `Disconnect` using only its peer identity.
+   unregister the replacement. The monitor now carries the observed connection
+   instance into `Disconnect`, which compares it with the current instance under
+   the Hub lock. Reconnecting with the same credential version is also protected.
+   The existing unregister closure likewise checks its exact session. This does
+   not yet fence the old connection's routing, delivery reads, or ACK work.
 4. Teardown and replacement admission must be bounded; a stuck old connection
    must not hold the slot indefinitely. Preserve durable delivery, cumulative
    ACK, recipient isolation, and one active connection per device.
+
+The revocation race has a real HTTP/WebSocket regression test with a controlled
+in-memory authorization lookup. It holds an old lookup while the original socket
+exits and the same device reconnects, then returns the old lookup failure. The
+replacement must still exchange SNH1/SNH2, while a subsequent current-session
+revocation must still policy-close it. This failed on the peer-only disconnect
+implementation. It tests session targeting, not database membership or a phone
+network transition. No wire field, credential identity, or persisted state was
+added for the in-process instance comparison.
 
 On Android, network handling must distinguish an actual route/transport change
 (including a VPN's underlying transport change) from repeated capabilities or

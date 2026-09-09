@@ -98,7 +98,7 @@ func TestAuthenticatedHandlerRoutesOnlyAfterBinaryCredentialFrame(t *testing.T) 
 	}
 }
 
-func TestAuthenticatedHandlerClosesActiveRevokedSession(t *testing.T) {
+func TestReconnectSurvivesAnOldLookupFailureAndHonorsCurrentRevocation(t *testing.T) {
 	peer := PeerIdentity{WorkspaceID: WorkspaceID{1}, DeviceID: DeviceID{2}}
 	token := bytes.Repeat([]byte{3}, 32)
 	hub := newTestHub(t)
@@ -115,15 +115,85 @@ func TestAuthenticatedHandlerClosesActiveRevokedSession(t *testing.T) {
 	}
 	server := httptest.NewServer(handler)
 	defer server.Close()
+	original := dialAndAuthenticateDevice(t, server.URL, peer, token)
+	defer original.Close()
+	lookupStarted := make(chan struct{})
+	releaseOldLookup := make(chan struct{})
+	currentAuthorized := make(chan struct{}, 1)
+	revokeCurrent := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	finished := make(chan error, 1)
+	go func() {
+		firstLookup := true
+		finished <- RunAuthorizationMonitor(ctx, hub, time.Millisecond, func(
+			lookupContext context.Context, _ ConnectedSession,
+		) (bool, error) {
+			if firstLookup {
+				firstLookup = false
+				close(lookupStarted)
+				select {
+				case <-releaseOldLookup:
+					return false, errors.New("authorization lookup unavailable")
+				case <-lookupContext.Done():
+					return false, lookupContext.Err()
+				}
+			}
+			select {
+			case <-revokeCurrent:
+				return false, nil
+			default:
+				select {
+				case currentAuthorized <- struct{}{}:
+				default:
+				}
+				return true, nil
+			}
+		})
+	}()
+	defer func() {
+		cancel()
+		select {
+		case <-finished:
+		case <-time.After(2 * time.Second):
+			t.Error("authorization monitor did not stop")
+		}
+	}()
+	select {
+	case <-lookupStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("original connection authorization lookup did not start")
+	}
+	if err := original.Close(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for hub.IsConnected(peer) {
+		if time.Now().After(deadline) {
+			t.Fatal("original connection did not leave the relay")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	// The replacement intentionally uses the same identity AND credential version.
+	// Only connection-instance identity can fence the delayed lookup result.
 	connection := dialAndAuthenticateDevice(t, server.URL, peer, token)
 	defer connection.Close()
-	waitUntilConnected(t, hub, peer)
-	if !hub.Disconnect(peer) {
-		t.Fatal("active peer was not disconnected")
+	close(releaseOldLookup)
+	select {
+	case <-currentAuthorized:
+	case <-time.After(2 * time.Second):
+		t.Fatal("replacement was lost after the original lookup failed")
+	}
+	if err := connection.WriteMessage(websocket.BinaryMessage, []byte{'S', 'N', 'H', '1'}); err != nil {
+		t.Fatal(err)
 	}
 	if err := connection.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatal(err)
 	}
+	kind, response, err := connection.ReadMessage()
+	if err != nil || kind != websocket.BinaryMessage || !bytes.Equal(response, []byte{'S', 'N', 'H', '2'}) {
+		t.Fatalf("replacement heartbeat failed: %v", err)
+	}
+	close(revokeCurrent)
 	_, _, err = connection.ReadMessage()
 	var closeError *websocket.CloseError
 	if !errors.As(err, &closeError) || closeError.Code != websocket.ClosePolicyViolation {
