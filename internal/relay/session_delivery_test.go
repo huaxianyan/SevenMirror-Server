@@ -178,6 +178,9 @@ func TestOldConnectionHandlesCannotAccessReconnectedDeliveryState(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer closeRecipient()
+	if err := hub.RouteDurable(ctx, currentSender, frame, now); err != nil {
+		t.Fatal(err)
+	}
 	operations := []func() error{
 		func() error { return hub.RouteOnline(ctx, oldSender, frame) },
 		func() error { return hub.RouteDurable(ctx, oldSender, frame, now) },
@@ -189,9 +192,6 @@ func TestOldConnectionHandlesCannotAccessReconnectedDeliveryState(t *testing.T) 
 		if err := operation(); !errors.Is(err, ErrSessionOffline) {
 			t.Fatalf("old session operation result = %v", err)
 		}
-	}
-	if err := hub.RouteDurable(ctx, currentSender, frame, now); err != nil {
-		t.Fatal(err)
 	}
 	batch, err := hub.ResumeDeliveries(ctx, currentRecipient, 0, now)
 	if err != nil || len(batch.Deliveries) != 1 || batch.Deliveries[0].ID != 1 || !bytes.Equal(batch.Deliveries[0].Envelope, frame) {
