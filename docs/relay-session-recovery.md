@@ -47,8 +47,9 @@ A real HTTP/WebSocket test authenticates one connection, attempts another with
 the same credential, verifies the occupied-session classification, and verifies
 that the original connection can still exchange a transport heartbeat. A module
 test checks bounded classification, including wrapped errors and private canary
-messages. No occupancy, authorization, retry, timeout, or wire-protocol behavior
-is changed by this diagnostic slice.
+messages. The initial diagnostic slice did not change occupancy, authorization,
+retry, timeout, or wire behavior. The subsequent operation isolation below adds
+cancellation and a session-operation deadline.
 
 ## Why not replace the Hub entry immediately?
 
@@ -59,14 +60,15 @@ implemented:
    session. Credential rotation must not let an older authenticated attempt
    displace a newer credential version.
 2. Old read/write work must no longer route, resume, drain, or acknowledge on
-   behalf of the new session. Current Hub methods identify callers by device,
-   not by a distinct connection lease; replacing a map entry alone is insufficient.
+   behalf of the new session. The former Hub methods identified callers by device,
+   not by a distinct connection lease; replacing a map entry alone was insufficient.
+   The operation boundary below now binds those calls to the registered instance.
 3. A late authorization-monitor result or old cleanup must not disconnect or
    unregister the replacement. The monitor now carries the observed connection
    instance into `Disconnect`, which compares it with the current instance under
    the Hub lock. Reconnecting with the same credential version is also protected.
-   The existing unregister closure likewise checks its exact session. This does
-   not yet fence the old connection's routing, delivery reads, or ACK work.
+   Normal unregister and explicit disconnect now share the instance-bound
+   retirement path described below.
 4. Teardown and replacement admission must be bounded; a stuck old connection
    must not hold the slot indefinitely. Preserve durable delivery, cumulative
    ACK, recipient isolation, and one active connection per device.
@@ -79,6 +81,45 @@ revocation must still policy-close it. This failed on the peer-only disconnect
 implementation. It tests session targeting, not database membership or a phone
 network transition. No wire field, credential identity, or persisted state was
 added for the in-process instance comparison.
+
+## Session-bound delivery operations
+
+`Register` now returns the actual connection handle used by both transport loops.
+Online and durable routing, resume/read, cumulative ACK, activity recording, and
+WebSocket data/ping writes enter one operation boundary using that handle. A device identity or credential
+version alone cannot authorize old work against a reconnected slot. No peer-only
+compatibility route is retained, and no wire or persistent identifier is added.
+
+Retirement signals the transport and cancels the instance's operation context.
+It then takes that instance's exclusive operation lock, waiting for admitted
+operations to return before removing the exact map entry. Buffered batches cannot
+bypass retirement at their subsequent socket writes. Normal unregister
+uses the same path. The global Hub lock is not held during storage work or while
+waiting for it. Pending operations get a five-second budget (or a shorter caller
+deadline), and retirement cancels them immediately rather than waiting for that
+budget to expire. Canceled/expired socket writes close the transport to unblock IO,
+and writer failures cancel the serving context as well. The old slot remains
+reserved while cancellation cleanup runs.
+An old operation may complete before retirement; it cannot complete a mutation
+against a replacement because replacement admission occurs only after it returns.
+
+Cancellation is cooperative, not a forced database-thread kill. The production
+SQLite store uses context-aware transactions/queries. If a storage implementation
+ignores cancellation or never returns, the slot stays reserved rather than
+claiming safe retirement. Thus the five-second budget is not a guarantee that an
+arbitrarily stuck driver will physically terminate in five seconds.
+
+A real authenticated WebSocket test uses an explicitly controlled in-memory ACK
+store: an ACK is held inside storage, retirement cancels it, admission remains
+responsive but rejects reuse until cleanup returns, and the same device reconnects
+and receives the retained ciphertext again. This is a storage-cancellation fixture,
+not a SQLite outage or phone-network test. A module test confirms that old handles
+cannot route, resume, read, or ACK after re-registration, while new handles can
+receive and acknowledge their own delivery. The prior stale-authorization test
+continues to cover legitimate current-session revocation.
+
+Automatic takeover is still disabled. Transport-path changes and admission of an
+authenticated replacement over an occupied slot remain separate work.
 
 On Android, network handling must distinguish an actual route/transport change
 (including a VPN's underlying transport change) from repeated capabilities or

@@ -47,17 +47,30 @@ func ServeAuthenticatedConnection(
 	connection.SetPongHandler(func(string) error {
 		return connection.SetReadDeadline(time.Now().Add(pongTimeout))
 	})
-	immediate, durableWake, disconnected, unregister, err := hub.Register(
+	session, unregister, err := hub.Register(
 		authenticatedPeer, credentialVersion, 16)
 	if err != nil {
 		return err
 	}
 	defer unregister()
-	if err := connection.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
-		return err
+	writeMessage := func(kind int, encoded []byte) error {
+		operationContext, finish, err := hub.beginOperation(sessionContext, session)
+		if err != nil {
+			return err
+		}
+		stop := context.AfterFunc(operationContext, func() { _ = connection.Close() })
+		defer func() { stop(); finish() }()
+		deadline, _ := operationContext.Deadline()
+		if kind == websocket.PingMessage {
+			return connection.WriteControl(kind, encoded, deadline)
+		}
+		if err := connection.SetWriteDeadline(deadline); err != nil {
+			return err
+		}
+		return connection.WriteMessage(kind, encoded)
 	}
 	// SNO1 remains the first server data message.
-	if err := connection.WriteMessage(websocket.BinaryMessage, authenticationSuccessAck[:]); err != nil {
+	if err := writeMessage(websocket.BinaryMessage, authenticationSuccessAck[:]); err != nil {
 		return err
 	}
 
@@ -69,6 +82,7 @@ func ServeAuthenticatedConnection(
 		case writerErrors <- err:
 		default:
 		}
+		cancel()
 		_ = connection.Close()
 	}
 	go func() {
@@ -77,12 +91,6 @@ func ServeAuthenticatedConnection(
 		cursorInitialized := false
 		var sentCursor uint64
 
-		writeBinary := func(encoded []byte) error {
-			if err := connection.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
-				return err
-			}
-			return connection.WriteMessage(websocket.BinaryMessage, encoded)
-		}
 		drainBatch := func(batch DeliveryBatch) (bool, error) {
 			for {
 				if batch.ResetRequired {
@@ -90,14 +98,14 @@ func ServeAuthenticatedConnection(
 					if err != nil {
 						return false, err
 					}
-					return true, writeBinary(reset)
+					return true, writeMessage(websocket.BinaryMessage, reset)
 				}
 				for _, delivery := range batch.Deliveries {
 					encoded, err := relaydelivery.EncodeDelivery(delivery.ID, delivery.Envelope)
 					if err != nil {
 						return false, err
 					}
-					if err := writeBinary(encoded); err != nil {
+					if err := writeMessage(websocket.BinaryMessage, encoded); err != nil {
 						return false, err
 					}
 					sentCursor = delivery.ID
@@ -107,10 +115,10 @@ func ServeAuthenticatedConnection(
 					if err != nil {
 						return false, err
 					}
-					return false, writeBinary(caughtUp)
+					return false, writeMessage(websocket.BinaryMessage, caughtUp)
 				}
 				next, err := hub.ReadDeliveries(
-					sessionContext, authenticatedPeer, sentCursor, time.Now())
+					sessionContext, session, sentCursor, time.Now())
 				if err != nil {
 					return false, err
 				}
@@ -127,7 +135,7 @@ func ServeAuthenticatedConnection(
 			case <-sessionContext.Done():
 				reportWriterError(sessionContext.Err())
 				return
-			case <-disconnected:
+			case <-session.session.disconnected:
 				_ = connection.WriteControl(
 					websocket.CloseMessage,
 					websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authorization revoked"),
@@ -136,24 +144,23 @@ func ServeAuthenticatedConnection(
 				reportWriterError(ErrDeviceDisconnected)
 				return
 			case <-pingTicker.C:
-				if err := connection.WriteControl(websocket.PingMessage, nil,
-					time.Now().Add(writeTimeout)); err != nil {
+				if err := writeMessage(websocket.PingMessage, nil); err != nil {
 					reportWriterError(err)
 					return
 				}
 			case <-heartbeats:
-				if err := writeBinary(heartbeatResponse[:]); err != nil {
+				if err := writeMessage(websocket.BinaryMessage, heartbeatResponse[:]); err != nil {
 					reportWriterError(err)
 					return
 				}
-			case frame := <-immediate:
-				if err := writeBinary(frame); err != nil {
+			case frame := <-session.session.immediate:
+				if err := writeMessage(websocket.BinaryMessage, frame); err != nil {
 					reportWriterError(err)
 					return
 				}
 			case cursor := <-resumeRequests:
 				batch, err := hub.ResumeDeliveries(
-					sessionContext, authenticatedPeer, cursor, time.Now())
+					sessionContext, session, cursor, time.Now())
 				if err != nil {
 					reportWriterError(err)
 					return
@@ -168,12 +175,12 @@ func ServeAuthenticatedConnection(
 				if resetSent {
 					cursorInitialized = false
 				}
-			case <-durableWake:
+			case <-session.session.durableWake:
 				if !cursorInitialized {
 					continue
 				}
 				batch, err := hub.ReadDeliveries(
-					sessionContext, authenticatedPeer, sentCursor, time.Now())
+					sessionContext, session, sentCursor, time.Now())
 				if err != nil {
 					reportWriterError(err)
 					return
@@ -201,8 +208,13 @@ func ServeAuthenticatedConnection(
 			return err
 		}
 		if activityRecorder != nil {
+			activityContext, finish, err := hub.beginOperation(sessionContext, session)
+			if err != nil {
+				return err
+			}
 			_ = activityRecorder.RecordConnectionActivity(
-				sessionContext, authenticatedPeer, time.Now())
+				activityContext, authenticatedPeer, time.Now())
+			finish()
 		}
 		if isHeartbeat {
 			select {
@@ -214,12 +226,12 @@ func ServeAuthenticatedConnection(
 		}
 		switch message.Kind {
 		case relaydelivery.ClientEnvelopeOnline:
-			if err := hub.RouteOnline(authenticatedPeer, message.Envelope); err != nil {
+			if err := hub.RouteOnline(sessionContext, session, message.Envelope); err != nil {
 				return err
 			}
 		case relaydelivery.ClientEnvelopeDurable:
 			if err := hub.RouteDurable(
-				sessionContext, authenticatedPeer, message.Envelope, time.Now()); err != nil {
+				sessionContext, session, message.Envelope, time.Now()); err != nil {
 				return err
 			}
 		case relaydelivery.ClientResume:
@@ -230,7 +242,7 @@ func ServeAuthenticatedConnection(
 			}
 		case relaydelivery.ClientAcknowledge:
 			if err := hub.AcknowledgeDelivery(
-				sessionContext, authenticatedPeer, message.Cursor); err != nil {
+				sessionContext, session, message.Cursor); err != nil {
 				return err
 			}
 		default:

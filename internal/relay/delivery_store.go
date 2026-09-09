@@ -24,6 +24,9 @@ type DeliveryBatch struct {
 	Deliveries    []StoredDelivery
 }
 
+// Implementations must honor context cancellation and must not publish additional
+// mutations after returning. Retirement keeps the old slot reserved until return;
+// a driver that ignores cancellation is not made safe by admitting a replacement.
 type DeliveryStore interface {
 	AppendDelivery(context.Context, PeerIdentity, []byte, time.Time, time.Time) (uint64, error)
 	ResumeDeliveries(context.Context, PeerIdentity, uint64, time.Time, int) (DeliveryBatch, error)

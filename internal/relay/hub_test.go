@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,26 +18,26 @@ func TestHubRoutesUnchangedCiphertextToOneRecipient(t *testing.T) {
 	sender := peerFromFrame(t, frame, 24)
 	recipient := peerFromFrame(t, frame, 40)
 	hub := newTestHub(t)
-	_, _, _, unregisterSender, err := hub.Register(sender, 1, 1)
+	senderSession, unregisterSender, err := hub.Register(sender, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unregisterSender()
-	deliveries, _, disconnected, unregister, err := hub.Register(recipient, 1, 1)
+	recipientSession, unregister, err := hub.Register(recipient, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unregister()
 	select {
-	case <-disconnected:
+	case <-recipientSession.session.disconnected:
 		t.Fatal("new session was already disconnected")
 	default:
 	}
 
-	if err := hub.RouteOnline(sender, frame); err != nil {
+	if err := hub.RouteOnline(context.Background(), senderSession, frame); err != nil {
 		t.Fatal(err)
 	}
-	routed := <-deliveries
+	routed := <-recipientSession.session.immediate
 	if hex.EncodeToString(routed) != hex.EncodeToString(frame) {
 		t.Fatal("relay modified encrypted frame")
 	}
@@ -54,31 +55,31 @@ func TestHubRejectsIdentityMismatchOfflineAndBackpressure(t *testing.T) {
 
 	wrongSender := sender
 	wrongSender.DeviceID[0] ^= 1
-	if err := hub.RouteOnline(wrongSender, frame); !errors.Is(err, ErrSenderMismatch) {
+	if err := hub.RouteOnline(context.Background(), ConnectedSession{Peer: wrongSender}, frame); !errors.Is(err, ErrSenderMismatch) {
 		t.Fatalf("wrong sender error = %v", err)
 	}
 	wrongWorkspace := sender
 	wrongWorkspace.WorkspaceID[0] ^= 1
-	if err := hub.RouteOnline(wrongWorkspace, frame); !errors.Is(err, ErrSenderMismatch) {
+	if err := hub.RouteOnline(context.Background(), ConnectedSession{Peer: wrongWorkspace}, frame); !errors.Is(err, ErrSenderMismatch) {
 		t.Fatalf("wrong workspace error = %v", err)
 	}
-	_, _, _, unregisterSender, err := hub.Register(sender, 1, 1)
+	senderSession, unregisterSender, err := hub.Register(sender, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unregisterSender()
-	if err := hub.RouteOnline(sender, frame); !errors.Is(err, ErrRecipientOffline) {
+	if err := hub.RouteOnline(context.Background(), senderSession, frame); !errors.Is(err, ErrRecipientOffline) {
 		t.Fatalf("offline error = %v", err)
 	}
-	_, _, _, unregister, err := hub.Register(recipient, 1, 1)
+	_, unregister, err := hub.Register(recipient, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unregister()
-	if err := hub.RouteOnline(sender, frame); err != nil {
+	if err := hub.RouteOnline(context.Background(), senderSession, frame); err != nil {
 		t.Fatal(err)
 	}
-	if err := hub.RouteOnline(sender, frame); !errors.Is(err, ErrRecipientBusy) {
+	if err := hub.RouteOnline(context.Background(), senderSession, frame); !errors.Is(err, ErrRecipientBusy) {
 		t.Fatalf("backpressure error = %v", err)
 	}
 }
@@ -88,41 +89,37 @@ func TestHubDisconnectRemovesRoutingAndSignalsExactSession(t *testing.T) {
 	sender := peerFromFrame(t, frame, 24)
 	recipient := peerFromFrame(t, frame, 40)
 	hub := newTestHub(t)
-	_, _, _, unregisterSender, err := hub.Register(sender, 1, 1)
+	senderSession, unregisterSender, err := hub.Register(sender, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unregisterSender()
-	_, _, disconnected, unregister, err := hub.Register(recipient, 1, 1)
+	recipientSession, unregister, err := hub.Register(recipient, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer unregister()
-	observed := make(map[PeerIdentity]ConnectedSession)
-	for _, session := range hub.ConnectedSessions() {
-		observed[session.Peer] = session
-	}
-	if !hub.Disconnect(observed[recipient]) {
+	if !hub.Disconnect(recipientSession) {
 		t.Fatal("connected recipient was not disconnected")
 	}
 	select {
-	case <-disconnected:
+	case <-recipientSession.session.disconnected:
 	default:
 		t.Fatal("disconnect signal was not closed")
 	}
 	if hub.IsConnected(recipient) {
 		t.Fatal("disconnected recipient remained routable")
 	}
-	if err := hub.RouteOnline(sender, frame); !errors.Is(err, ErrRecipientOffline) {
+	if err := hub.RouteOnline(context.Background(), senderSession, frame); !errors.Is(err, ErrRecipientOffline) {
 		t.Fatalf("route after recipient disconnect error = %v", err)
 	}
-	if !hub.Disconnect(observed[sender]) {
+	if !hub.Disconnect(senderSession) {
 		t.Fatal("connected sender was not disconnected")
 	}
-	if err := hub.RouteOnline(sender, frame); !errors.Is(err, ErrSenderOffline) {
+	if err := hub.RouteOnline(context.Background(), senderSession, frame); !errors.Is(err, ErrSessionOffline) {
 		t.Fatalf("route after sender disconnect error = %v", err)
 	}
-	if hub.Disconnect(observed[recipient]) {
+	if hub.Disconnect(recipientSession) {
 		t.Fatal("duplicate disconnect reported a change")
 	}
 }

@@ -11,12 +11,15 @@ import (
 	"github.com/huaxianyan/SyncNotifications-Server/protocol/routingheader"
 )
 
+// Bound admitted work while a retiring session waits for its operations to finish.
+const sessionOperationTimeout = 5 * time.Second
+
 var (
 	ErrAlreadyConnected   = errors.New("device already connected")
 	ErrRecipientOffline   = errors.New("recipient is offline")
 	ErrRecipientBusy      = errors.New("recipient delivery queue is full")
 	ErrSenderMismatch     = errors.New("authenticated sender does not match routing header")
-	ErrSenderOffline      = errors.New("authenticated sender is no longer connected")
+	ErrSessionOffline     = errors.New("connection instance is no longer active")
 	ErrDeviceDisconnected = errors.New("device authorization was revoked")
 )
 
@@ -31,6 +34,10 @@ type PeerIdentity struct {
 // Hub routes online-only ciphertext in memory and durable ciphertext through
 // one recipient-specific DeliveryStore. It never receives decryption keys.
 type deviceSession struct {
+	operations sync.RWMutex
+	ctx        context.Context
+	cancel     context.CancelFunc
+
 	credentialVersion int64
 	immediate         chan []byte
 	durableWake       chan struct{}
@@ -67,36 +74,30 @@ func (h *Hub) Register(
 	identity PeerIdentity,
 	credentialVersion int64,
 	queueSize int,
-) (<-chan []byte, <-chan struct{}, <-chan struct{}, func(), error) {
+) (ConnectedSession, func(), error) {
 	if credentialVersion < 1 {
-		return nil, nil, nil, nil, errors.New("credential version must be positive")
+		return ConnectedSession{}, nil, errors.New("credential version must be positive")
 	}
 	if queueSize < 1 {
-		return nil, nil, nil, nil, errors.New("queue size must be positive")
+		return ConnectedSession{}, nil, errors.New("queue size must be positive")
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if _, exists := h.devices[identity]; exists {
-		return nil, nil, nil, nil, ErrAlreadyConnected
+		return ConnectedSession{}, nil, ErrAlreadyConnected
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	session := &deviceSession{
+		ctx:               ctx,
+		cancel:            cancel,
 		credentialVersion: credentialVersion,
 		immediate:         make(chan []byte, queueSize),
 		durableWake:       make(chan struct{}, 1),
 		disconnected:      make(chan struct{}),
 	}
 	h.devices[identity] = session
-	var once sync.Once
-	unregister := func() {
-		once.Do(func() {
-			h.mu.Lock()
-			if h.devices[identity] == session {
-				delete(h.devices, identity)
-			}
-			h.mu.Unlock()
-		})
-	}
-	return session.immediate, session.durableWake, session.disconnected, unregister, nil
+	observed := ConnectedSession{Peer: identity, CredentialVersion: credentialVersion, session: session}
+	return observed, func() { h.Disconnect(observed) }, nil
 }
 
 func (h *Hub) IsConnected(identity PeerIdentity) bool {
@@ -120,33 +121,75 @@ func (h *Hub) ConnectedSessions() []ConnectedSession {
 	return sessions
 }
 
-// Disconnect atomically removes only the observed connection instance. A delayed
-// authorization result cannot remove a replacement, even at the same credential version.
+// Disconnect cancels and drains only the observed instance before releasing its
+// slot. It returns whether this call initiated retirement. Never wait for database
+// work with the Hub lock held: other devices must remain independently usable.
 func (h *Hub) Disconnect(observed ConnectedSession) bool {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	session, exists := h.devices[observed.Peer]
 	if !exists || session != observed.session {
+		h.mu.Unlock()
 		return false
 	}
-	delete(h.devices, observed.Peer)
-	close(session.disconnected)
-	return true
+	initiated := session.ctx.Err() == nil
+	if initiated {
+		close(session.disconnected)
+		session.cancel()
+	}
+	h.mu.Unlock()
+
+	session.operations.Lock()
+	defer session.operations.Unlock()
+	h.mu.Lock()
+	if h.devices[observed.Peer] == session {
+		delete(h.devices, observed.Peer)
+	}
+	h.mu.Unlock()
+	return initiated
+}
+
+// The read lock spans the actual operation, not just the identity check. A new
+// session cannot occupy this slot until all admitted old work has returned.
+func (h *Hub) beginOperation(ctx context.Context, observed ConnectedSession) (context.Context, func(), error) {
+	if observed.session == nil || observed.session.ctx.Err() != nil {
+		return nil, nil, ErrSessionOffline
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	session := observed.session
+	session.operations.RLock()
+	h.mu.RLock()
+	active := h.devices[observed.Peer] == session && session.ctx.Err() == nil
+	h.mu.RUnlock()
+	if !active {
+		session.operations.RUnlock()
+		return nil, nil, ErrSessionOffline
+	}
+	operationContext, cancel := context.WithTimeout(ctx, sessionOperationTimeout)
+	stop := context.AfterFunc(session.ctx, cancel)
+	return operationContext, func() {
+		stop()
+		cancel()
+		session.operations.RUnlock()
+	}, nil
 }
 
 // RouteOnline delivers an unchanged ciphertext only to a currently connected recipient.
-func (h *Hub) RouteOnline(authenticatedSender PeerIdentity, encodedFrame []byte) error {
-	recipient, _, err := validateRoutedEnvelope(authenticatedSender, encodedFrame)
+func (h *Hub) RouteOnline(ctx context.Context, authenticatedSender ConnectedSession, encodedFrame []byte) error {
+	recipient, _, err := validateRoutedEnvelope(authenticatedSender.Peer, encodedFrame)
 	if err != nil {
 		return err
 	}
+	_, finish, err := h.beginOperation(ctx, authenticatedSender)
+	if err != nil {
+		return err
+	}
+	defer finish()
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	if _, senderConnected := h.devices[authenticatedSender]; !senderConnected {
-		return ErrSenderOffline
-	}
 	session, exists := h.devices[recipient]
-	if !exists {
+	if !exists || session.ctx.Err() != nil {
 		return ErrRecipientOffline
 	}
 	copyForRecipient := append([]byte(nil), encodedFrame...)
@@ -161,20 +204,19 @@ func (h *Hub) RouteOnline(authenticatedSender PeerIdentity, encodedFrame []byte)
 // RouteDurable commits one exact ciphertext before waking a live recipient.
 func (h *Hub) RouteDurable(
 	ctx context.Context,
-	authenticatedSender PeerIdentity,
+	authenticatedSender ConnectedSession,
 	encodedFrame []byte,
 	now time.Time,
 ) error {
-	recipient, header, err := validateRoutedEnvelope(authenticatedSender, encodedFrame)
+	recipient, header, err := validateRoutedEnvelope(authenticatedSender.Peer, encodedFrame)
 	if err != nil {
 		return err
 	}
-	h.mu.RLock()
-	_, senderConnected := h.devices[authenticatedSender]
-	h.mu.RUnlock()
-	if !senderConnected {
-		return ErrSenderOffline
+	ctx, finish, err := h.beginOperation(ctx, authenticatedSender)
+	if err != nil {
+		return err
 	}
+	defer finish()
 	authorized, err := h.authorizer.IsRecipientAuthorized(ctx, recipient)
 	if err != nil {
 		return err
@@ -191,7 +233,7 @@ func (h *Hub) RouteDurable(
 	}
 	h.mu.RLock()
 	session := h.devices[recipient]
-	if session != nil {
+	if session != nil && session.ctx.Err() == nil {
 		select {
 		case session.durableWake <- struct{}{}:
 		default:
@@ -203,28 +245,43 @@ func (h *Hub) RouteDurable(
 
 func (h *Hub) ResumeDeliveries(
 	ctx context.Context,
-	recipient PeerIdentity,
+	recipient ConnectedSession,
 	cursor uint64,
 	now time.Time,
 ) (DeliveryBatch, error) {
-	return h.deliveries.ResumeDeliveries(ctx, recipient, cursor, now, deliveryBatchSize)
+	ctx, finish, err := h.beginOperation(ctx, recipient)
+	if err != nil {
+		return DeliveryBatch{}, err
+	}
+	defer finish()
+	return h.deliveries.ResumeDeliveries(ctx, recipient.Peer, cursor, now, deliveryBatchSize)
 }
 
 func (h *Hub) ReadDeliveries(
 	ctx context.Context,
-	recipient PeerIdentity,
+	recipient ConnectedSession,
 	after uint64,
 	now time.Time,
 ) (DeliveryBatch, error) {
-	return h.deliveries.ReadDeliveries(ctx, recipient, after, now, deliveryBatchSize)
+	ctx, finish, err := h.beginOperation(ctx, recipient)
+	if err != nil {
+		return DeliveryBatch{}, err
+	}
+	defer finish()
+	return h.deliveries.ReadDeliveries(ctx, recipient.Peer, after, now, deliveryBatchSize)
 }
 
 func (h *Hub) AcknowledgeDelivery(
 	ctx context.Context,
-	recipient PeerIdentity,
+	recipient ConnectedSession,
 	cursor uint64,
 ) error {
-	return h.deliveries.AcknowledgeDelivery(ctx, recipient, cursor)
+	ctx, finish, err := h.beginOperation(ctx, recipient)
+	if err != nil {
+		return err
+	}
+	defer finish()
+	return h.deliveries.AcknowledgeDelivery(ctx, recipient.Peer, cursor)
 }
 
 func validateRoutedEnvelope(

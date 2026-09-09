@@ -12,17 +12,17 @@ func TestAuthorizationMonitorDisconnectsRevokedAndLookupFailureOnly(t *testing.T
 	revoked := PeerIdentity{WorkspaceID: WorkspaceID{1}, DeviceID: DeviceID{1}}
 	active := PeerIdentity{WorkspaceID: WorkspaceID{1}, DeviceID: DeviceID{2}}
 	lookupFailure := PeerIdentity{WorkspaceID: WorkspaceID{1}, DeviceID: DeviceID{3}}
-	_, _, revokedSignal, revokedUnregister, err := hub.Register(revoked, 1, 1)
+	revokedSession, revokedUnregister, err := hub.Register(revoked, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer revokedUnregister()
-	_, _, _, activeUnregister, err := hub.Register(active, 1, 1)
+	_, activeUnregister, err := hub.Register(active, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer activeUnregister()
-	_, _, failureSignal, failureUnregister, err := hub.Register(lookupFailure, 1, 1)
+	failureSession, failureUnregister, err := hub.Register(lookupFailure, 1, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,8 +45,8 @@ func TestAuthorizationMonitorDisconnectsRevokedAndLookupFailureOnly(t *testing.T
 		})
 	}()
 
-	waitForDisconnect(t, revokedSignal)
-	waitForDisconnect(t, failureSignal)
+	waitForDisconnect(t, revokedSession.session.disconnected)
+	waitForDisconnect(t, failureSession.session.disconnected)
 	if !hub.IsConnected(active) {
 		t.Fatal("authorized peer was disconnected")
 	}
