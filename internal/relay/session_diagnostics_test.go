@@ -18,6 +18,13 @@ import (
 	"github.com/huaxianyan/SyncNotifications-Server/internal/clientaddress"
 )
 
+type sessionLogRecords chan []byte
+
+func (records sessionLogRecords) Write(encoded []byte) (int, error) {
+	records <- bytes.Clone(encoded)
+	return len(encoded), nil
+}
+
 func TestReconnectReportsOccupiedSessionWhileOriginalConnectionStillWorks(t *testing.T) {
 	peer := PeerIdentity{WorkspaceID: WorkspaceID{1}, DeviceID: DeviceID{2}}
 	token := bytes.Repeat([]byte{3}, 32)
@@ -33,8 +40,8 @@ func TestReconnectReportsOccupiedSessionWhileOriginalConnectionStillWorks(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	var log bytes.Buffer
-	handler.Logger = slog.New(slog.NewJSONHandler(&log, nil))
+	logs := make(sessionLogRecords, 2)
+	handler.Logger = slog.New(slog.NewJSONHandler(logs, nil))
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	original := dialAndAuthenticateDevice(t, server.URL, peer, token)
@@ -48,10 +55,15 @@ func TestReconnectReportsOccupiedSessionWhileOriginalConnectionStillWorks(t *tes
 	if _, _, err := replacement.ReadMessage(); err == nil {
 		t.Fatal("second connection unexpectedly received authentication success")
 	}
-	// The handler writes the diagnostic before closing this rejected socket.
+	// Synchronize with the logger explicitly; a socket close is not a Go memory barrier.
 	var record map[string]any
-	if err := json.Unmarshal(log.Bytes(), &record); err != nil {
-		t.Fatal(err)
+	select {
+	case encoded := <-logs:
+		if err := json.Unmarshal(encoded, &record); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("session diagnostic was not received")
 	}
 	if record["reason"] != "already_connected" {
 		t.Fatalf("session outcome = %v", record["reason"])
