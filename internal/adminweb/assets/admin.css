@@ -138,6 +138,7 @@ article.device-card { padding: 1rem; }
 .confirm-form label { display: flex; align-items: flex-start; }
 .confirm-form .field-label { display: grid; }
 .confirm-form input { margin-bottom: 0; }
+.history-group > summary { display: flex; justify-content: space-between; gap: 1rem; padding: .7rem .25rem; color: var(--muted); cursor: pointer; font-weight: 650; }
 .history-list { display: grid; border-block: 1px solid var(--border); }
 .history-list div { display: flex; justify-content: space-between; gap: 1rem; padding: .75rem .25rem; border-bottom: 1px solid var(--border); }
 .history-list div:last-child { border-bottom: 0; }

@@ -157,7 +157,8 @@ func TestAdministratorLogsInOnceAndSeesDeviceStatusWithoutInternalIdentifiers(t 
 		t.Fatalf("dashboard response=%d body=%s", dashboardResult.Code, text)
 	}
 	if pendingIndex, activeIndex := strings.Index(text, ">待处理申请</h3>"), strings.Index(text, ">已接入设备</h3>"); pendingIndex < 0 || activeIndex < 0 || pendingIndex >= activeIndex ||
-		!strings.Contains(text, "添加设备") || !strings.Contains(text, "部署与维护") {
+		!strings.Contains(text, "添加设备") || !strings.Contains(text, "部署与维护") ||
+		!strings.Contains(text, `<details class="device-group history-group">`) {
 		t.Fatalf("dashboard does not prioritize device tasks: %s", text)
 	}
 	if dashboardResult.Header().Get("Content-Security-Policy") == "" ||

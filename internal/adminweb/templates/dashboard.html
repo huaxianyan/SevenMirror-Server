@@ -160,14 +160,14 @@
           </section>
 
           {{if .PastDevices}}
-          <section class="device-group history-group" aria-labelledby="history-{{.Reference}}">
-            <div class="group-heading"><h3 id="history-{{.Reference}}">已拒绝或移除</h3><span class="count">{{.RemovedCount}}</span></div>
+          <details class="device-group history-group">
+            <summary><span>已拒绝或移除</span><span class="count">{{.RemovedCount}}</span></summary>
             <div class="history-list">
               {{range .PastDevices}}
               <div><strong>{{.Name}}</strong><span>{{.Type}} · {{.Status}}</span></div>
               {{end}}
             </div>
-          </section>
+          </details>
           {{end}}
 
           <section id="add-{{.Reference}}" class="add-device" aria-labelledby="add-title-{{.Reference}}">
