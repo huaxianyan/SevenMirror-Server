@@ -1,6 +1,6 @@
 # SevenMirror Server 管理端
 
-> 状态：UX-002 设备准入与 authority-certified 名称管理闭环
+> 状态：设备任务优先的产品界面，复用 UX-002 authority 管理闭环
 
 `admin-web` 是与公开 relay 分离的按需管理进程。它直接读取同一个 SQLite registry，但不会挂载到设备注册、Membership 或 WebSocket Handler，也不会读取通知业务密文或 authority private key。
 
@@ -8,8 +8,9 @@
 
 - 一次性登录码；
 - 仅存内存、最长一小时的管理员会话；
-- 工作区概览；
+- 设备任务首页，待处理申请优先于已接入设备；
 - Android／Chrome、待批准和已拒绝或移除数量；
+- 待处理申请卡片、已接入设备详情及已拒绝或移除历史；
 - 设备申请、批准、最近认证、采样活动和移除时间；
 - Android／Chrome 十分钟单次加入码；
 - 待处理申请的固定产品权限模板批准；
@@ -18,7 +19,7 @@
 - 已接入设备的 authority-certified 名称变更；
 - 严格 Origin、CSRF、CSP、frame、登录和管理操作限速边界。
 
-加入码、批准、拒绝、重命名和移除统一通过 `internal/adminservice` 实现。管理网页和 `cmd/admin` 不复制 authority key 加载、角色模板、事务或 roster 签名逻辑。名称是 authority-signed 全工作区权威事实，只能由 Server 管理端修改；Android 和 Chrome 只读展示，不建立本地别名。已批准设备重命名时，Server 在一个 SQLite transaction 中签发 replacement certificate、包含 exact `DeviceCertificateTransition` 的下一份 roster，并更新设备记录；任一步失败都不会留下部分生效的名称。当前界面先提供简体中文；英文资源与完整文案审校仍需在管理端发布验收前完成。
+加入码、批准、拒绝、重命名和移除统一通过 `internal/adminservice` 实现。管理网页和 `cmd/admin` 不复制 authority key 加载、角色模板、事务或 roster 签名逻辑。名称是 authority-signed 全工作区权威事实，只能由 Server 管理端修改；Android 和 Chrome 只读展示，不建立本地别名。已批准设备重命名时，Server 在一个 SQLite transaction 中签发 replacement certificate、包含 exact `DeviceCertificateTransition` 的下一份 roster，并更新设备记录；任一步失败都不会留下部分生效的名称。页面提供设备、部署与维护、关于三个任务入口。设备详情使用原生可展开区域，窄屏不依赖七列宽表；批准／拒绝、重命名、移除和加入码仍提交到原有 POST 入口。当前界面先提供简体中文；英文资源与完整文案审校仍需在管理端发布验收前完成。
 
 ## 启动
 

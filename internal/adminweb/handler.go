@@ -87,14 +87,16 @@ type dashboardView struct {
 }
 
 type workspaceView struct {
-	Reference    string
-	Name         string
-	CreatedAt    string
-	AndroidCount int
-	ChromeCount  int
-	PendingCount int
-	RemovedCount int
-	Devices      []deviceView
+	Reference      string
+	Name           string
+	CreatedAt      string
+	AndroidCount   int
+	ChromeCount    int
+	PendingCount   int
+	RemovedCount   int
+	PendingDevices []deviceView
+	ActiveDevices  []deviceView
+	PastDevices    []deviceView
 }
 
 type deviceView struct {
@@ -409,7 +411,7 @@ func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
 			if device.Revoked {
 				item.RemovedCount++
 			}
-			item.Devices = append(item.Devices, deviceView{
+			viewDevice := deviceView{
 				Reference: h.deviceActionReference(workspace.ID, device.Reference),
 				Name:      device.DeviceName,
 				Type:      deviceTypeLabel(device.DeviceType), Status: deviceStatus(device),
@@ -422,7 +424,15 @@ func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
 				CanReject:         pending,
 				CanRename:         device.MembershipState == "approved" && !device.Revoked,
 				CanRemove:         device.MembershipState == "approved" && !device.Revoked,
-			})
+			}
+			switch {
+			case pending:
+				item.PendingDevices = append(item.PendingDevices, viewDevice)
+			case viewDevice.CanRename:
+				item.ActiveDevices = append(item.ActiveDevices, viewDevice)
+			default:
+				item.PastDevices = append(item.PastDevices, viewDevice)
+			}
 		}
 		view.Workspaces = append(view.Workspaces, item)
 	}

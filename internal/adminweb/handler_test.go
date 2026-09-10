@@ -86,12 +86,23 @@ func TestAdministratorLogsInOnceAndSeesDeviceStatusWithoutInternalIdentifiers(t 
 	store := &fixedStore{
 		workspaces: []admission.WorkspaceSummary{{ID: workspaceID, CreatedAt: now}},
 		devices: map[admission.WorkspaceID][]admission.DeviceSummary{
-			workspaceID: {{
-				Reference: "secret-reference", DeviceType: admission.DeviceChrome,
-				DeviceName: "工作电脑", MembershipState: "approved", RegisteredAt: now,
-				ApprovedAt: &approved, LastAuthenticatedAt: &lastAuthenticated,
-				LastActivityAt: &lastActivity,
-			}},
+			workspaceID: {
+				{
+					Reference: "secret-reference", DeviceType: admission.DeviceChrome,
+					DeviceName: "工作电脑", MembershipState: "approved", RegisteredAt: now,
+					ApprovedAt: &approved, LastAuthenticatedAt: &lastAuthenticated,
+					LastActivityAt: &lastActivity,
+				},
+				{
+					Reference: "pending-reference", DeviceType: admission.DeviceAndroid,
+					DeviceName: "新手机", MembershipState: "pending_approval", RegisteredAt: now,
+				},
+				{
+					Reference: "removed-reference", DeviceType: admission.DeviceChrome,
+					DeviceName: "旧电脑", MembershipState: "approved", RegisteredAt: now,
+					Revoked: true, RevokedAt: &approved,
+				},
+			},
 		},
 	}
 	handler, err := NewHandler(store, HandlerConfig{
@@ -139,9 +150,15 @@ func TestAdministratorLogsInOnceAndSeesDeviceStatusWithoutInternalIdentifiers(t 
 	body, _ := io.ReadAll(dashboardResult.Result().Body)
 	text := string(body)
 	if dashboardResult.Code != http.StatusOK || !strings.Contains(text, "工作电脑") ||
+		!strings.Contains(text, "新手机") || !strings.Contains(text, "旧电脑") ||
 		!strings.Contains(text, "刚刚活动") || strings.Contains(text, "secret-reference") ||
+		strings.Contains(text, "pending-reference") || strings.Contains(text, "removed-reference") ||
 		strings.Contains(text, "workspace-id-001") {
 		t.Fatalf("dashboard response=%d body=%s", dashboardResult.Code, text)
+	}
+	if pendingIndex, activeIndex := strings.Index(text, ">待处理申请</h3>"), strings.Index(text, ">已接入设备</h3>"); pendingIndex < 0 || activeIndex < 0 || pendingIndex >= activeIndex ||
+		!strings.Contains(text, "添加设备") || !strings.Contains(text, "部署与维护") {
+		t.Fatalf("dashboard does not prioritize device tasks: %s", text)
 	}
 	if dashboardResult.Header().Get("Content-Security-Policy") == "" ||
 		dashboardResult.Header().Get("X-Frame-Options") != "DENY" {
@@ -149,7 +166,8 @@ func TestAdministratorLogsInOnceAndSeesDeviceStatusWithoutInternalIdentifiers(t 
 	}
 	csrf := firstCapture(t, text, `name="csrf_token" value="([^"]+)"`)
 	workspaceReference := firstCapture(t, text, `name="workspace_ref" value="([^"]+)"`)
-	deviceReference := firstCapture(t, text, `name="device_ref" value="([^"]+)"`)
+	deviceReference := firstCapture(t, text,
+		`(?s)action="/actions/rename".*?name="device_ref" value="([^"]+)"`)
 	renameResult := postForm(t, handler, "/actions/rename", url.Values{
 		"csrf_token": {csrf}, "workspace_ref": {workspaceReference},
 		"device_ref": {deviceReference}, "new_name": {"客厅电脑"}, "confirm": {"yes"},

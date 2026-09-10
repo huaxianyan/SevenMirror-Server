@@ -8,15 +8,21 @@
 </head>
 <body>
   <header class="topbar">
-    <div>
+    <div class="brand">
       <p class="eyebrow">SevenMirror</p>
-      <h1>设备管理</h1>
+      <strong>管理端</strong>
     </div>
+    <nav aria-label="管理页面">
+      <a href="#devices">设备</a>
+      <a href="#deployment">部署与维护</a>
+      <a href="#about">关于</a>
+    </nav>
     <form method="post" action="/logout">
       <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
       <button class="secondary" type="submit">退出</button>
     </form>
   </header>
+
   <main class="page">
     {{with .Flash}}
       <section class="notice {{.Kind}}" role="status">
@@ -28,67 +34,49 @@
         {{end}}
       </section>
     {{end}}
-    {{if .Workspaces}}
-      {{range .Workspaces}}
-      {{$workspace := .}}
-      <section class="workspace">
-        <div class="section-heading">
-          <div>
-            <h2>{{.Name}}</h2>
-            <p class="muted">创建于 {{.CreatedAt}}</p>
-          </div>
+
+    <div id="devices" class="page-section">
+      <div class="page-heading">
+        <div>
+          <p class="eyebrow">设备</p>
+          <h1>管理私有空间中的设备</h1>
+          <p class="muted">先处理待批准申请，再查看已接入设备或生成加入码。</p>
         </div>
-        <dl class="summary-grid">
-          <div><dt>已接入 Android</dt><dd>{{.AndroidCount}}</dd></div>
-          <div><dt>已接入 Chrome</dt><dd>{{.ChromeCount}}</dd></div>
-          <div><dt>待处理申请</dt><dd>{{.PendingCount}}</dd></div>
-          <div><dt>已拒绝或移除</dt><dd>{{.RemovedCount}}</dd></div>
-        </dl>
+      </div>
 
-        <section class="add-device">
-          <div>
-            <h3>允许新设备申请</h3>
-            <p class="muted">加入码十分钟内有效，只能提交一次申请。批准前设备不能同步通知。</p>
+      {{if .Workspaces}}
+        {{range .Workspaces}}
+        {{$workspace := .}}
+        <section class="workspace">
+          <div class="workspace-heading">
+            <div>
+              <h2>{{.Name}}</h2>
+              <p class="muted">创建于 {{.CreatedAt}}</p>
+            </div>
+            <a class="button-link" href="#add-{{.Reference}}">添加设备</a>
           </div>
-          <form method="post" action="/actions/pairing-code" class="inline-form">
-            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-            <input type="hidden" name="workspace_ref" value="{{.Reference}}">
-            <label>设备类型
-              <select name="device_type" required>
-                <option value="android">Android</option>
-                <option value="chrome">Chrome</option>
-              </select>
-            </label>
-            <label>预设名称（可选）
-              <input name="device_name" maxlength="100" autocomplete="off">
-            </label>
-            <button type="submit">生成加入码</button>
-          </form>
-        </section>
+          <dl class="workspace-summary">
+            <div><dt>Android</dt><dd>{{.AndroidCount}}</dd></div>
+            <div><dt>Chrome</dt><dd>{{.ChromeCount}}</dd></div>
+            <div><dt>待处理</dt><dd>{{.PendingCount}}</dd></div>
+          </dl>
 
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th scope="col">设备</th>
-                <th scope="col">类型</th>
-                <th scope="col">状态</th>
-                <th scope="col">申请时间</th>
-                <th scope="col">最近认证</th>
-                <th scope="col">最近活动</th>
-                <th scope="col">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {{range .Devices}}
-              <tr>
-                <th scope="row">{{.Name}}</th>
-                <td>{{.Type}}</td>
-                <td>{{.Status}}</td>
-                <td>{{.RegisteredAt}}</td>
-                <td>{{.LastAuthenticated}}</td>
-                <td>{{.LastActivity}}</td>
-                <td class="actions">
+          <section class="device-group pending-group" aria-labelledby="pending-{{.Reference}}">
+            <div class="group-heading">
+              <h3 id="pending-{{.Reference}}">待处理申请</h3>
+              <span class="count">{{.PendingCount}}</span>
+            </div>
+            <div class="device-cards">
+              {{range .PendingDevices}}
+              <article class="device-card pending-device">
+                <div class="device-card-heading">
+                  <div><h4>{{.Name}}</h4><p>{{.Type}} · {{.Status}}</p></div>
+                  <span class="status pending">待处理</span>
+                </div>
+                <dl class="device-facts compact">
+                  <div><dt>申请时间</dt><dd>{{.RegisteredAt}}</dd></div>
+                </dl>
+                <div class="primary-actions">
                   {{if .CanApprove}}
                   <form method="post" action="/actions/approve">
                     <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
@@ -98,7 +86,7 @@
                   </form>
                   {{end}}
                   {{if .CanReject}}
-                  <details>
+                  <details class="action-menu">
                     <summary>拒绝</summary>
                     <form method="post" action="/actions/reject" class="confirm-form">
                       <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
@@ -109,50 +97,120 @@
                     </form>
                   </details>
                   {{end}}
-                  {{if .CanRename}}
-                  <details>
-                    <summary>重命名</summary>
-                    <form method="post" action="/actions/rename" class="confirm-form">
-                      <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-                      <input type="hidden" name="workspace_ref" value="{{$workspace.Reference}}">
-                      <input type="hidden" name="device_ref" value="{{.Reference}}">
-                      <label>新名称
-                        <input name="new_name" maxlength="100" autocomplete="off" required>
-                      </label>
-                      <label><input type="checkbox" name="confirm" value="yes" required> 确认将新名称同步到已接入设备</label>
-                      <button type="submit">更新名称</button>
-                    </form>
-                  </details>
-                  {{end}}
-                  {{if .CanRemove}}
-                  <details>
-                    <summary>移除</summary>
-                    <form method="post" action="/actions/remove" class="confirm-form">
-                      <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-                      <input type="hidden" name="workspace_ref" value="{{$workspace.Reference}}">
-                      <input type="hidden" name="device_ref" value="{{.Reference}}">
-                      <label><input type="checkbox" name="confirm" value="yes" required> 确认停止这台设备的同步</label>
-                      <button class="danger" type="submit">移除设备</button>
-                    </form>
-                  </details>
-                  {{end}}
-                  {{if and (not .CanApprove) (not .CanReject) (not .CanRename) (not .CanRemove)}}—{{end}}
-                </td>
-              </tr>
+                </div>
+              </article>
               {{else}}
-              <tr><td colspan="7" class="empty">还没有设备申请。</td></tr>
+              <p class="empty">没有待处理申请。</p>
               {{end}}
-            </tbody>
-          </table>
-        </div>
-      </section>
+            </div>
+          </section>
+
+          <section class="device-group" aria-labelledby="active-{{.Reference}}">
+            <div class="group-heading">
+              <h3 id="active-{{.Reference}}">已接入设备</h3>
+              <span class="count">{{.AndroidCount}} Android · {{.ChromeCount}} Chrome</span>
+            </div>
+            <div class="device-cards">
+              {{range .ActiveDevices}}
+              <details class="device-card">
+                <summary class="device-summary">
+                  <span><strong>{{.Name}}</strong><small>{{.Type}} · {{.Status}}</small></span>
+                  <span><small>最近活动</small><strong>{{.LastActivity}}</strong></span>
+                </summary>
+                <div class="device-detail">
+                  <dl class="device-facts">
+                    <div><dt>申请时间</dt><dd>{{.RegisteredAt}}</dd></div>
+                    <div><dt>批准时间</dt><dd>{{.ApprovedAt}}</dd></div>
+                    <div><dt>最近认证</dt><dd>{{.LastAuthenticated}}</dd></div>
+                    <div><dt>最近活动</dt><dd>{{.LastActivity}}</dd></div>
+                  </dl>
+                  <div class="device-actions">
+                    {{if .CanRename}}
+                    <details class="action-menu">
+                      <summary>重命名</summary>
+                      <form method="post" action="/actions/rename" class="confirm-form">
+                        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                        <input type="hidden" name="workspace_ref" value="{{$workspace.Reference}}">
+                        <input type="hidden" name="device_ref" value="{{.Reference}}">
+                        <label class="field-label">新名称<input name="new_name" maxlength="100" autocomplete="off" required></label>
+                        <label><input type="checkbox" name="confirm" value="yes" required> 确认将新名称同步到已接入设备</label>
+                        <button type="submit">更新名称</button>
+                      </form>
+                    </details>
+                    {{end}}
+                    {{if .CanRemove}}
+                    <details class="action-menu">
+                      <summary>移除</summary>
+                      <form method="post" action="/actions/remove" class="confirm-form">
+                        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                        <input type="hidden" name="workspace_ref" value="{{$workspace.Reference}}">
+                        <input type="hidden" name="device_ref" value="{{.Reference}}">
+                        <label><input type="checkbox" name="confirm" value="yes" required> 确认停止这台设备的同步</label>
+                        <button class="danger" type="submit">移除设备</button>
+                      </form>
+                    </details>
+                    {{end}}
+                  </div>
+                </div>
+              </details>
+              {{else}}
+              <p class="empty">还没有已接入设备。</p>
+              {{end}}
+            </div>
+          </section>
+
+          {{if .PastDevices}}
+          <section class="device-group history-group" aria-labelledby="history-{{.Reference}}">
+            <div class="group-heading"><h3 id="history-{{.Reference}}">已拒绝或移除</h3><span class="count">{{.RemovedCount}}</span></div>
+            <div class="history-list">
+              {{range .PastDevices}}
+              <div><strong>{{.Name}}</strong><span>{{.Type}} · {{.Status}}</span></div>
+              {{end}}
+            </div>
+          </section>
+          {{end}}
+
+          <section id="add-{{.Reference}}" class="add-device" aria-labelledby="add-title-{{.Reference}}">
+            <div>
+              <h3 id="add-title-{{.Reference}}">添加设备</h3>
+              <p class="muted">加入码十分钟内有效，只能提交一次申请。批准前设备不能同步通知。</p>
+            </div>
+            <form method="post" action="/actions/pairing-code" class="inline-form">
+              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+              <input type="hidden" name="workspace_ref" value="{{.Reference}}">
+              <label>设备类型
+                <select name="device_type" required>
+                  <option value="android">Android</option>
+                  <option value="chrome">Chrome</option>
+                </select>
+              </label>
+              <label>预设名称（可选）
+                <input name="device_name" maxlength="100" autocomplete="off">
+              </label>
+              <button type="submit">生成加入码</button>
+            </form>
+          </section>
+        </section>
+        {{end}}
+      {{else}}
+        <section class="empty-card">
+          <h2>还没有私有空间</h2>
+          <p>先在服务器终端运行初始化命令，然后重新启动管理端。</p>
+        </section>
       {{end}}
-    {{else}}
-      <section class="empty-card">
-        <h2>还没有私有空间</h2>
-        <p>先在服务器终端运行初始化命令，然后重新启动管理端。</p>
-      </section>
-    {{end}}
+    </div>
+
+    <section id="deployment" class="information-section">
+      <p class="eyebrow">部署与维护</p>
+      <h2>维护私有服务</h2>
+      <p>升级、备份和恢复请按照部署目录中的运维说明执行。完成设备管理后，请退出本次管理会话。</p>
+    </section>
+
+    <section id="about" class="information-section">
+      <p class="eyebrow">关于</p>
+      <h2>SevenMirror Server</h2>
+      <p>开源、自托管的端到端加密通知同步服务，采用 GNU GPLv3 许可证。</p>
+    </section>
   </main>
 </body>
 </html>
