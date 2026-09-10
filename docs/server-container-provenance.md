@@ -18,7 +18,7 @@ prove their maintainers' signing policy or eliminate the need to refresh patched
 base images.
 
 The builder runs on the BuildKit host platform and cross-compiles pure-Go
-`server` and `admin` binaries for the requested target architecture. Every build
+`server`, `admin`, and `admin-web` binaries for the requested target architecture. Every build
 requires a source revision build argument. The final image records canonical OCI
 source/revision labels and retains the distroless `nonroot:nonroot` user and
 `/app/server` entrypoint.
@@ -83,7 +83,7 @@ vulnerability reports.
 digests, architecture, Trivy version, Trivy database identity and update time,
 UTC observation time, package/component counts, severity counts, raw evidence
 filenames and SHA-256 values. Schema v2 also binds the checked Dockerfile builder
-output controls: both copied executables use `CGO_ENABLED=0`, only the declared
+output controls: all three copied executables use `CGO_ENABLED=0`, only the declared
 `/out` directory crosses the stage boundary, and the runtime remains distroless
 static. The gate rejects a database older than 7 days or
 future-dated by more than 5 minutes. Critical and High findings in the runtime

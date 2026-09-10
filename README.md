@@ -46,7 +46,7 @@ The management console is a separate process:
 NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin-web
 ```
 
-It prints one short-lived login code to the operator terminal and defaults to `http://127.0.0.1:8081`. See [`docs/admin-web.md`](docs/admin-web.md) before using SSH forwarding or an HTTPS management origin. Verified release artifact sets include separate `admin-web` binaries for linux/amd64 and linux/arm64; the management process remains disabled unless an operator starts it explicitly.
+It prints one short-lived login code to the operator terminal and defaults to `http://127.0.0.1:8081`. See [`docs/admin-web.md`](docs/admin-web.md) before using SSH forwarding or an HTTPS management origin. Verified release artifact sets include separate `admin-web` binaries for linux/amd64 and linux/arm64. The Server container also includes `/app/admin-web`, while its default entrypoint remains `/app/server`; management stays disabled unless an operator starts a separate, short-lived container with the data and authority key mounts.
 
 Configuration:
 
@@ -54,7 +54,7 @@ Configuration:
 |---|---|---|
 | `NM_ADDRESS` | `127.0.0.1:8080` | HTTP listen address |
 | `NM_DATABASE_PATH` | `data/syncnotifications.db` | SQLite registry and migration database |
-| `NM_AUTHORITY_KEY_DIR` | directory `authority-keys` beside the database | Owner-only directory for newly generated workspace authority PKCS#8 private keys; used by the admin CLI |
+| `NM_AUTHORITY_KEY_DIR` | directory `authority-keys` beside the database | Owner-only directory for workspace authority PKCS#8 private keys; used by the admin CLI and on-demand admin web process, never the relay |
 | `NM_SHUTDOWN_TIMEOUT_SECONDS` | `10` | Graceful shutdown timeout |
 | `NM_READ_HEADER_TIMEOUT_SECONDS` | `5` | Maximum time to receive complete HTTP request headers |
 | `NM_REQUEST_READ_TIMEOUT_SECONDS` | `10` | Maximum time to receive the complete HTTP request, including its bounded body |

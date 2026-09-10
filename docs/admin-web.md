@@ -2,7 +2,7 @@
 
 > 状态：设备任务优先的产品界面，复用 UX-002 authority 管理闭环
 
-`admin-web` 是与公开 relay 分离的按需管理进程。它直接读取同一个 SQLite registry，但不会挂载到设备注册、Membership 或 WebSocket Handler，也不会读取通知业务密文或 authority private key。
+`admin-web` 是与公开 relay 分离的按需管理进程。它直接读取同一个 SQLite registry 和 authority key 目录：列表页面不需要私钥，批准、重命名和移除设备时由 `internal/adminservice` 读取对应 authority private key 并签发成员事实。它不会挂载到设备注册、Membership 或 WebSocket Handler，也不会读取通知业务密文。常驻 relay 容器不得挂载 authority key 目录。
 
 当前切片提供：
 
@@ -23,7 +23,7 @@
 
 ## 启动
 
-在与 Server 相同的数据卷和版本下运行：
+在与 Server 相同的数据卷、authority key 目录和版本下按需运行：
 
 ```bash
 NM_DATABASE_PATH=/var/lib/sevenmirror/syncnotifications.db \
@@ -31,6 +31,8 @@ NM_ADMIN_ADDRESS=127.0.0.1:8081 \
 NM_ADMIN_ORIGIN=http://127.0.0.1:8081 \
 ./admin-web
 ```
+
+官方 Server 镜像同时包含 `/app/admin-web`，但默认入口仍是 `/app/server`，不会自动启动管理页面。使用容器时为独立的按需容器覆盖入口，并仅挂载管理所需的数据与 authority key 目录；不要把该目录挂载到常驻 relay 容器。
 
 进程会在管理员终端显示一次：
 

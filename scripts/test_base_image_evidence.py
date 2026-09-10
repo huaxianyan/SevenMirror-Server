@@ -54,6 +54,7 @@ class BaseImageEvidenceTest(unittest.TestCase):
             + "RUN test -n \"$SOURCE_REVISION\" \\\n"
             + "    && CGO_ENABLED=0 GOOS=\"$TARGETOS\" GOARCH=\"$TARGETARCH\" go build -trimpath -o /out/server ./cmd/server \\\n"
             + "    && CGO_ENABLED=0 GOOS=\"$TARGETOS\" GOARCH=\"$TARGETARCH\" go build -trimpath -o /out/admin ./cmd/admin \\\n"
+            + "    && CGO_ENABLED=0 GOOS=\"$TARGETOS\" GOARCH=\"$TARGETARCH\" go build -trimpath -o /out/admin-web ./cmd/admin-web \\\n"
             + "    && mkdir /out/data\n"
             + "FROM gcr.io/distroless/static-debian12:nonroot@sha256:"
             + "2" * 64
@@ -67,7 +68,7 @@ class BaseImageEvidenceTest(unittest.TestCase):
                 MODULE.builder_output_controls(dockerfile),
                 {
                     "advisory": "CVE-2026-14456",
-                    "build_commands": ["./cmd/server", "./cmd/admin"],
+                    "build_commands": ["./cmd/server", "./cmd/admin", "./cmd/admin-web"],
                     "cgo_enabled": False,
                     "copied_builder_path": "/out",
                     "runtime_path": "/app",

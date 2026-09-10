@@ -115,6 +115,7 @@ def builder_output_controls(path: Path = DOCKERFILE) -> dict[str, object]:
     expected_builds = [
         ("0", "/out/server", "./cmd/server"),
         ("0", "/out/admin", "./cmd/admin"),
+        ("0", "/out/admin-web", "./cmd/admin-web"),
     ]
     if builds != expected_builds:
         raise RuntimeError("builder outputs or CGO boundary changed")
@@ -124,7 +125,7 @@ def builder_output_controls(path: Path = DOCKERFILE) -> dict[str, object]:
         raise RuntimeError("runtime must copy only the bounded builder output directory")
 
     out_paths = [match.group(1) for line in lines for match in OUT_PATH.finditer(line)]
-    if out_paths != ["/out/server", "/out/admin", "/out/data", "/out"]:
+    if out_paths != ["/out/server", "/out/admin", "/out/admin-web", "/out/data", "/out"]:
         raise RuntimeError("builder output directory contains an undeclared producer or copy")
 
     images = dockerfile_images(path)
@@ -132,7 +133,7 @@ def builder_output_controls(path: Path = DOCKERFILE) -> dict[str, object]:
         raise RuntimeError("runtime base must remain a distroless static image")
     return {
         "advisory": BUILDER_ADVISORY,
-        "build_commands": ["./cmd/server", "./cmd/admin"],
+        "build_commands": ["./cmd/server", "./cmd/admin", "./cmd/admin-web"],
         "cgo_enabled": False,
         "copied_builder_path": "/out",
         "runtime_path": "/app",

@@ -43,13 +43,13 @@ removed.
 The affected QUIC server path is not reached by the current container build or
 release runtime:
 
-1. The build stage executes only a source-revision check, two `go build`
+1. The build stage executes only a source-revision check, three `go build`
    commands, and creation of the empty data directory. It does not start a
    network server or invoke an OpenSSL QUIC API.
-2. Both produced executables are built with explicit `CGO_ENABLED=0`. They
+2. All three produced executables are built with explicit `CGO_ENABLED=0`. They
    cannot dynamically link the builder's `libcrypto3` or `libssl3` packages.
 3. Only `/out` is copied from the builder. Its declared contents are the
-   `server` and `admin` Go executables plus the empty `data` directory. No
+   `server`, `admin`, and `admin-web` Go executables plus the empty `data` directory. No
    builder library or utility is copied.
 4. The final stage is the digest-pinned distroless static runtime image. The
    protected base-image and registry-served runtime scans found zero packages

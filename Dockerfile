@@ -10,6 +10,7 @@ COPY protocol ./protocol
 RUN test -n "$SOURCE_REVISION" \
     && CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/server ./cmd/server \
     && CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/admin ./cmd/admin \
+    && CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/admin-web ./cmd/admin-web \
     && mkdir /out/data
 
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
