@@ -29,12 +29,13 @@ later documentation-only changes do not change wire behavior. Before an actual
 review begins, record immutable full commit IDs for all three repositories in
 the review report and do not silently move the baseline.
 
-The current product gate remains:
+The current product gate is implemented but not approved:
 
-> Only app-owned synthetic Android notifications may leave the device. Real
-> third-party notification content remains disabled until the blocking review
-> findings are resolved and the explicit product gate is changed in a reviewed
-> release.
+> Third-party notification content leaves the device only for packages the phone
+> user explicitly selects, and only through the mandatory per-recipient E2EE and
+> authority-authorized recipient chain. The blocking review findings must be
+> resolved and a reviewed release must explicitly approve the gate before it can
+> be described as released behavior.
 
 ## Package contents
 
@@ -143,8 +144,8 @@ The independent review is complete only when it produces:
 5. dependency and secret-scan results for the immutable baseline;
 6. a statement covering protocol, Server, Android, Chrome, deployment, backup,
    and update-signing scope;
-7. a final decision that explicitly says whether third-party notification
-   transport may be enabled.
+7. a final decision that explicitly states whether the implemented third-party
+   notification transport is approved for released behavior.
 
 ## Current blockers before review sign-off
 

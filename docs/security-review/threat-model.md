@@ -43,10 +43,11 @@ The current review covers:
   authority-key custody, backups, logs, local persistence, and build/update
   signing boundaries.
 
-The reviewed product gate permits only app-owned synthetic Android notification
-fixtures to enter the network. Third-party notifications are deliberately
-outside the enabled Alpha behavior, even though the protocol is intended to
-carry them after release gates are met.
+The product gate is implemented but not approved: third-party notification
+content enters the network only for packages the phone user explicitly selects,
+and only through the mandatory per-recipient E2EE and authority-authorized
+recipient chain. An implementation is not a reviewed release approval, and the
+release gates remain open.
 
 ## 3. Assets
 
@@ -286,7 +287,7 @@ that were offline throughout a transition.
 | Credential-at-rest reduction | Server stores hashes; Android/Chrome protected local stores | Store tests and source review |
 | Gap recovery integrity | Fixed `SNR1` high-water and certified source-key pinning | ADR-003 and recovery tests |
 | Bounded relay retention | Per-recipient count/byte limits and cumulative ACK | Relay Delivery v1 and store tests |
-| Third-party data containment | Runtime package-name gate admits app-owned fixture only | Android source boundary |
+| Third-party data containment | Fanout requires a user-confirmed per-app selection; empty selection keeps it closed; mandatory per-recipient E2EE | Android selection boundary and tests |
 
 These are implementation claims awaiting independent verification, not review
 conclusions.
@@ -379,7 +380,7 @@ The current design does not claim to protect against:
 - weaknesses in Android, Chrome, WebCrypto, Android Keystore, OS account security,
   or device hardware outside how SevenMirror configures and invokes them;
 - third-party notification compatibility, privacy semantics, or OEM behavior,
-  because third-party network transport remains disabled;
+  because no reviewed release approves third-party transport;
 - secure Camera QR enrollment, because no current authority-based Camera QR flow
   has been designed or enabled;
 - a stable v1 migration guarantee before protocol freeze.

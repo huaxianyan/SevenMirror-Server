@@ -4,7 +4,7 @@ Private self-hosted relay for Notification Mirroring. This is one of three indep
 
 Repository: <https://github.com/huaxianyan/SevenMirror-Server>
 
-> Status: the provisional synthetic-only system implements private admission, authenticated opaque ciphertext relay, authority-signed workspace membership, verified authority backup／restore and dual-signed rotation, recipient-specific durable delivery, cumulative cursors, and authority-certified snapshot recovery. Real mixed `2 Android × 2 Chrome` convergence has passed; production security review, third-party notification approval, and release compatibility policy remain incomplete. Real third-party notification content remains blocked.
+> Status: the provisional system implements private admission, authenticated opaque ciphertext relay, authority-signed workspace membership, verified authority backup／restore and dual-signed rotation, recipient-specific durable delivery, cumulative cursors, and authority-certified snapshot recovery. Real mixed `2 Android × 2 Chrome` convergence has passed; production security review, approval of the third-party notification gate, and release compatibility policy remain incomplete. Third-party notification content already travels only for packages the phone user explicitly selects, and only through the mandatory per-recipient E2EE and authority-authorized recipient chain; no reviewed release has approved that gate.
 
 ## Current functionality
 
@@ -159,7 +159,7 @@ go test ./...
 
 This is not yet a production release. Certified revocation, recoverable transport credential rotation, recipient-scoped durable delivery, cumulative cursors, and authority-certified snapshot recovery are implemented and have passed the documented mixed-device engineering acceptance. They have not received independent security approval. The P6 review baseline, threat model, initial findings, and reproducible evidence checklist are maintained in [`docs/security-review/`](docs/security-review/README.md).
 
-Independent protocol/security review, release-baseline security scans, authority/signing backup operations, operator-specific proxy/certificate/log-retention validation, distributed-proxy and deployment-capacity abuse testing, release provenance, and two-real-Android OEM validation remain release blockers. Use `wss://` outside loopback; native TLS requires TLS 1.2 or newer. Until those gates pass and a reviewed release explicitly changes the product gate, submit only app-owned synthetic encrypted payloads—never third-party notification content.
+Independent protocol/security review, release-baseline security scans, authority/signing backup operations, operator-specific proxy/certificate/log-retention validation, distributed-proxy and deployment-capacity abuse testing, release provenance, and two-real-Android OEM validation remain release blockers. Use `wss://` outside loopback; native TLS requires TLS 1.2 or newer. Until those gates pass, treat development builds as unsupported for third-party content: selecting an app on the phone is a user preference, not a reviewed product approval.
 
 The first-message authentication format is documented in [`protocol/device-auth-frame-v1.md`](protocol/device-auth-frame-v1.md).
 

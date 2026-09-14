@@ -12,8 +12,10 @@ reviewed release.
 | Older commits, local test builds, and experimental artifacts | Accepted when still relevant to current code | No |
 
 A report being accepted does not mean the affected build is supported for
-production use. Real third-party notification transport remains disabled until
-the documented release gates and independent security review are complete.
+production use. Third-party notification transport is implemented but is not
+approved by any reviewed release: it transmits content only for packages the
+phone user explicitly selects, and the documented release gates and independent
+security review remain outstanding.
 When a supported release exists, this table will name its exact maintained
 version range and security-update window.
 
