@@ -56,6 +56,7 @@ func TestReconnectReceivesDeliveryWhoseOldAcknowledgmentWasCanceled(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
+	hub.handoverTimeout = 200 * time.Millisecond
 	handler, err := NewAuthenticatedWebSocketHandler(hub, ConnectionAuthenticatorFunc(func(
 		_ context.Context, candidate PeerIdentity, received []byte, _ time.Time,
 	) (int64, error) {
@@ -100,7 +101,9 @@ func TestReconnectReceivesDeliveryWhoseOldAcknowledgmentWasCanceled(t *testing.T
 	}()
 	t.Cleanup(func() { waitForSessionStep(t, retired, "retirement finished") })
 	waitForSessionStep(t, store.canceled, "old storage context canceled")
-	// Admission must be responsive, but reserve this slot until storage returns.
+	// Admission must stay responsive, but it may not report a slot as free while
+	// the old storage work is still running. A replacement that authenticates in
+	// this window gets a bounded refusal, not an occupied slot.
 	admission := make(chan error, 1)
 	go func() {
 		_, unregister, err := hub.Register(peer, 1, 1)
@@ -111,8 +114,8 @@ func TestReconnectReceivesDeliveryWhoseOldAcknowledgmentWasCanceled(t *testing.T
 	}()
 	select {
 	case err := <-admission:
-		if !errors.Is(err, ErrAlreadyConnected) {
-			t.Fatal("replacement admitted while old storage work was still running")
+		if !errors.Is(err, ErrHandoverTimeout) {
+			t.Fatalf("replacement admitted while old storage work was still running: %v", err)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("storage cleanup held the global admission lock")
@@ -125,6 +128,72 @@ func TestReconnectReceivesDeliveryWhoseOldAcknowledgmentWasCanceled(t *testing.T
 		t.Fatal(err)
 	}
 	readFirstSessionDelivery(t, replacement, frame)
+}
+
+// Handover must not lose ciphertext the superseded connection never
+// acknowledged, and the retired connection must learn about the replacement
+// through an ordinary close rather than a policy close.
+func TestHandoverKeepsUnacknowledgedCiphertextForTheReplacement(t *testing.T) {
+	frame := canonicalFrame(t)
+	peer := peerFromFrame(t, frame, 40)
+	token := bytes.Repeat([]byte{3}, 32)
+	store := &testDeliveryStore{
+		deliveries: map[PeerIdentity][]StoredDelivery{peer: {{ID: 1, Envelope: frame}}},
+		next:       map[PeerIdentity]uint64{peer: 1},
+		acked:      make(map[PeerIdentity]uint64),
+	}
+	hub, err := NewHub(store, testRecipientAuthorizer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewAuthenticatedWebSocketHandler(hub, ConnectionAuthenticatorFunc(func(
+		_ context.Context, candidate PeerIdentity, received []byte, _ time.Time,
+	) (int64, error) {
+		if candidate != peer || !bytes.Equal(received, token) {
+			return 0, errors.New("unauthorized")
+		}
+		return 1, nil
+	}), clientaddress.New(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	resume, err := relaydelivery.EncodeResume(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := dialAndAuthenticateDevice(t, server.URL, peer, token)
+	defer original.Close()
+	if err := original.WriteMessage(websocket.BinaryMessage, resume); err != nil {
+		t.Fatal(err)
+	}
+	readFirstSessionDelivery(t, original, frame)
+
+	// The replacement takes the slot while the original is still open and has
+	// not acknowledged delivery 1.
+	replacement := dialAndAuthenticateDevice(t, server.URL, peer, token)
+	defer replacement.Close()
+	if err := replacement.WriteMessage(websocket.BinaryMessage, resume); err != nil {
+		t.Fatal(err)
+	}
+	readFirstSessionDelivery(t, replacement, frame)
+
+	// Drain whatever the superseded connection still had buffered, then require
+	// the ordinary close that marks it as replaced.
+	closeDeadline := time.Now().Add(2 * time.Second)
+	for {
+		if err := original.SetReadDeadline(closeDeadline); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := original.ReadMessage(); err != nil {
+			var closeError *websocket.CloseError
+			if !errors.As(err, &closeError) || closeError.Code != websocket.CloseNormalClosure {
+				t.Fatalf("superseded connection error = %v", err)
+			}
+			break
+		}
+	}
 }
 
 func readFirstSessionDelivery(t *testing.T, connection *websocket.Conn, want []byte) {

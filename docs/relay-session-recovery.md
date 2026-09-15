@@ -9,8 +9,12 @@ stale-connection detection, not simply reducing backoff. A separate mobile-netwo
 phase reached WebSocket open and sent authentication before failing. The cause
 of those production failures has not been established.
 
-The relay currently rejects a second connection for an already-connected device.
-Previously the authenticated handler discarded the error returned by
+The relay used to reject a second connection for an already-connected device.
+That rejection is what turned a client-side route change into a long outage: the
+device had already authenticated successfully, but its slot stayed owned by a
+socket the relay had not yet noticed was dead. A newer authenticated connection
+for the same device now takes the slot over, under the boundaries described
+below. Previously the authenticated handler discarded the error returned by
 `ServeAuthenticatedConnection`, making this case indistinguishable in server
 logs from other post-authentication failures.
 
@@ -29,7 +33,10 @@ Categories:
 
 | Reason | Meaning |
 | --- | --- |
-| `already_connected` | Credential verification succeeded, but another session still owns the device slot; this attempt did not receive SNO1 |
+| `superseded` | A newer authenticated connection for the same device took this session's slot |
+| `stale_credential` | Credential verification succeeded, but the connected session holds a newer credential version, so this attempt did not replace it |
+| `handover_timeout` | This session was asked to release its slot for a replacement and did not do so within the bounded wait |
+| `already_connected` | A replacement lost the slot race to another concurrent replacement; this attempt did not receive SNO1 |
 | `authorization_revoked` | The running session was disconnected through the Hub authorization path |
 | `timeout` | A returned network-style error reports a timeout; this does not by itself identify a read, write, or underlying operation |
 | `peer_closed` | EOF or a normal/going-away WebSocket close |
@@ -43,35 +50,66 @@ No new telemetry endpoint or app-level persistence is introduced. The operator's
 existing process-log collection/retention policy still applies. These records are
 not ordinary-user UI and are not an independent privacy/security approval.
 
-A real HTTP/WebSocket test authenticates one connection, attempts another with
-the same credential, verifies the occupied-session classification, and verifies
-that the original connection can still exchange a transport heartbeat. A module
-test checks bounded classification, including wrapped errors and private canary
-messages. The initial diagnostic slice did not change occupancy, authorization,
-retry, timeout, or wire behavior. The subsequent operation isolation below adds
-cancellation and a session-operation deadline.
+A real HTTP/WebSocket test authenticates one connection, connects a replacement
+with the same credential, verifies that the replacement holds the slot and can
+exchange a transport heartbeat, and verifies that the retired connection is
+closed with an ordinary close while the `superseded` category is logged. A
+separate test verifies that ciphertext the superseded connection never
+acknowledged is still delivered to the replacement. A module test checks bounded
+classification, including wrapped errors and private canary messages. A handover
+that cannot complete within the bounded wait keeps the slot reserved and reports
+`ErrHandoverTimeout`. An older credential version is refused rather than
+admitted. The subsequent operation isolation below adds cancellation and a
+session-operation deadline.
 
-## Why not replace the Hub entry immediately?
+## Bounded handover of an occupied slot
 
-A correct future handover must establish all of these boundaries before it is
-implemented:
+`Register` treats an occupied slot as a handover request rather than a rejection.
+The caller has already proven possession of the device credential, so the
+replacement retires the older instance and only takes the slot once that instance
+has released it. The boundaries the earlier analysis required are all in place:
 
-1. Only an authenticated and still-authorized replacement may retire an existing
-   session. Credential rotation must not let an older authenticated attempt
-   displace a newer credential version.
-2. Old read/write work must no longer route, resume, drain, or acknowledge on
+1. Only an authenticated replacement may retire an existing session, and a
+   smaller credential version can never displace a newer one. An attempt that
+   authenticates with an older credential version is refused with
+   `ErrStaleCredential`, so credential rotation cannot be rolled backwards and a
+   stale authenticated attempt cannot unseat a rotated session.
+2. Old read/write work no longer routes, resume, drains, or acknowledges on
    behalf of the new session. The former Hub methods identified callers by device,
-   not by a distinct connection lease; replacing a map entry alone was insufficient.
-   The operation boundary below now binds those calls to the registered instance.
+   not by a distinct connection lease; replacing a map entry alone was
+   insufficient. The operation boundary below binds those calls to the
+   registered instance.
 3. A late authorization-monitor result or old cleanup must not disconnect or
-   unregister the replacement. The monitor now carries the observed connection
+   unregister the replacement. The monitor carries the observed connection
    instance into `Disconnect`, which compares it with the current instance under
-   the Hub lock. Reconnecting with the same credential version is also protected.
-   Normal unregister and explicit disconnect now share the instance-bound
-   retirement path described below.
-4. Teardown and replacement admission must be bounded; a stuck old connection
-   must not hold the slot indefinitely. Preserve durable delivery, cumulative
-   ACK, recipient isolation, and one active connection per device.
+   the Hub lock. Normal unregister and explicit disconnect share the same
+   instance-bound retirement path.
+4. Teardown and replacement admission are bounded. A retired instance signals
+   `superseded` and cancels its operation context; the replacement then waits on
+   that instance's `released` signal, outside the Hub lock, for at most
+   `defaultSessionHandoverTimeout` (five seconds). Waiting on the release signal
+   rather than on the operation lock keeps the admission bounded even when the
+   retired session is stuck inside storage. If the wait expires the slot stays
+   reserved and the replacement fails with `ErrHandoverTimeout`; a slot is never
+   reported as free while the previous owner's admitted work is still running.
+   At most one slot race is absorbed inside a single admission, so two concurrent
+   replacements resolve by one of them retrying.
+
+The two retirement signals stay distinct. `disconnected` closes for an
+authorization revocation and produces a policy close (1008) that clients must
+read as a membership change. `superseded` closes for a replacement and produces
+an ordinary close (1000). Retiring is single-shot per instance, so a session can
+only ever be ended for one of these reasons. `ServeAuthenticatedConnection`
+reports whichever cause applies in preference to the socket or context error
+that retiring the instance produced, which is what makes the operator categories
+above reliable.
+
+Durable delivery, cumulative ACK, recipient isolation, and one active connection
+per device are all preserved. A handover does not delete or renumber anything:
+the replacement resumes from the same durable history, so ciphertext the
+superseded connection never acknowledged is still delivered. Canceled old
+operations cannot commit against the replacement because admission of the
+replacement happens only after the retired instance has released its slot.
 
 The revocation race has a real HTTP/WebSocket regression test with a controlled
 in-memory authorization lookup. It holds an old lookup while the original socket
@@ -112,16 +150,18 @@ claiming safe retirement. Thus the five-second budget is not a guarantee that an
 arbitrarily stuck driver will physically terminate in five seconds.
 
 A real authenticated WebSocket test uses an explicitly controlled in-memory ACK
-store: an ACK is held inside storage, retirement cancels it, admission remains
-responsive but rejects reuse until cleanup returns, and the same device reconnects
-and receives the retained ciphertext again. This is a storage-cancellation fixture,
-not a SQLite outage or phone-network test. A module test confirms that old handles
-cannot route, resume, read, or ACK after re-registration, while new handles can
-receive and acknowledge their own delivery. The prior stale-authorization test
-continues to cover legitimate current-session revocation.
+store: an ACK is held inside storage, retirement cancels it, admission stays
+responsive but refuses reuse while cleanup is still running, and the same device
+reconnects and receives the retained ciphertext again. This is a
+storage-cancellation fixture, not a SQLite outage or phone-network test. A module
+test confirms that old handles cannot route, resume, read, or ACK after
+re-registration, while new handles can receive and acknowledge their own
+delivery. The prior stale-authorization test continues to cover legitimate
+current-session revocation.
 
-Automatic takeover is still disabled. Transport-path changes and admission of an
-authenticated replacement over an occupied slot remain separate work.
+Server-side admission of an authenticated replacement over an occupied slot is
+now implemented, with the boundaries above. Android-side transport handling is
+still separate work.
 
 On Android, network handling must distinguish an actual route/transport change
 (including a VPN's underlying transport change) from repeated capabilities or

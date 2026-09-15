@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 )
 
 type envelopeVector struct {
@@ -121,6 +122,106 @@ func TestHubDisconnectRemovesRoutingAndSignalsExactSession(t *testing.T) {
 	}
 	if hub.Disconnect(recipientSession) {
 		t.Fatal("duplicate disconnect reported a change")
+	}
+}
+
+// A replacement that authenticated with an older credential version must never
+// roll a rotated credential backwards.
+func TestRegisterRefusesToRollBackTheCredentialVersion(t *testing.T) {
+	peer := PeerIdentity{WorkspaceID: WorkspaceID{1}, DeviceID: DeviceID{2}}
+	hub := newTestHub(t)
+	current, retireCurrent, err := hub.Register(peer, 2, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer retireCurrent()
+	if _, _, err := hub.Register(peer, 1, 1); !errors.Is(err, ErrStaleCredential) {
+		t.Fatalf("older credential admission error = %v", err)
+	}
+	if !hub.IsConnected(peer) {
+		t.Fatal("stale admission released the newer session slot")
+	}
+	select {
+	case <-current.session.superseded:
+		t.Fatal("stale admission retired the newer session")
+	default:
+	}
+	_, finish, err := hub.beginOperation(context.Background(), current, sessionOperationTimeout)
+	if err != nil {
+		t.Fatalf("newer session stopped accepting operations: %v", err)
+	}
+	finish()
+}
+
+// An authenticated replacement for the same credential version takes the slot.
+// The retired instance is signalled through the replacement channel, and its own
+// late cleanup must not touch the replacement.
+func TestRegisterHandsOverTheSlotToAnAuthenticatedReplacement(t *testing.T) {
+	peer := PeerIdentity{WorkspaceID: WorkspaceID{1}, DeviceID: DeviceID{2}}
+	hub := newTestHub(t)
+	retired, retireRetired, err := hub.Register(peer, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer retireRetired()
+	// Model the retiring connection's own cleanup path: its owner observes the
+	// replacement signal and unregisters, which is what releases the slot.
+	go func() {
+		<-retired.session.superseded
+		retireRetired()
+	}()
+	replacement, retireReplacement, err := hub.Register(peer, 1, 1)
+	if err != nil {
+		t.Fatalf("replacement admission error = %v", err)
+	}
+	defer retireReplacement()
+	if _, finish, err := hub.beginOperation(context.Background(), replacement, sessionOperationTimeout); err != nil {
+		t.Fatalf("replacement is not usable: %v", err)
+	} else {
+		finish()
+	}
+	if _, _, err := hub.beginOperation(context.Background(), retired, sessionOperationTimeout); !errors.Is(err, ErrSessionOffline) {
+		t.Fatalf("retired session still accepted operations: %v", err)
+	}
+	if hub.Disconnect(retired) {
+		t.Fatal("late cleanup of the retired session reported a change")
+	}
+	if !hub.IsConnected(peer) {
+		t.Fatal("late cleanup of the retired session removed the replacement")
+	}
+}
+
+// A slot whose admitted work never drains must stay reserved. The waiting
+// replacement gets a bounded refusal instead of a slot that is not really free.
+func TestRegisterBoundsTheWaitForAStuckRetirement(t *testing.T) {
+	peer := PeerIdentity{WorkspaceID: WorkspaceID{1}, DeviceID: DeviceID{2}}
+	hub := newTestHub(t)
+	hub.handoverTimeout = 100 * time.Millisecond
+	stuck, retireStuck, err := hub.Register(peer, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer retireStuck()
+	// The owner observes the replacement but never releases the slot.
+	observed := make(chan struct{})
+	go func() {
+		<-stuck.session.superseded
+		close(observed)
+	}()
+	started := time.Now()
+	if _, _, err := hub.Register(peer, 1, 1); !errors.Is(err, ErrHandoverTimeout) {
+		t.Fatalf("stuck handover error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed >= time.Second {
+		t.Fatalf("handover wait was not bounded: %v", elapsed)
+	}
+	select {
+	case <-observed:
+	default:
+		t.Fatal("replacement did not signal the stuck session")
+	}
+	if !hub.IsConnected(peer) {
+		t.Fatal("a slot that was never released was reassigned")
 	}
 }
 

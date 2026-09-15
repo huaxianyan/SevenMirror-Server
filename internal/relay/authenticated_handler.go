@@ -152,6 +152,12 @@ func relaySessionEndReason(err error) string {
 		return "completed"
 	case errors.Is(err, ErrAlreadyConnected):
 		return "already_connected"
+	case errors.Is(err, ErrStaleCredential):
+		return "stale_credential"
+	case errors.Is(err, ErrHandoverTimeout):
+		return "handover_timeout"
+	case errors.Is(err, ErrSessionSuperseded):
+		return "superseded"
 	case errors.Is(err, ErrDeviceDisconnected):
 		return "authorization_revoked"
 	case errors.Is(err, context.Canceled):

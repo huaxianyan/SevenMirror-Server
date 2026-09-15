@@ -30,7 +30,7 @@ func ServeAuthenticatedConnection(
 	credentialVersion int64,
 	hub *Hub,
 	activityRecorders ...ConnectionActivityRecorder,
-) error {
+) (result error) {
 	if len(activityRecorders) > 1 {
 		return errors.New("at most one connection activity recorder is allowed")
 	}
@@ -52,7 +52,12 @@ func ServeAuthenticatedConnection(
 	if err != nil {
 		return err
 	}
+	// Deferred calls run last-in-first-out, so this runs before unregister closes
+	// this instance's own revocation signal. That ordering is what lets a
+	// retirement be reported instead of the socket or context error retiring the
+	// instance produced, while an ordinary client disconnect keeps its own error.
 	defer unregister()
+	defer func() { result = sessionEndCause(session, result) }()
 	writeMessage := func(kind int, encoded []byte) error {
 		operationContext, finish, err := hub.beginOperation(sessionContext, session, writeTimeout)
 		if err != nil {
@@ -142,6 +147,19 @@ func ServeAuthenticatedConnection(
 					time.Now().Add(writeTimeout),
 				)
 				reportWriterError(ErrDeviceDisconnected)
+				return
+			case <-session.session.superseded:
+				// An ordinary close, not a policy close: the client must read this
+				// as "this connection was replaced", not as a membership change.
+				// The deadline is deliberately short. The replacement is already
+				// waiting on this instance to release its slot, and that wait is
+				// bounded; a courtesy close frame must not spend the whole budget.
+				_ = connection.WriteControl(
+					websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "superseded connection"),
+					time.Now().Add(time.Second),
+				)
+				reportWriterError(ErrSessionSuperseded)
 				return
 			case <-pingTicker.C:
 				if err := writeMessage(websocket.PingMessage, nil); err != nil {
@@ -249,6 +267,28 @@ func ServeAuthenticatedConnection(
 			return errors.New("unsupported relay delivery message")
 		}
 	}
+}
+
+// A retired instance reports the retirement itself rather than the socket error
+// that retiring it produced, so operator logs keep the cause instead of the
+// symptom. These signals are only observable before this connection's own
+// cleanup runs, so an ordinary client disconnect still reports its own error and
+// is not misreported as a revocation.
+func sessionEndCause(session ConnectedSession, err error) error {
+	if session.session == nil {
+		return err
+	}
+	select {
+	case <-session.session.superseded:
+		return ErrSessionSuperseded
+	default:
+	}
+	select {
+	case <-session.session.disconnected:
+		return ErrDeviceDisconnected
+	default:
+	}
+	return err
 }
 
 func readBoundedClientMessage(
