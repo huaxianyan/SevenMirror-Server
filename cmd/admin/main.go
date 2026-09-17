@@ -85,6 +85,8 @@ func main() {
 		approveDevice(management, os.Args[2:])
 	case "revoke-device":
 		revokeDevice(management, os.Args[2:])
+	case "rename-device":
+		renameDevice(management, os.Args[2:])
 	case "issue-rotation-code":
 		issueRotationCode(store, os.Args[2:])
 	default:
@@ -344,6 +346,25 @@ func revokeDevice(management *adminservice.Service, args []string) {
 	fmt.Printf("device_ref=%s result=%s\n", *reference, result)
 }
 
+func renameDevice(management *adminservice.Service, args []string) {
+	flags := flag.NewFlagSet("rename-device", flag.ExitOnError)
+	workspaceText := flags.String("workspace", "", "base64url workspace ID")
+	reference := flags.String("device-ref", "", "redacted device reference from list-devices")
+	displayName := flags.String("name", "", "new device display name")
+	flags.Parse(args)
+	if flags.NArg() != 0 {
+		flags.Usage()
+		os.Exit(2)
+	}
+	renamed, err := management.RenameDevice(
+		context.Background(), parseWorkspaceID(*workspaceText), *reference, *displayName, time.Now())
+	if err != nil {
+		fatal("rename device", err)
+	}
+	fmt.Printf("device_ref=%s result=renamed roster_epoch=%d\n",
+		renamed.DeviceReference, renamed.RosterEpoch)
+}
+
 func issueRotationCode(store *admission.Store, args []string) {
 	flags := flag.NewFlagSet("issue-rotation-code", flag.ExitOnError)
 	workspaceText := flags.String("workspace", "", "base64url workspace ID")
@@ -388,6 +409,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin list-pending-devices --workspace <id>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin approve-device --workspace <id> --device-ref <ref>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin revoke-device --workspace <id> --device-ref <ref>")
+	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin rename-device --workspace <id> --device-ref <ref> --name <new name>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin issue-rotation-code --workspace <id> --device-ref <ref> [--ttl 10m]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Set NM_DATABASE_PATH to use a non-default database.")

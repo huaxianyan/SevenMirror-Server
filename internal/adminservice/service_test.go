@@ -93,6 +93,10 @@ func TestAdministratorApprovesRenamesRejectsAndRemovesDevices(t *testing.T) {
 		"客厅电脑", now.Add(3*time.Minute)); !errors.Is(err, ErrInvalidDeviceState) {
 		t.Fatalf("unchanged rename error=%v", err)
 	}
+	if _, err := service.RenameDevice(ctx, workspaceID, devices[0].Reference,
+		"   ", now.Add(3*time.Minute)); err == nil {
+		t.Fatal("blank rename must be rejected")
+	}
 
 	registerPendingApproval(t, ctx, service, store, workspaceID,
 		admission.DeviceAndroid, "备用手机", now.Add(2*time.Minute))

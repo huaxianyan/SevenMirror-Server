@@ -1025,6 +1025,9 @@ func (s *Store) RenameDevice(
 	ctx context.Context,
 	input RenameDeviceInput,
 ) (RenamedDevice, error) {
+	if err := validateDeviceName(input.DisplayName); err != nil {
+		return RenamedDevice{}, err
+	}
 	deviceID, err := s.resolveDeviceReference(ctx, input.WorkspaceID, input.DeviceReference)
 	if err != nil {
 		return RenamedDevice{}, err
