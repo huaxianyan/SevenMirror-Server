@@ -274,8 +274,12 @@ func TestAdministratorLogsInOnceAndSeesDeviceStatusWithoutInternalIdentifiers(t 
 		!strings.Contains(text, `<details class="device-group history-group">`) {
 		t.Fatalf("dashboard does not prioritize device tasks: %s", text)
 	}
+	// A referrer policy of "no-referrer" makes Chromium derive a null Origin for
+	// the form posts this console depends on, so the value is pinned here instead
+	// of being left to a later tightening pass.
 	if dashboardResult.Header().Get("Content-Security-Policy") == "" ||
-		dashboardResult.Header().Get("X-Frame-Options") != "DENY" {
+		dashboardResult.Header().Get("X-Frame-Options") != "DENY" ||
+		dashboardResult.Header().Get("Referrer-Policy") != "same-origin" {
 		t.Fatalf("security headers=%v", dashboardResult.Header())
 	}
 	csrf := firstCapture(t, text, `name="csrf_token" value="([^"]+)"`)

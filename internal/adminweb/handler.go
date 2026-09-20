@@ -977,7 +977,12 @@ func (h *Handler) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
-		w.Header().Set("Referrer-Policy", "no-referrer")
+		// Chromium derives the Origin header of a navigation request (which is what a
+		// form submission is) from the referrer, so "no-referrer" makes every form
+		// post arrive as origin null and validOrigin rejects the login before the
+		// credentials are even read. "same-origin" keeps referrers inside this
+		// console and nothing cross-origin, which is the property that matters here.
+		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		if r.Host != h.expectedHost {

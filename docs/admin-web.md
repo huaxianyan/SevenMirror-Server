@@ -86,6 +86,12 @@ TOTP 使用 RFC 6238 的 SHA1、六位、三十秒一步，接受前后各一步
 
 登录限速 5 次/分钟；凭据设置与确认共有另一个 20 次/分钟的窗口，因此协商口令策略时的多次重试不会挤掉登录额度。两个窗口都按客户端地址计数，可信反代配置见「远程访问」。
 
+## 安全响应头
+
+每个响应都带 `Cache-Control: no-store`、CSP（`default-src 'none'`，只放行同源样式与同源表单提交）、`Referrer-Policy: same-origin`、`X-Content-Type-Options: nosniff` 与 `X-Frame-Options: DENY`。
+
+`Referrer-Policy` **不要改成 `no-referrer`**。Chromium 会用 referrer 推导导航请求的 `Origin`，而表单提交就是导航：在 `no-referrer` 下浏览器提交表单时发的是 `Origin: null`，严格的 `Origin` 校验会先于凭据校验把它拒掉，现场表现是「登录后显示 request rejected」，且换浏览器、换设备、换网络都一样。`same-origin` 仍然保证任何跨源请求都不带 Referer，这正是这里要的性质。
+
 ## 配置
 
 | 环境变量 | 默认值 | 说明 |
