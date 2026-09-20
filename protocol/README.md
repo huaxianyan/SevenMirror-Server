@@ -34,16 +34,16 @@ device-auth-frame-v1.json SHA-256: 1896def3b76e7c3dbd2d59c30df684587159fb7134121
 trusted-device-pairing-v1.md SHA-256: e013d6a59b3ddae4826875603b3b431d460751a2ff93c143e13b2dbfe6093706
 trusted-device-pairing-v1.json SHA-256: a7254975e5c831133453ff107b97323e722385c7ae44d5a5732cb8b27eeff861
 transport-credential-rotation-v1.md SHA-256: 6f8fb759ce11ca2b7f8470b830ae99feaf199ec2272318224deb2ae0cd190294
-relay-delivery-v1.md SHA-256: a97de83cc3c39a81655f4b9ec84b0d2820c88aa3cdf70d68ac3f61a0f4fed2af
+relay-delivery-v1.md SHA-256: f4a827814754c3b6be54cecf77f3470865c5a69294b62a3da48102af2fdd7659
 relay-delivery-v1.json SHA-256: 72cc3efb0d135c1fdc00d2bd25f4b9d206b15b9ac99fef849dcf55e3fb20dc65
 e2ee-identity-key-transition-v1.md SHA-256: 665e676d3ac0620cdb10d48a0e0c5ecc1d0ffb2cb1997caf724e9e94a33fb323
 e2ee-identity-key-transition-v1.json SHA-256: f87f605480d320b622d3810a250f445b40ba0bc6aec27a2a6f5630f87d29c3d0
-membership.proto SHA-256: 926d1564a50fec9ee2b72966e6b017927744f6259cda99221c1a05189bf3ffcd
-workspace-membership-v1.md SHA-256: 79e2bdde0ee250b0df0607834a3f46b75dda598747acc935e9df46594acc144c
-workspace-membership-v1.json SHA-256: 03ef8ab0258e6ad608bff11df3418e62ab98f2b52c4b495c770c4a68a58ff806
-payload.proto SHA-256: 5bb97035dc758138b29a4aa3022f498aab74bd303d74f1b7a52236f39601428d
-encrypted-payload-v1.md SHA-256: 9588ca8e08b7ec9f7e58965f530d5863584861abefa8dff5f108cdf3e02ab8ad
-encrypted-payload-v1.json SHA-256: cd97e01545bc379c4d26917d568d4168f2c7a7289eb9e69ae0a360a3024be368
+membership.proto SHA-256: f704f6820622638fe0712fb91ef4d9a16fe6f9d77907fab9aa76797ce9b13d51
+workspace-membership-v1.md SHA-256: 1a93f7eb91f9b84ca7f225cf10a3603d9a7d451e1704ee05d743ad965a789dad
+workspace-membership-v1.json SHA-256: b4b8de3ab665daac3d503ef28a68f3b00f8000be53fa3a5d81abe871b85a2beb
+payload.proto SHA-256: 171bffe8e2403f7256a87de42198e4c94f1803355d61a9c7b8f4eae521d3698b
+encrypted-payload-v1.md SHA-256: b83d785ae53c066ded6b032a0cacc52dd7da6d9b7723da3b831adf6ae64eeb07
+encrypted-payload-v1.json SHA-256: a07cf24d34359e57c03338c2707cfc947d3a414f60d26cacdfac7fd3a3aaf8cc
 ```
 
 Generated code is committed for reproducible client builds. Regenerate the Go files with the pinned remote plugin:

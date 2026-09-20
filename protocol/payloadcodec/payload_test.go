@@ -461,7 +461,7 @@ func TestRejectsInvalidNotificationFieldsAndSchema(t *testing.T) {
 				NotificationUpsert: &notificationv1.NotificationUpsert{
 					NotificationId:        "synthetic.notification/42",
 					NotificationRevision:  7,
-					SourceApplicationId:   "dev.notificationmirroring.android",
+					SourceApplicationId:   "com.neko7ina.sevenmirror",
 					SourceApplicationName: "SevenMirror",
 					Title:                 &title,
 					Actions: []*notificationv1.NotificationActionDescriptor{
@@ -536,7 +536,7 @@ func TestRejectsInvalidNotificationMedia(t *testing.T) {
 				NotificationUpsert: &notificationv1.NotificationUpsert{
 					NotificationId:        "synthetic.notification/42",
 					NotificationRevision:  7,
-					SourceApplicationId:   "dev.notificationmirroring.android",
+					SourceApplicationId:   "com.neko7ina.sevenmirror",
 					SourceApplicationName: "SevenMirror",
 					Title:                 &title,
 					AppIcon: &notificationv1.NotificationMedia{
