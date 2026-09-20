@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>绑定动态验证码 · SevenMirror 管理端</title>
+  <link rel="stylesheet" href="/assets/admin.css">
+</head>
+<body class="centered">
+  <main class="login-card">
+    <p class="eyebrow">SevenMirror</p>
+    <h1>绑定动态验证码</h1>
+    <p class="muted">第 2 步，共 2 步。在验证器应用里新建一个条目，再输入它显示的一次性验证码确认。确认后凭据才会保存。</p>
+    {{with .Error}}<p class="error" role="alert">{{.}}</p>{{end}}
+    <p class="secret-label">条目名 SevenMirror:{{.Name}}</p>
+    <p class="secret-label">手动输入的密钥</p>
+    <code class="secret">{{.Secret}}</code>
+    <p class="muted">也可以把下面这行链接交给支持导入的验证器应用：</p>
+    <code class="secret">{{.URI}}</code>
+    <p class="muted">密钥只在这一页显示一次。如果没记下来，重新走一次凭据设置即可，旧密钥随即失效。</p>
+    <form method="post" action="/setup/totp">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label for="setup-totp">验证器显示的验证码</label>
+      <input id="setup-totp" name="totp_code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus>
+      <button type="submit">确认并保存</button>
+    </form>
+    <p class="muted"><a href="/setup">返回上一步，重新设置</a></p>
+  </main>
+</body>
+</html>

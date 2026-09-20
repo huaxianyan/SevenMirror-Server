@@ -1,10 +1,12 @@
 package adminweb
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -18,6 +20,15 @@ const (
 	scryptMaxP      = 8
 	scryptMinSalt   = 16
 	scryptMinDigest = 32
+
+	// The cost the console writes for a new password. Roughly 32 MiB of memory per
+	// attempt, which is affordable for a single administrator login and expensive
+	// for an attacker who stole the database.
+	newPasswordLogN   = 15
+	newPasswordR      = 8
+	newPasswordP      = 1
+	newPasswordSalt   = 16
+	newPasswordDigest = 32
 )
 
 // passwordHash is one administrator password verifier. The cost parameters travel
@@ -96,6 +107,27 @@ func (h passwordHash) matches(password string) bool {
 	matched := subtle.ConstantTimeCompare(candidate, h.digest) == 1
 	clear(candidate)
 	return matched
+}
+
+// hashPassword derives the PHC scrypt string stored for a new password. The salt
+// is fresh on every call, so two administrators who choose the same password still
+// store different verifiers.
+func hashPassword(password string) (string, error) {
+	salt := make([]byte, newPasswordSalt)
+	if _, err := rand.Read(salt); err != nil {
+		return "", errors.New("read password salt")
+	}
+	digest, err := scrypt.Key([]byte(password), salt,
+		1<<newPasswordLogN, newPasswordR, newPasswordP, newPasswordDigest)
+	if err != nil {
+		return "", errors.New("derive password digest")
+	}
+	encoded := fmt.Sprintf("$scrypt$ln=%d,r=%d,p=%d$%s$%s",
+		newPasswordLogN, newPasswordR, newPasswordP,
+		base64.RawStdEncoding.EncodeToString(salt),
+		base64.RawStdEncoding.EncodeToString(digest))
+	clear(digest)
+	return encoded, nil
 }
 
 // constantTimeEquals compares two strings without leaking their common prefix

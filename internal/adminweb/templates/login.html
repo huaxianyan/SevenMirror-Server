@@ -10,15 +10,21 @@
   <main class="login-card">
     <p class="eyebrow">SevenMirror</p>
     <h1>管理私有空间</h1>
-    <p class="muted">用管理员账号登录，动态验证码取自你的验证器应用。</p>
+    {{if .FirstRun}}
+      <p class="muted">这是首次使用。用初始账号登录后会直接进入凭据设置，必须先设置新口令并绑定动态验证码，才能管理设备。</p>
+    {{else}}
+      <p class="muted">用管理员账号登录，动态验证码取自你的验证器应用。</p>
+    {{end}}
     {{with .Error}}<p class="error" role="alert">{{.}}</p>{{end}}
     <form method="post" action="/login">
       <label for="admin-username">用户名</label>
       <input id="admin-username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
       <label for="admin-password">密码</label>
       <input id="admin-password" name="password" type="password" autocomplete="current-password" required>
-      <label for="admin-totp">动态验证码</label>
-      <input id="admin-totp" name="totp_code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+      {{if not .FirstRun}}
+        <label for="admin-totp">动态验证码</label>
+        <input id="admin-totp" name="totp_code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+      {{end}}
       <button type="submit">登录</button>
     </form>
     <details class="recovery">

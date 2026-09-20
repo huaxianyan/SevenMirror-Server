@@ -109,8 +109,8 @@ published port and do not forward the container address from the proxy host.
 
 ## 7. Run the management console on demand
 
-The console prints a single-use login code to its own terminal and holds sessions
-in memory only. Run it in the foreground so the code is not retained by a
+The console holds sessions in memory only and prints a single-use recovery code to
+its own terminal. Run it in the foreground so that code is not retained by a
 persistent log:
 
 ```sh
@@ -123,11 +123,21 @@ Reach it with SSH forwarding from the operator machine:
 ssh -L 8081:127.0.0.1:8081 user@host
 ```
 
-Then open `http://127.0.0.1:8081`, paste the code, and finish the task. Stop it
-with `Ctrl-C` when done; every in-memory session is discarded and the container is
-removed. If you use a dedicated HTTPS management origin instead, keep the proxy
-upstream on loopback and set `SEVENMIRROR_ADMIN_ORIGIN` to the exact browser
-origin. Never put the console and the device API behind the same public origin.
+Then open `http://127.0.0.1:8081`. A registry that has no console account yet
+answers the built-in default account `admin` / `sevenmirror`, and that first
+sign-in is forced into the credential setup: choose the account name and a new
+password, then bind an authenticator entry with the secret the second step
+displays. No other page is reachable until that finishes.
+
+The password and the authenticator secret are then stored in the registry, so
+later sign-ins use them and no restart is needed. Keep the printed recovery code
+as the way back in after a lost authenticator device.
+
+Stop the console with `Ctrl-C` when done; every in-memory session is discarded and
+the container is removed. If you use a dedicated HTTPS management origin instead,
+keep the proxy upstream on loopback and set `SEVENMIRROR_ADMIN_ORIGIN` to the
+exact browser origin. Never put the console and the device API behind the same
+public origin.
 
 ## 8. Enroll a device
 

@@ -2,12 +2,15 @@ package adminweb
 
 import (
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha1"
 	"crypto/subtle"
 	"encoding/base32"
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,7 +21,51 @@ const (
 	totpDigits      = 6
 	totpSkewSteps   = 1
 	totpModulus     = 1_000_000
+	totpSecretBytes = 20
+	consoleIssuer   = "SevenMirror"
 )
+
+// generateTOTPSecret returns the shared secret for a new authenticator entry. The
+// length matches the HMAC-SHA1 output size RFC 4226 recommends.
+func generateTOTPSecret() ([]byte, error) {
+	secret := make([]byte, totpSecretBytes)
+	if _, err := rand.Read(secret); err != nil {
+		return nil, errors.New("read TOTP secret")
+	}
+	return secret, nil
+}
+
+// encodeTOTPSecret renders the secret the way an authenticator app expects to
+// receive it: uppercase RFC 4648 base32 without padding.
+func encodeTOTPSecret(secret []byte) string {
+	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(secret)
+}
+
+// formatTOTPSecret groups the encoded secret into four character blocks, which is
+// how authenticator apps display it for manual entry.
+func formatTOTPSecret(encoded string) string {
+	var builder strings.Builder
+	for index := 0; index < len(encoded); index += 4 {
+		if index > 0 {
+			builder.WriteByte(' ')
+		}
+		builder.WriteString(encoded[index:min(index+4, len(encoded))])
+	}
+	return builder.String()
+}
+
+// totpProvisioningURI builds the otpauth URI an authenticator app consumes. The
+// label carries the issuer so the entry stays identifiable in a long list.
+func totpProvisioningURI(accountName string, encoded string) string {
+	parameters := url.Values{}
+	parameters.Set("secret", encoded)
+	parameters.Set("issuer", consoleIssuer)
+	parameters.Set("algorithm", "SHA1")
+	parameters.Set("digits", strconv.Itoa(totpDigits))
+	parameters.Set("period", strconv.Itoa(totpStepSeconds))
+	return "otpauth://totp/" + url.PathEscape(consoleIssuer+":"+accountName) +
+		"?" + parameters.Encode()
+}
 
 // parseTOTPSecret accepts the shared secret in the form every authenticator app
 // displays: the RFC 4648 base32 alphabet, case insensitive, spaces and trailing

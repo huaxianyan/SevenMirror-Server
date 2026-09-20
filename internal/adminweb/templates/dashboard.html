@@ -14,6 +14,7 @@
     </div>
     <nav aria-label="管理页面">
       <a href="#devices">设备</a>
+      <a href="#credentials">凭据</a>
       <a href="#deployment">部署与维护</a>
       <a href="#about">关于</a>
     </nav>
@@ -199,6 +200,14 @@
         </section>
       {{end}}
     </div>
+
+    <section id="credentials" class="information-section">
+      <p class="eyebrow">凭据</p>
+      <h2>管理端登录凭据</h2>
+      <p>当前账号 <strong>{{.AccountName}}</strong>，最近更新于 {{.AccountUpdated}}。登录需要这个账号、对应口令，以及验证器应用里当前显示的动态验证码。</p>
+      <p><a class="button-link" href="/setup">重新设置凭据</a></p>
+      <p class="muted">重新设置会同时更换账号名、口令和动态验证码密钥，并结束其他已经登录的管理会话。</p>
+    </section>
 
     <section id="deployment" class="information-section">
       <p class="eyebrow">部署与维护</p>

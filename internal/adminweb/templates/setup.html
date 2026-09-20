@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>设置凭据 · SevenMirror 管理端</title>
+  <link rel="stylesheet" href="/assets/admin.css">
+</head>
+<body class="centered">
+  <main class="login-card">
+    <p class="eyebrow">SevenMirror</p>
+    <h1>设置管理端凭据</h1>
+    {{if .FirstRun}}
+      <p class="muted">第 1 步，共 2 步。你正在替换初始账号与初始密码。完成后，管理端只接受新凭据加动态验证码。</p>
+    {{else}}
+      <p class="muted">第 1 步，共 2 步。这次设置会同时替换账号名、口令和动态验证码密钥。</p>
+    {{end}}
+    {{with .Error}}<p class="error" role="alert">{{.}}</p>{{end}}
+    <form method="post" action="/setup">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <label for="setup-username">用户名</label>
+      <input id="setup-username" name="username" type="text" value="{{.Name}}" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+      <label for="setup-password">新密码</label>
+      <input id="setup-password" name="password" type="password" autocomplete="new-password" minlength="{{.MinPassword}}" required>
+      <label for="setup-confirm">再输入一次新密码</label>
+      <input id="setup-confirm" name="password_confirm" type="password" autocomplete="new-password" minlength="{{.MinPassword}}" required>
+      <p class="muted">{{.MinPassword}} 到 256 个字节，不能只由空格组成，也不能沿用初始密码。</p>
+      <button type="submit">下一步：绑定动态验证码</button>
+    </form>
+    <form method="post" action="/logout">
+      <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+      <button type="submit" class="secondary">先退出登录</button>
+    </form>
+  </main>
+</body>
+</html>

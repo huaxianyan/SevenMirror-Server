@@ -1,11 +1,12 @@
 # SevenMirror Server 管理端
 
-> 状态：设备任务优先的产品界面，用户名密码加 TOTP 登录，复用 UX-002 authority 管理闭环
+> 状态：设备任务优先的产品界面，内置默认账号加首次登录凭据设置，复用 UX-002 authority 管理闭环
 
 `admin-web` 是与公开 relay 分离的按需管理进程。它直接读取同一个 SQLite registry 和 authority key 目录：列表页面不需要私钥，批准、重命名和移除设备时由 `internal/adminservice` 读取对应 authority private key 并签发成员事实。它不会挂载到设备注册、Membership 或 WebSocket Handler，也不会读取通知业务密文。常驻 relay 容器不得挂载 authority key 目录。
 
 当前切片提供：
 
+- 内置默认账号加首次登录强制凭据设置，凭据入库并支持随时更换；
 - 用户名加密码加 TOTP 动态验证码；
 - 单次使用、十分钟有效的应急登录码；
 - 仅存内存、最长八小时的管理员会话；
@@ -20,7 +21,7 @@
 - 已接入设备的 authority-certified 名称变更；
 - 严格 Origin、CSRF、CSP、frame、按客户端地址的登录限速与管理操作限速边界。
 
-加入码、批准、拒绝、重命名和移除统一通过 `internal/adminservice` 实现。管理网页和 `cmd/admin` 不复制 authority key 加载、角色模板、事务或 roster 签名逻辑。名称是 authority-signed 全工作区权威事实，只能由 Server 管理端修改；Android 和 Chrome 只读展示，不建立本地别名。已批准设备重命名时，Server 在一个 SQLite transaction 中签发 replacement certificate、包含 exact `DeviceCertificateTransition` 的下一份 roster，并更新设备记录；任一步失败都不会留下部分生效的名称。页面提供设备、部署与维护、关于三个任务入口。设备详情使用原生可展开区域，窄屏不依赖七列宽表；批准／拒绝、重命名、移除和加入码仍提交到原有 POST 入口。当前界面先提供简体中文；英文资源与完整文案审校仍需在管理端发布验收前完成。
+加入码、批准、拒绝、重命名和移除统一通过 `internal/adminservice` 实现。管理网页和 `cmd/admin` 不复制 authority key 加载、角色模板、事务或 roster 签名逻辑。名称是 authority-signed 全工作区权威事实，只能由 Server 管理端修改；Android 和 Chrome 只读展示，不建立本地别名。已批准设备重命名时，Server 在一个 SQLite transaction 中签发 replacement certificate、包含 exact `DeviceCertificateTransition` 的下一份 roster，并更新设备记录；任一步失败都不会留下部分生效的名称。页面提供设备、凭据、部署与维护、关于四个任务入口。设备详情使用原生可展开区域，窄屏不依赖七列宽表；批准／拒绝、重命名、移除和加入码仍提交到原有 POST 入口。当前界面先提供简体中文；英文资源与完整文案审校仍需在管理端发布验收前完成。
 
 ## 启动
 
@@ -30,9 +31,6 @@
 NM_DATABASE_PATH=/var/lib/sevenmirror/syncnotifications.db \
 NM_ADMIN_ADDRESS=127.0.0.1:8081 \
 NM_ADMIN_ORIGIN=http://127.0.0.1:8081 \
-NM_ADMIN_USERNAME=operator \
-NM_ADMIN_PASSWORD_HASH='$scrypt$ln=15,r=8,p=1$<salt>$<digest>' \
-NM_ADMIN_TOTP_SECRET=<base32 密钥> \
 ./admin-web
 ```
 
@@ -48,21 +46,45 @@ admin_login_code=<应急登录码>
 
 ## 管理员凭据
 
-管理端只有一个账号，凭据完全来自环境变量。它不建立用户表，改密码或更换验证器仍需要与读取 authority key 相同的宿主访问权限。
+管理端只有一个账号，凭据保存在 registry 数据库的 `administrator_credentials` 单行表里。它不来自环境变量，也没有多账号：口令和动态验证码在管理网页里设置和更换。
 
-密码以 scrypt 的 PHC 串保存，代价参数随值一起传递，所以以后提高参数不会让已有凭据失效：
+### 首次登录
+
+数据库还没有凭据行时，管理端使用内置默认账号，并在登录页说明这是首次使用。默认账号名是 `admin`，默认口令是 `sevenmirror`。
+
+用默认账号登录后**只能**进入凭据设置：设备首页、管理操作和加入码都会跳回设置页。两步完成后凭据才写入数据库：
+
+1. 第一步设置账号名与新口令。账号名 1 到 64 字节，不含空格和控制字符；口令 12 到 256 字节，不能只由空格组成，也不能沿用默认口令；
+2. 第二步显示新生成的 TOTP 共享密钥和对应的 `otpauth://` 链接，输入验证器应用里显示的六位验证码确认；
+3. 确认成功后立刻可以管理设备，之后登录需要新账号名、新口令和当前动态验证码。
+
+**共享密钥只在第二步显示一次。** 没记下来就重走一次凭据设置，旧密钥随即失效。
+
+### 更换凭据
+
+登录后在首页的「凭据」区块点「重新设置凭据」，重走上面的两步即可同时更换账号名、口令和动态验证码密钥。更换成功后其他已经登录的管理会话立即失效。
+
+验证器丢失时先用启动时打印的应急登录码进入，再重设凭据。口令和验证器同时不可用时，删除数据库里的那一行即可回到默认账号，然后按首次登录流程重设：
+
+```sql
+DELETE FROM administrator_credentials;
+```
+
+### 存储与限速
+
+口令以 scrypt 的 PHC 串保存，每条凭据自带随机盐，代价参数随值一起传递，所以以后提高参数不会让已有凭据失效：
 
 ```text
 $scrypt$ln=15,r=8,p=1$<salt base64 无填充>$<digest base64 无填充>
 ```
 
-- `ln` 接受 10 到 20，`r` 接受 1 到 32，`p` 接受 1 到 8。超出范围的配置会被拒绝：一次登录请求不允许变成内存或时间上的拒绝服务。
-- 盐至少 16 字节，摘要至少 32 字节。
+- 写入时固定使用 `ln=15,r=8,p=1`、16 字节盐、32 字节摘要；解析时 `ln` 接受 10 到 20，`r` 接受 1 到 32，`p` 接受 1 到 8。超出范围的值会被拒绝：一次登录请求不允许变成内存或时间上的拒绝服务。
 - 口令比较是常量时间比较，失败时不区分是用户名、密码还是动态验证码错误。
+- 第二因子只在账号名和口令都匹配后才校验，所以打错口令不会消耗当前时间步、导致同一窗口内的正确重试被拒。
 
-TOTP 使用 RFC 6238 的 SHA1、六位、三十秒一步，接受前后各一步的时钟偏移，并记住已经接受过的最大时间步，因此同一个动态验证码无法重放。共享密钥是任意验证器都能录入的标准 base32。
+TOTP 使用 RFC 6238 的 SHA1、六位、三十秒一步，接受前后各一步的时钟偏移，并记住已经接受过的最大时间步，因此同一个动态验证码无法重放。确认凭据设置时用的那一个验证码也会被记入，不能紧接着当登录码再用一次。共享密钥是任意验证器都能录入的标准 base32。
 
-两个值推荐用 `sevenmirror-usage-ops` 技能里的 `admin-credentials.py` 生成（纯标准库，不依赖服务端环境）。
+登录限速 5 次/分钟；凭据设置与确认共有另一个 20 次/分钟的窗口，因此协商口令策略时的多次重试不会挤掉登录额度。两个窗口都按客户端地址计数，可信反代配置见「远程访问」。
 
 ## 配置
 
@@ -71,15 +93,12 @@ TOTP 使用 RFC 6238 的 SHA1、六位、三十秒一步，接受前后各一步
 | `NM_DATABASE_PATH` | `data/syncnotifications.db` | 与 Server 共用的 registry 路径 |
 | `NM_ADMIN_ADDRESS` | `127.0.0.1:8081` | 必须是明确的 loopback IP 和端口 |
 | `NM_ADMIN_ORIGIN` | `http://<NM_ADMIN_ADDRESS>` | 浏览器访问时的 exact origin |
-| `NM_ADMIN_USERNAME` | 无 | 管理员账号名，1 到 64 字节，不含空格与控制字符 |
-| `NM_ADMIN_PASSWORD_HASH` | 无 | scrypt 口令的 PHC 串 |
-| `NM_ADMIN_TOTP_SECRET` | 无 | TOTP 共享密钥，base32，至少 16 字节 |
 | `NM_ADMIN_RECOVERY_CODE` | `on` | 是否保留启动时打印的应急登录码，只接受 `on` 或 `off` |
 | `NM_ADMIN_TRUSTED_PROXY_CIDRS` | 空 | 可信反向代理的规范 CIDR 前缀，逗号分隔 |
 
 `NM_ADMIN_ADDRESS` 拒绝 `0.0.0.0`、`::`、主机名和非 loopback IP。HTTP origin 也必须是 loopback；非 loopback 管理 origin 必须使用 HTTPS。
 
-`NM_ADMIN_USERNAME`、`NM_ADMIN_PASSWORD_HASH` 与 `NM_ADMIN_TOTP_SECRET` 必须同时提供：缺任意一项进程直接退出，不会退回到较弱的登录方式。
+管理端**不再读取任何凭据环境变量**。设了 `NM_ADMIN_USERNAME`、`NM_ADMIN_PASSWORD_HASH` 或 `NM_ADMIN_TOTP_SECRET` 也不会改变行为，账号一律来自数据库或内置默认账号。
 
 ## 远程访问
 
@@ -111,6 +130,8 @@ NM_ADMIN_TRUSTED_PROXY_CIDRS=127.0.0.1/32
 - 页面显示的是采样后的最近活动，不表示严格实时在线。
 
 schema v9 新增 nullable `last_authenticated_at_ms` 和 `last_activity_at_ms`。升级前已经存在的设备会显示尚无记录，直到设备下一次成功连接；系统不会用注册时间伪造历史认证时间。
+
+schema v10 新增 `administrator_credentials` 单行表。v9 及更早的数据库升级后该表为空，所以管理端第一次启动会进入首次登录的凭据设置。
 
 ## 设备操作语义
 

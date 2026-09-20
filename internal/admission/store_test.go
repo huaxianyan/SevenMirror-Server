@@ -346,7 +346,8 @@ func TestPendingRegistrationRequiresExactIdentityProofBeforeApproval(t *testing.
 		`ALTER TABLE workspaces DROP COLUMN authority_transition_digest`,
 		`ALTER TABLE workspaces DROP COLUMN authority_epoch`,
 		`ALTER TABLE devices DROP COLUMN revoked_membership_epoch`,
-		`DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9)`,
+		`DROP TABLE administrator_credentials`,
+		`DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9, 10)`,
 	} {
 		if _, err := legacyDB.Exec(statement); err != nil {
 			legacyDB.Close()
@@ -911,7 +912,8 @@ func TestOpenMigratesSchemaVersionOneAndRevokesLegacyCredential(t *testing.T) {
 		t.Fatalf("migrated legacy state=%q revoked=%v error=%v", state, revoked, err)
 	}
 	var version int
-	if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil || version != 9 {
+	if err := store.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil ||
+		version != currentSchemaVersion {
 		t.Fatalf("schema version=%d error=%v", version, err)
 	}
 	if _, err := store.WorkspaceAuthorityPublicKey(context.Background(), workspaceID); !errors.Is(err, ErrWorkspaceAuthorityUnavailable) {
@@ -928,7 +930,8 @@ func TestOpenRejectsNewerSchemaVersion(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at_ms INTEGER NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (10, 0)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (?, 0)`,
+		currentSchemaVersion+1); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -981,7 +984,8 @@ func TestSchemaVersionEightRevokesLegacyDeviceAndDeletesRotationCode(t *testing.
 		`DROP TRIGGER reject_legacy_device_update`,
 		`DROP TRIGGER reject_legacy_device_insert`,
 		`UPDATE devices SET membership_state = 'legacy_active'`,
-		`DELETE FROM schema_migrations WHERE version IN (8, 9)`,
+		`DROP TABLE administrator_credentials`,
+		`DELETE FROM schema_migrations WHERE version IN (8, 9, 10)`,
 	} {
 		if _, err := versionSeven.Exec(statement); err != nil {
 			versionSeven.Close()
@@ -1035,6 +1039,115 @@ func TestCreateWorkspaceRejectsZeroAuthorityPublicKey(t *testing.T) {
 	store := openTestStore(t, tempDatabasePath(t))
 	if _, err := store.CreateWorkspace(context.Background(), membership.AuthorityPublicKey{}, time.Now()); err == nil {
 		t.Fatal("zero workspace authority public key unexpectedly accepted")
+	}
+}
+
+func TestAdministratorCredentialRoundTripsThroughTheRegistry(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, tempDatabasePath(t))
+	if _, found, err := store.LoadAdministrator(ctx); err != nil || found {
+		t.Fatalf("a fresh registry reported found=%v error=%v", found, err)
+	}
+	credential := AdministratorCredential{
+		Name: "neko7ina", PasswordHash: "$scrypt$ln=15,r=8,p=1$c2FsdA$ZGlnZXN0",
+		TOTPSecret: "JBSWY3DPEHPK3PXP", UpdatedAt: time.UnixMilli(1_800_000_000_000),
+	}
+	if err := store.SaveAdministrator(ctx, credential); err != nil {
+		t.Fatal(err)
+	}
+	loaded, found, err := store.LoadAdministrator(ctx)
+	if err != nil || !found || loaded.Name != credential.Name ||
+		loaded.PasswordHash != credential.PasswordHash ||
+		loaded.TOTPSecret != credential.TOTPSecret ||
+		!loaded.UpdatedAt.Equal(credential.UpdatedAt) {
+		t.Fatalf("loaded=%+v found=%v error=%v", loaded, found, err)
+	}
+
+	// The registry holds exactly one console account: a second write replaces it.
+	credential.Name = "operator"
+	credential.UpdatedAt = credential.UpdatedAt.Add(time.Hour)
+	if err := store.SaveAdministrator(ctx, credential); err != nil {
+		t.Fatal(err)
+	}
+	var rows int
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM administrator_credentials`).Scan(&rows); err != nil ||
+		rows != 1 {
+		t.Fatalf("rows=%d error=%v", rows, err)
+	}
+	loaded, _, err = store.LoadAdministrator(ctx)
+	if err != nil || loaded.Name != "operator" || !loaded.UpdatedAt.Equal(credential.UpdatedAt) {
+		t.Fatalf("replaced row=%+v error=%v", loaded, err)
+	}
+}
+
+func TestSaveAdministratorRejectsIncompleteCredentials(t *testing.T) {
+	store := openTestStore(t, tempDatabasePath(t))
+	valid := AdministratorCredential{
+		Name: "operator", PasswordHash: "$scrypt$ln=15,r=8,p=1$c2FsdA$ZGlnZXN0",
+		TOTPSecret: "JBSWY3DPEHPK3PXP", UpdatedAt: time.UnixMilli(1_800_000_000_000),
+	}
+	for name, credential := range map[string]AdministratorCredential{
+		"no name":   {PasswordHash: valid.PasswordHash, TOTPSecret: valid.TOTPSecret},
+		"no hash":   {Name: valid.Name, TOTPSecret: valid.TOTPSecret},
+		"no secret": {Name: valid.Name, PasswordHash: valid.PasswordHash},
+		"long name": {
+			Name:         strings.Repeat("a", maxAdministratorNameBytes+1),
+			PasswordHash: valid.PasswordHash, TOTPSecret: valid.TOTPSecret,
+		},
+	} {
+		if err := store.SaveAdministrator(context.Background(), credential); err == nil {
+			t.Fatalf("SaveAdministrator accepted a credential with %s", name)
+		}
+	}
+}
+
+// A registry written before the console stored credentials has to gain the table
+// without touching anything else.
+func TestSchemaVersionTenAddsTheConsoleAccountTable(t *testing.T) {
+	ctx := context.Background()
+	path := tempDatabasePath(t)
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	nine, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`DROP TABLE administrator_credentials`,
+		`DELETE FROM schema_migrations WHERE version = 10`,
+	} {
+		if _, err := nine.Exec(statement); err != nil {
+			nine.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := nine.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var version int
+	if err := migrated.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil ||
+		version != currentSchemaVersion {
+		t.Fatalf("schema version=%d error=%v", version, err)
+	}
+	if _, found, err := migrated.LoadAdministrator(ctx); err != nil || found {
+		t.Fatalf("migrated registry reported found=%v error=%v", found, err)
+	}
+	if err := migrated.SaveAdministrator(ctx, AdministratorCredential{
+		Name: "operator", PasswordHash: "$scrypt$ln=15,r=8,p=1$c2FsdA$ZGlnZXN0",
+		TOTPSecret: "JBSWY3DPEHPK3PXP", UpdatedAt: time.UnixMilli(1_800_000_000_000),
+	}); err != nil {
+		t.Fatalf("write to the migrated table: %v", err)
 	}
 }
 

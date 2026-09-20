@@ -34,8 +34,19 @@ const (
 	maxMembershipRosterPage    = 256
 	maxMembershipRosterPageRaw = 1 << 20
 	maxAuthorityTransitions    = 256
-	currentSchemaVersion       = 9
+	maxAdministratorNameBytes  = 64
+	currentSchemaVersion       = 10
 )
+
+// AdministratorCredential is the single console account. The password travels as
+// the encoded scrypt PHC string, so the salt and the cost parameters stay part of
+// the stored value instead of columns that could drift apart.
+type AdministratorCredential struct {
+	Name         string
+	PasswordHash string
+	TOTPSecret   string
+	UpdatedAt    time.Time
+}
 
 var (
 	ErrInvalidPairingCode            = errors.New("invalid or expired pairing code")
@@ -1611,6 +1622,9 @@ func (s *Store) initialize(ctx context.Context) error {
 	if version == currentSchemaVersion {
 		return nil
 	}
+	if version == 9 {
+		return s.applySchemaVersion10(ctx)
+	}
 	if version == 8 {
 		return s.applySchemaVersion9(ctx)
 	}
@@ -2079,6 +2093,92 @@ func (s *Store) applySchemaVersion9(ctx context.Context) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit schema version 9: %w", err)
+	}
+	return s.applySchemaVersion10(ctx)
+}
+
+// applySchemaVersion10 adds the console account table. Version 9 databases are
+// the ones deployed before the console stored credentials, so the table starts
+// empty and the console offers its default account until an administrator
+// replaces it during the first sign-in.
+func (s *Store) applySchemaVersion10(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin schema version 10: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE administrator_credentials (
+		id INTEGER PRIMARY KEY CHECK(id = 1),
+		name TEXT NOT NULL CHECK(length(name) BETWEEN 1 AND 64),
+		password_hash TEXT NOT NULL CHECK(length(password_hash) BETWEEN 1 AND 512),
+		totp_secret TEXT NOT NULL CHECK(length(totp_secret) BETWEEN 1 AND 128),
+		updated_at_ms INTEGER NOT NULL
+	) STRICT`); err != nil {
+		return fmt.Errorf("apply schema version 10: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (10, ?)`,
+		time.Now().UnixMilli()); err != nil {
+		return fmt.Errorf("record schema version 10: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema version 10: %w", err)
+	}
+	return nil
+}
+
+// LoadAdministrator returns the stored console account. A missing row reports
+// false instead of an error, because the console falls back to its built-in
+// default account until an administrator replaces it during the first sign-in.
+func (s *Store) LoadAdministrator(ctx context.Context) (AdministratorCredential, bool, error) {
+	var (
+		credential  AdministratorCredential
+		updatedAtMS int64
+	)
+	err := s.db.QueryRowContext(ctx, `SELECT name, password_hash, totp_secret, updated_at_ms
+		FROM administrator_credentials WHERE id = 1`).Scan(
+		&credential.Name, &credential.PasswordHash, &credential.TOTPSecret, &updatedAtMS)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AdministratorCredential{}, false, nil
+	}
+	if err != nil {
+		return AdministratorCredential{}, false, fmt.Errorf("load administrator credential: %w", err)
+	}
+	credential.UpdatedAt = time.UnixMilli(updatedAtMS)
+	return credential, true, nil
+}
+
+// SaveAdministrator writes the console account. The row identifier is fixed at
+// one, so a replacement is an upsert rather than a second code path.
+func (s *Store) SaveAdministrator(ctx context.Context, credential AdministratorCredential) error {
+	if err := validateAdministratorCredential(credential); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO administrator_credentials
+		(id, name, password_hash, totp_secret, updated_at_ms)
+		VALUES (1, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			name = excluded.name,
+			password_hash = excluded.password_hash,
+			totp_secret = excluded.totp_secret,
+			updated_at_ms = excluded.updated_at_ms`,
+		credential.Name, credential.PasswordHash, credential.TOTPSecret,
+		unixMillis(credential.UpdatedAt))
+	if err != nil {
+		return fmt.Errorf("save administrator credential: %w", err)
+	}
+	return nil
+}
+
+func validateAdministratorCredential(credential AdministratorCredential) error {
+	if len(credential.Name) == 0 || len(credential.Name) > maxAdministratorNameBytes {
+		return errors.New("administrator name must be 1 through 64 bytes")
+	}
+	if len(credential.PasswordHash) == 0 || len(credential.PasswordHash) > 512 {
+		return errors.New("administrator password hash must be 1 through 512 bytes")
+	}
+	if len(credential.TOTPSecret) == 0 || len(credential.TOTPSecret) > 128 {
+		return errors.New("administrator TOTP secret must be 1 through 128 bytes")
 	}
 	return nil
 }

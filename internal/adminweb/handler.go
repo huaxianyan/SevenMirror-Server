@@ -31,7 +31,15 @@ const (
 	sessionLifetime       = 8 * time.Hour
 	maxFormBody           = 4096
 	recoveryCodeFormField = "recovery_code"
+
+	setupPath       = "/setup"
+	setupFactorPath = "/setup/totp"
 )
+
+// setupPendingLifetime bounds how long a half-finished credential change stays
+// usable. The pending state lives in the session, so a restart of the console
+// simply asks the administrator to start the setup over.
+const setupPendingLifetime = 10 * time.Minute
 
 //go:embed templates/*.html assets/*.css
 var files embed.FS
@@ -46,7 +54,6 @@ type Manager interface {
 }
 
 type HandlerConfig struct {
-	Account           Account
 	RecoveryCode      []byte
 	ExpectedOrigin    string
 	TrustedProxyCIDRs []netip.Prefix
@@ -56,30 +63,45 @@ type HandlerConfig struct {
 
 type Handler struct {
 	manager           Manager
+	accounts          AccountStore
 	expectedOrigin    string
 	expectedHost      string
 	secureCookies     bool
 	now               func() time.Time
 	random            io.Reader
 	workspaceRefKey   [sha256.Size]byte
-	account           Account
-	secondFactor      *totpVerifier
 	recoveryDigest    [sha256.Size]byte
 	recoveryExpiresAt time.Time
 	clientAddresses   clientaddress.Resolver
 	loginAttempts     *ratelimit.FixedWindow
+	setupAttempts     *ratelimit.FixedWindow
 	managementActions *ratelimit.FixedWindow
 	templates         *template.Template
 
 	mu           sync.Mutex
+	account      account
 	recoveryUsed bool
 	sessions     map[[sha256.Size]byte]session
 }
 
 type session struct {
-	csrfToken string
-	expiresAt time.Time
-	flash     *flashMessage
+	csrfToken      string
+	expiresAt      time.Time
+	flash          *flashMessage
+	mustInitialize bool
+	pending        *pendingSetup
+}
+
+// pendingSetup is a credential change whose password and TOTP secret are already
+// decided but not yet stored: it waits for one correct code from the new
+// authenticator entry. The password travels hashed, so the plaintext is never held
+// beyond the request that submitted it.
+type pendingSetup struct {
+	name         string
+	passwordHash string
+	secret       []byte
+	secondFactor *totpVerifier
+	expiresAt    time.Time
 }
 
 type flashMessage struct {
@@ -88,10 +110,38 @@ type flashMessage struct {
 	Secret  string
 }
 
+type loginView struct {
+	FirstRun bool
+	Error    string
+}
+
+type setupFormView struct {
+	CSRFToken   string
+	Name        string
+	MinPassword int
+	FirstRun    bool
+	Error       string
+}
+
+// setupFactorView carries the freshly generated shared secret. It is rendered
+// exactly once, in the response to the step that created it: the secret is not
+// readable again after this page, so a lost authenticator entry is replaced by
+// running the setup again rather than by looking the secret up.
+type setupFactorView struct {
+	CSRFToken string
+	Name      string
+	Secret    string
+	URI       string
+	FirstRun  bool
+	Error     string
+}
+
 type dashboardView struct {
-	CSRFToken  string
-	Flash      *flashMessage
-	Workspaces []workspaceView
+	CSRFToken      string
+	Flash          *flashMessage
+	AccountName    string
+	AccountUpdated string
+	Workspaces     []workspaceView
 }
 
 type workspaceView struct {
@@ -123,11 +173,20 @@ type deviceView struct {
 	CanRemove         bool
 }
 
-func NewHandler(manager Manager, config HandlerConfig) (http.Handler, error) {
-	if manager == nil || len(config.Account.Name) == 0 ||
-		len(config.Account.PasswordHash.digest) == 0 || len(config.Account.TOTPSecret) == 0 {
-		return nil, errors.New(
-			"admin manager, account name, password hash and TOTP secret are required")
+func NewHandler(manager Manager, accounts AccountStore, config HandlerConfig) (http.Handler, error) {
+	if manager == nil || accounts == nil {
+		return nil, errors.New("admin manager and account store are required")
+	}
+	credential, found, err := accounts.LoadAdministrator(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	current := defaultAccount()
+	if found {
+		current, err = accountFromCredential(credential)
+		if err != nil {
+			return nil, err
+		}
 	}
 	origin, err := url.Parse(config.ExpectedOrigin)
 	if err != nil || (origin.Scheme != "http" && origin.Scheme != "https") ||
@@ -147,6 +206,14 @@ func NewHandler(manager Manager, config HandlerConfig) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The credential setup has its own, looser window. It is already behind a signed
+	// in session, and negotiating a password policy is the one flow where a person
+	// legitimately submits several times in a row: sharing the five-per-minute login
+	// bucket with it would lock the administrator out of their own first sign-in.
+	setupAttempts, err := ratelimit.NewFixedWindow(20, 128, time.Minute)
+	if err != nil {
+		return nil, err
+	}
 	managementActions, err := ratelimit.NewFixedWindow(30, 128, time.Minute)
 	if err != nil {
 		return nil, err
@@ -156,14 +223,16 @@ func NewHandler(manager Manager, config HandlerConfig) (http.Handler, error) {
 		return nil, err
 	}
 	handler := &Handler{
-		manager: manager, expectedOrigin: origin.String(), expectedHost: origin.Host,
+		manager: manager, accounts: accounts,
+		expectedOrigin: origin.String(), expectedHost: origin.Host,
 		secureCookies: origin.Scheme == "https", now: now, random: random,
-		account: config.Account, secondFactor: newTOTPVerifier(config.Account.TOTPSecret),
+		account:           current,
 		recoveryDigest:    sha256.Sum256(config.RecoveryCode),
 		recoveryExpiresAt: now().Add(recoveryCodeLifetime),
 		recoveryUsed:      len(config.RecoveryCode) == 0,
 		clientAddresses:   clientaddress.New(config.TrustedProxyCIDRs),
 		loginAttempts:     loginAttempts,
+		setupAttempts:     setupAttempts,
 		managementActions: managementActions,
 		templates:         templates,
 		sessions:          make(map[[sha256.Size]byte]session),
@@ -174,6 +243,8 @@ func NewHandler(manager Manager, config HandlerConfig) (http.Handler, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/login", handler.login)
 	mux.HandleFunc("/logout", handler.logout)
+	mux.HandleFunc(setupFactorPath, handler.setupSecondFactor)
+	mux.HandleFunc(setupPath, handler.setupCredential)
 	mux.HandleFunc("/actions/pairing-code", handler.issuePairingCode)
 	mux.HandleFunc("/actions/approve", handler.approveDevice)
 	mux.HandleFunc("/actions/reject", handler.rejectDevice)
@@ -190,11 +261,11 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
-		if _, _, ok := h.currentSession(r); ok {
-			http.Redirect(w, r, "/", http.StatusSeeOther)
+		if current, _, ok := h.currentSession(r); ok {
+			http.Redirect(w, r, landingPath(current), http.StatusSeeOther)
 			return
 		}
-		h.render(w, "login.html", nil)
+		h.render(w, "login.html", h.loginView(""))
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -206,9 +277,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "request rejected", http.StatusForbidden)
 		return
 	}
-	if !h.loginAttempts.Allow(h.clientAddress(r), h.now()) {
-		w.Header().Set("Retry-After", "60")
-		http.Error(w, "too many attempts", http.StatusTooManyRequests)
+	if !h.allowAttempts(h.loginAttempts, w, r) {
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
@@ -232,10 +301,21 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	}
 	digest := sha256.Sum256([]byte(rawSession))
 	h.mu.Lock()
-	h.sessions[digest] = session{csrfToken: csrfToken, expiresAt: h.now().Add(sessionLifetime)}
+	mustInitialize := !h.account.initialized
+	h.sessions[digest] = session{
+		csrfToken: csrfToken, expiresAt: h.now().Add(sessionLifetime),
+		mustInitialize: mustInitialize,
+	}
 	h.mu.Unlock()
 	h.setSessionCookie(w, rawSession, int(sessionLifetime.Seconds()))
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, landingPath(session{mustInitialize: mustInitialize}), http.StatusSeeOther)
+}
+
+func landingPath(current session) string {
+	if current.mustInitialize {
+		return setupPath
+	}
+	return "/"
 }
 
 // authenticate evaluates the account name and the password verifier before the
@@ -250,13 +330,27 @@ func (h *Handler) authenticate(r *http.Request) bool {
 	if candidate := strings.TrimSpace(r.PostForm.Get(recoveryCodeFormField)); candidate != "" {
 		return h.consumeRecoveryCode(candidate)
 	}
-	nameMatched := constantTimeEquals(
-		strings.TrimSpace(r.PostForm.Get("username")), h.account.Name)
-	passwordMatched := h.account.PasswordHash.matches(r.PostForm.Get("password"))
+	current := h.currentAccount()
+	nameMatched := current.nameMatches(strings.TrimSpace(r.PostForm.Get("username")))
+	passwordMatched := current.passwordMatches(r.PostForm.Get("password"))
 	if !nameMatched || !passwordMatched {
 		return false
 	}
-	return h.secondFactor.verify(r.PostForm.Get("totp_code"), h.now())
+	if !current.initialized {
+		return true
+	}
+	return current.secondFactor.verify(r.PostForm.Get("totp_code"), h.now())
+}
+
+func (h *Handler) currentAccount() account {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.account
+}
+
+func (h *Handler) loginView(message string) loginView {
+	current := h.currentAccount()
+	return loginView{FirstRun: !current.initialized, Error: message}
 }
 
 // consumeRecoveryCode accepts the one-time code printed when the process starts.
@@ -285,8 +379,184 @@ func (h *Handler) clientAddress(r *http.Request) string {
 	return address
 }
 
+// allowAttempts spends one attempt from the given window for the calling client,
+// answering with 429 when the window is exhausted.
+func (h *Handler) allowAttempts(limited *ratelimit.FixedWindow, w http.ResponseWriter, r *http.Request) bool {
+	if limited.Allow(h.clientAddress(r), h.now()) {
+		return true
+	}
+	w.Header().Set("Retry-After", "60")
+	http.Error(w, "too many attempts", http.StatusTooManyRequests)
+	return false
+}
+
+// setupCredential renders and accepts the first half of a credential change: the
+// account name, the new password and the binding of an authenticator. The shared
+// secret is generated here so the second step can show it before anything is
+// stored, which is what makes the confirmation meaningful.
+func (h *Handler) setupCredential(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != setupPath {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method == http.MethodGet {
+		current, _, ok := h.currentSession(r)
+		if !ok {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		h.render(w, "setup.html", setupFormView{
+			CSRFToken: current.csrfToken, Name: h.currentAccount().name,
+			MinPassword: minPasswordBytes, FirstRun: current.mustInitialize,
+		})
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "GET, POST")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	current, digest, ok := h.authorizeSessionPost(w, r)
+	if !ok {
+		return
+	}
+	if !h.allowAttempts(h.setupAttempts, w, r) {
+		return
+	}
+	name := strings.TrimSpace(r.PostForm.Get("username"))
+	password := r.PostForm.Get("password")
+	fail := func(message string) {
+		h.renderStatus(w, http.StatusBadRequest, "setup.html", setupFormView{
+			CSRFToken: current.csrfToken, Name: name,
+			MinPassword: minPasswordBytes, FirstRun: current.mustInitialize, Error: message,
+		})
+	}
+	if err := validateAccountName(name); err != nil {
+		fail(err.Error())
+		return
+	}
+	if r.PostForm.Get("password_confirm") != password {
+		fail("两次输入的新密码不一致。")
+		return
+	}
+	if err := validateNewPassword(password); err != nil {
+		fail(err.Error())
+		return
+	}
+	encoded, err := hashPassword(password)
+	if err != nil {
+		http.Error(w, "unable to prepare the credential", http.StatusInternalServerError)
+		return
+	}
+	secret, err := generateTOTPSecret()
+	if err != nil {
+		http.Error(w, "unable to generate the authenticator secret", http.StatusInternalServerError)
+		return
+	}
+	pending := &pendingSetup{
+		name: name, passwordHash: encoded, secret: secret,
+		secondFactor: newTOTPVerifier(secret),
+		expiresAt:    h.now().Add(setupPendingLifetime),
+	}
+	h.mu.Lock()
+	stored, found := h.sessions[digest]
+	if found {
+		stored.pending = pending
+		h.sessions[digest] = stored
+	}
+	h.mu.Unlock()
+	if !found {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	h.renderFactor(w, http.StatusOK, current, pending, "")
+}
+
+// setupSecondFactor accepts the one code that proves the authenticator entry was
+// created correctly, and only then writes the credential.
+func (h *Handler) setupSecondFactor(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != setupFactorPath {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	current, digest, ok := h.authorizeSessionPost(w, r)
+	if !ok {
+		return
+	}
+	if !h.allowAttempts(h.setupAttempts, w, r) {
+		return
+	}
+	h.mu.Lock()
+	stored, found := h.sessions[digest]
+	pending := stored.pending
+	h.mu.Unlock()
+	if !found || pending == nil || !h.now().Before(pending.expiresAt) {
+		http.Redirect(w, r, setupPath, http.StatusSeeOther)
+		return
+	}
+	if !pending.secondFactor.verify(r.PostForm.Get("totp_code"), h.now()) {
+		h.renderFactor(w, http.StatusUnauthorized, current, pending,
+			"动态验证码不正确。请确认验证器应用里的密钥与上一步显示的一致，并检查设备时间。")
+		return
+	}
+	credential := admission.AdministratorCredential{
+		Name: pending.name, PasswordHash: pending.passwordHash,
+		TOTPSecret: encodeTOTPSecret(pending.secret), UpdatedAt: h.now(),
+	}
+	if err := h.accounts.SaveAdministrator(r.Context(), credential); err != nil {
+		http.Error(w, "unable to store the administrator credential", http.StatusInternalServerError)
+		return
+	}
+	updated, err := accountFromCredential(credential)
+	if err != nil {
+		http.Error(w, "unable to read back the stored credential", http.StatusInternalServerError)
+		return
+	}
+	// Adopt the verifier that accepted the confirmation code, so the same code
+	// cannot be replayed as a login inside its thirty second window.
+	updated.secondFactor = pending.secondFactor
+	h.mu.Lock()
+	h.account = updated
+	// Replacing the credentials ends every other management session and clears the
+	// half-finished state from this one.
+	for key := range h.sessions {
+		if key != digest {
+			delete(h.sessions, key)
+		}
+	}
+	stored.pending = nil
+	stored.mustInitialize = false
+	stored.flash = &flashMessage{
+		Kind:    "success",
+		Message: "凭据已更新。下次登录请使用新的用户名、密码和动态验证码。",
+	}
+	h.sessions[digest] = stored
+	h.mu.Unlock()
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (h *Handler) renderFactor(
+	w http.ResponseWriter,
+	status int,
+	current session,
+	pending *pendingSetup,
+	message string,
+) {
+	encoded := encodeTOTPSecret(pending.secret)
+	h.renderStatus(w, status, "setup_factor.html", setupFactorView{
+		CSRFToken: current.csrfToken, Name: pending.name,
+		Secret: formatTOTPSecret(encoded), URI: totpProvisioningURI(pending.name, encoded),
+		FirstRun: current.mustInitialize, Error: message,
+	})
+}
+
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
-	_, digest, ok := h.authorizeManagementPost(w, r)
+	_, digest, ok := h.authorizeSessionPost(w, r)
 	if !ok {
 		return
 	}
@@ -434,7 +704,15 @@ func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
-	view := dashboardView{CSRFToken: current.csrfToken, Flash: h.takeFlash(digest)}
+	if current.mustInitialize {
+		http.Redirect(w, r, setupPath, http.StatusSeeOther)
+		return
+	}
+	accountState := h.currentAccount()
+	view := dashboardView{
+		CSRFToken: current.csrfToken, Flash: h.takeFlash(digest),
+		AccountName: accountState.name, AccountUpdated: formatTime(accountState.updatedAt),
+	}
 	workspaces, err := h.manager.ListWorkspaces(r.Context())
 	if err != nil {
 		http.Error(w, "unable to load the private space", http.StatusInternalServerError)
@@ -494,7 +772,11 @@ func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
 	h.render(w, "dashboard.html", view)
 }
 
-func (h *Handler) authorizeManagementPost(
+// authorizeSessionPost validates a signed-in POST: method, session, origin and
+// CSRF token. It deliberately does not require the credentials to be initialized,
+// because replacing the default credentials and signing out both have to work from
+// a session that still is not.
+func (h *Handler) authorizeSessionPost(
 	w http.ResponseWriter,
 	r *http.Request,
 ) (session, [sha256.Size]byte, bool) {
@@ -508,16 +790,31 @@ func (h *Handler) authorizeManagementPost(
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return session{}, [sha256.Size]byte{}, false
 	}
-	if !h.managementActions.Allow(base64.RawURLEncoding.EncodeToString(digest[:]), h.now()) {
-		w.Header().Set("Retry-After", "60")
-		http.Error(w, "too many actions", http.StatusTooManyRequests)
-		return session{}, [sha256.Size]byte{}, false
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBody)
 	if err := r.ParseForm(); err != nil || !h.validOrigin(r) ||
 		subtle.ConstantTimeCompare([]byte(r.PostForm.Get("csrf_token")),
 			[]byte(current.csrfToken)) != 1 {
 		http.Error(w, "request rejected", http.StatusForbidden)
+		return session{}, [sha256.Size]byte{}, false
+	}
+	return current, digest, true
+}
+
+func (h *Handler) authorizeManagementPost(
+	w http.ResponseWriter,
+	r *http.Request,
+) (session, [sha256.Size]byte, bool) {
+	current, digest, ok := h.authorizeSessionPost(w, r)
+	if !ok {
+		return session{}, [sha256.Size]byte{}, false
+	}
+	if current.mustInitialize {
+		http.Redirect(w, r, setupPath, http.StatusSeeOther)
+		return session{}, [sha256.Size]byte{}, false
+	}
+	if !h.managementActions.Allow(base64.RawURLEncoding.EncodeToString(digest[:]), h.now()) {
+		w.Header().Set("Retry-After", "60")
+		http.Error(w, "too many actions", http.StatusTooManyRequests)
 		return session{}, [sha256.Size]byte{}, false
 	}
 	return current, digest, true
@@ -654,9 +951,12 @@ func (h *Handler) currentSession(r *http.Request) (session, [sha256.Size]byte, b
 }
 
 func (h *Handler) renderLoginFailure(w http.ResponseWriter) {
-	h.renderStatus(w, http.StatusUnauthorized, "login.html", map[string]string{
-		"Error": "用户名、密码或动态验证码不正确。应急登录码只在下发后的十分钟内可用，且只能使用一次。",
-	})
+	message := "用户名、密码或动态验证码不正确。应急登录码只在下发后的十分钟内可用，且只能使用一次。"
+	if !h.currentAccount().initialized {
+		message = "初始账号或密码不正确。首次使用请按部署说明用初始账号登录，" +
+			"登录后必须立即设置新口令并绑定动态验证码。"
+	}
+	h.renderStatus(w, http.StatusUnauthorized, "login.html", h.loginView(message))
 }
 
 func (h *Handler) render(w http.ResponseWriter, name string, data any) {

@@ -72,9 +72,6 @@ services:
       NM_AUTHORITY_KEY_DIR: "/authority"
       NM_ADMIN_ADDRESS: ${SEVENMIRROR_ADMIN_ADDRESS:?Set a loopback address and port}
       NM_ADMIN_ORIGIN: ${SEVENMIRROR_ADMIN_ORIGIN:?Set the exact browser-facing origin}
-      NM_ADMIN_USERNAME: ${SEVENMIRROR_ADMIN_USERNAME:?Set the administrator account name}
-      NM_ADMIN_PASSWORD_HASH: ${SEVENMIRROR_ADMIN_PASSWORD_HASH:?Set the scrypt password hash}
-      NM_ADMIN_TOTP_SECRET: ${SEVENMIRROR_ADMIN_TOTP_SECRET:?Set the TOTP shared secret}
       NM_ADMIN_RECOVERY_CODE: ${SEVENMIRROR_ADMIN_RECOVERY_CODE:-on}
       NM_ADMIN_TRUSTED_PROXY_CIDRS: ${SEVENMIRROR_ADMIN_TRUSTED_PROXY_CIDRS:-}
     volumes:

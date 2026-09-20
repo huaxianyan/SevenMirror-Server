@@ -52,16 +52,28 @@ func main() {
 		recoveryCode = []byte(base64.RawURLEncoding.EncodeToString(generated))
 		clear(generated)
 	}
-	handler, err := adminweb.NewHandler(management, adminweb.HandlerConfig{
-		Account: config.Account, RecoveryCode: recoveryCode,
-		ExpectedOrigin: config.ExpectedOrigin, TrustedProxyCIDRs: config.TrustedProxyCIDRs,
+	_, credentialStored, err := store.LoadAdministrator(context.Background())
+	if err != nil {
+		logger.Error("read the administrator credential", "error", err)
+		os.Exit(1)
+	}
+	handler, err := adminweb.NewHandler(management, store, adminweb.HandlerConfig{
+		RecoveryCode: recoveryCode, ExpectedOrigin: config.ExpectedOrigin,
+		TrustedProxyCIDRs: config.TrustedProxyCIDRs,
 	})
 	if err != nil {
 		logger.Error("configure admin handler", "error", err)
 		os.Exit(1)
 	}
+	// The one-time code and the note about the built-in default account go to stdout
+	// rather than the structured log: both are operator instructions for the next
+	// sign-in, not events to aggregate.
 	if config.RecoveryCodeEnabled {
 		fmt.Printf("admin_login_code=%s\n", recoveryCode)
+	}
+	if !credentialStored {
+		fmt.Printf("admin_console_uninitialized=true default_account=%s\n",
+			adminweb.DefaultAdministratorName)
 	}
 	clear(recoveryCode)
 
@@ -74,7 +86,8 @@ func main() {
 	defer stop()
 	go func() {
 		logger.Info("admin server listening", "address", config.Address,
-			"expected_origin", config.ExpectedOrigin, "account", config.Account.Name,
+			"expected_origin", config.ExpectedOrigin,
+			"credential_initialized", credentialStored,
 			"recovery_code_enabled", config.RecoveryCodeEnabled)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("admin server stopped unexpectedly", "error", err)
