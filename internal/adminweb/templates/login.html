@@ -10,13 +10,26 @@
   <main class="login-card">
     <p class="eyebrow">SevenMirror</p>
     <h1>管理私有空间</h1>
-    <p class="muted">输入管理端启动时在终端显示的一次性登录码。</p>
+    <p class="muted">用管理员账号登录，动态验证码取自你的验证器应用。</p>
     {{with .Error}}<p class="error" role="alert">{{.}}</p>{{end}}
     <form method="post" action="/login">
-      <label for="login-code">一次性登录码</label>
-      <input id="login-code" name="login_code" type="password" autocomplete="one-time-code" required autofocus>
+      <label for="admin-username">用户名</label>
+      <input id="admin-username" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+      <label for="admin-password">密码</label>
+      <input id="admin-password" name="password" type="password" autocomplete="current-password" required>
+      <label for="admin-totp">动态验证码</label>
+      <input id="admin-totp" name="totp_code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
       <button type="submit">登录</button>
     </form>
+    <details class="recovery">
+      <summary>改用应急登录码</summary>
+      <form method="post" action="/login">
+        <label for="admin-recovery">应急登录码</label>
+        <input id="admin-recovery" name="recovery_code" type="password" autocomplete="off" required>
+        <p class="muted">应急登录码只在管理端本次启动后的十分钟内可用，且只能使用一次。填了它就只校验它，不需要密码和动态验证码。</p>
+        <button type="submit" class="secondary">用应急登录码登录</button>
+      </form>
+    </details>
   </main>
 </body>
 </html>

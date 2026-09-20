@@ -42,24 +42,28 @@ func main() {
 		os.Exit(1)
 	}
 
-	loginCode := make([]byte, 32)
-	if _, err := rand.Read(loginCode); err != nil {
-		logger.Error("generate admin login code", "error", err)
-		os.Exit(1)
+	var recoveryCode []byte
+	if config.RecoveryCodeEnabled {
+		generated := make([]byte, 32)
+		if _, err := rand.Read(generated); err != nil {
+			logger.Error("generate admin recovery code", "error", err)
+			os.Exit(1)
+		}
+		recoveryCode = []byte(base64.RawURLEncoding.EncodeToString(generated))
+		clear(generated)
 	}
-	encodedLoginCode := base64.RawURLEncoding.EncodeToString(loginCode)
-	clear(loginCode)
-	encodedLoginCodeBytes := []byte(encodedLoginCode)
 	handler, err := adminweb.NewHandler(management, adminweb.HandlerConfig{
-		LoginCode: encodedLoginCodeBytes, ExpectedOrigin: config.ExpectedOrigin,
+		Account: config.Account, RecoveryCode: recoveryCode,
+		ExpectedOrigin: config.ExpectedOrigin, TrustedProxyCIDRs: config.TrustedProxyCIDRs,
 	})
-	clear(encodedLoginCodeBytes)
 	if err != nil {
 		logger.Error("configure admin handler", "error", err)
 		os.Exit(1)
 	}
-	fmt.Printf("admin_login_code=%s\n", encodedLoginCode)
-	encodedLoginCode = ""
+	if config.RecoveryCodeEnabled {
+		fmt.Printf("admin_login_code=%s\n", recoveryCode)
+	}
+	clear(recoveryCode)
 
 	server := &http.Server{
 		Addr: config.Address, Handler: handler,
@@ -70,7 +74,8 @@ func main() {
 	defer stop()
 	go func() {
 		logger.Info("admin server listening", "address", config.Address,
-			"expected_origin", config.ExpectedOrigin)
+			"expected_origin", config.ExpectedOrigin, "account", config.Account.Name,
+			"recovery_code_enabled", config.RecoveryCodeEnabled)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("admin server stopped unexpectedly", "error", err)
 			stop()

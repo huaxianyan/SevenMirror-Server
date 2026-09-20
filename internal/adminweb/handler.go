@@ -11,23 +11,26 @@ import (
 	"errors"
 	"html/template"
 	"io"
-	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/huaxianyan/SyncNotifications-Server/internal/adminservice"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/admission"
+	"github.com/huaxianyan/SyncNotifications-Server/internal/clientaddress"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/ratelimit"
 )
 
 const (
-	sessionCookieName = "sevenmirror_admin_session"
-	loginCodeLifetime = 10 * time.Minute
-	sessionLifetime   = time.Hour
-	maxFormBody       = 4096
+	sessionCookieName     = "sevenmirror_admin_session"
+	recoveryCodeLifetime  = 10 * time.Minute
+	sessionLifetime       = 8 * time.Hour
+	maxFormBody           = 4096
+	recoveryCodeFormField = "recovery_code"
 )
 
 //go:embed templates/*.html assets/*.css
@@ -43,10 +46,12 @@ type Manager interface {
 }
 
 type HandlerConfig struct {
-	LoginCode      []byte
-	ExpectedOrigin string
-	Now            func() time.Time
-	Random         io.Reader
+	Account           Account
+	RecoveryCode      []byte
+	ExpectedOrigin    string
+	TrustedProxyCIDRs []netip.Prefix
+	Now               func() time.Time
+	Random            io.Reader
 }
 
 type Handler struct {
@@ -57,15 +62,18 @@ type Handler struct {
 	now               func() time.Time
 	random            io.Reader
 	workspaceRefKey   [sha256.Size]byte
-	loginDigest       [sha256.Size]byte
-	loginExpiresAt    time.Time
+	account           Account
+	secondFactor      *totpVerifier
+	recoveryDigest    [sha256.Size]byte
+	recoveryExpiresAt time.Time
+	clientAddresses   clientaddress.Resolver
 	loginAttempts     *ratelimit.FixedWindow
 	managementActions *ratelimit.FixedWindow
 	templates         *template.Template
 
-	mu            sync.Mutex
-	loginConsumed bool
-	sessions      map[[sha256.Size]byte]session
+	mu           sync.Mutex
+	recoveryUsed bool
+	sessions     map[[sha256.Size]byte]session
 }
 
 type session struct {
@@ -116,8 +124,10 @@ type deviceView struct {
 }
 
 func NewHandler(manager Manager, config HandlerConfig) (http.Handler, error) {
-	if manager == nil || len(config.LoginCode) == 0 {
-		return nil, errors.New("admin manager and login code are required")
+	if manager == nil || len(config.Account.Name) == 0 ||
+		len(config.Account.PasswordHash.digest) == 0 || len(config.Account.TOTPSecret) == 0 {
+		return nil, errors.New(
+			"admin manager, account name, password hash and TOTP secret are required")
 	}
 	origin, err := url.Parse(config.ExpectedOrigin)
 	if err != nil || (origin.Scheme != "http" && origin.Scheme != "https") ||
@@ -148,9 +158,15 @@ func NewHandler(manager Manager, config HandlerConfig) (http.Handler, error) {
 	handler := &Handler{
 		manager: manager, expectedOrigin: origin.String(), expectedHost: origin.Host,
 		secureCookies: origin.Scheme == "https", now: now, random: random,
-		loginDigest: sha256.Sum256(config.LoginCode), loginExpiresAt: now().Add(loginCodeLifetime),
-		loginAttempts: loginAttempts, managementActions: managementActions,
-		templates: templates, sessions: make(map[[sha256.Size]byte]session),
+		account: config.Account, secondFactor: newTOTPVerifier(config.Account.TOTPSecret),
+		recoveryDigest:    sha256.Sum256(config.RecoveryCode),
+		recoveryExpiresAt: now().Add(recoveryCodeLifetime),
+		recoveryUsed:      len(config.RecoveryCode) == 0,
+		clientAddresses:   clientaddress.New(config.TrustedProxyCIDRs),
+		loginAttempts:     loginAttempts,
+		managementActions: managementActions,
+		templates:         templates,
+		sessions:          make(map[[sha256.Size]byte]session),
 	}
 	if _, err := io.ReadFull(random, handler.workspaceRefKey[:]); err != nil {
 		return nil, errors.New("generate workspace reference key")
@@ -190,7 +206,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "request rejected", http.StatusForbidden)
 		return
 	}
-	if !h.loginAttempts.Allow(remoteIP(r.RemoteAddr), h.now()) {
+	if !h.loginAttempts.Allow(h.clientAddress(r), h.now()) {
 		w.Header().Set("Retry-After", "60")
 		http.Error(w, "too many attempts", http.StatusTooManyRequests)
 		return
@@ -200,15 +216,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		h.renderLoginFailure(w)
 		return
 	}
-	candidate := sha256.Sum256([]byte(r.PostForm.Get("login_code")))
-	h.mu.Lock()
-	valid := !h.loginConsumed && h.now().Before(h.loginExpiresAt) &&
-		subtle.ConstantTimeCompare(candidate[:], h.loginDigest[:]) == 1
-	if valid {
-		h.loginConsumed = true
-	}
-	h.mu.Unlock()
-	if !valid {
+	if !h.authenticate(r) {
 		h.renderLoginFailure(w)
 		return
 	}
@@ -228,6 +236,53 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	h.mu.Unlock()
 	h.setSessionCookie(w, rawSession, int(sessionLifetime.Seconds()))
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// authenticate evaluates the account name and the password verifier before the
+// second factor, and answers with a single boolean so a failure never reports
+// which of them was wrong. The password verifier runs even when the name did not
+// match, so the response time does not reveal whether the account is correct.
+//
+// The second factor is consulted only after the name and password matched: a
+// mistyped password must not consume the current time step, which would otherwise
+// reject the correct retry inside the same thirty second window.
+func (h *Handler) authenticate(r *http.Request) bool {
+	if candidate := strings.TrimSpace(r.PostForm.Get(recoveryCodeFormField)); candidate != "" {
+		return h.consumeRecoveryCode(candidate)
+	}
+	nameMatched := constantTimeEquals(
+		strings.TrimSpace(r.PostForm.Get("username")), h.account.Name)
+	passwordMatched := h.account.PasswordHash.matches(r.PostForm.Get("password"))
+	if !nameMatched || !passwordMatched {
+		return false
+	}
+	return h.secondFactor.verify(r.PostForm.Get("totp_code"), h.now())
+}
+
+// consumeRecoveryCode accepts the one-time code printed when the process starts.
+// It is the escape hatch for a lost authenticator device: single use, and expired
+// ten minutes after startup.
+func (h *Handler) consumeRecoveryCode(candidate string) bool {
+	digest := sha256.Sum256([]byte(candidate))
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.recoveryUsed || !h.now().Before(h.recoveryExpiresAt) ||
+		subtle.ConstantTimeCompare(digest[:], h.recoveryDigest[:]) != 1 {
+		return false
+	}
+	h.recoveryUsed = true
+	return true
+}
+
+// clientAddress resolves the address the login limiter is keyed on. Behind the
+// reverse proxy every request arrives from the proxy itself, so the forwarded
+// address is used only when the direct peer is a configured trusted proxy.
+func (h *Handler) clientAddress(r *http.Request) string {
+	address, err := h.clientAddresses.Resolve(r)
+	if err != nil {
+		return "invalid"
+	}
+	return address
 }
 
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
@@ -600,7 +655,7 @@ func (h *Handler) currentSession(r *http.Request) (session, [sha256.Size]byte, b
 
 func (h *Handler) renderLoginFailure(w http.ResponseWriter) {
 	h.renderStatus(w, http.StatusUnauthorized, "login.html", map[string]string{
-		"Error": "登录码无效或已过期。请重新启动管理端获取新的登录码。",
+		"Error": "用户名、密码或动态验证码不正确。应急登录码只在下发后的十分钟内可用，且只能使用一次。",
 	})
 }
 
@@ -646,14 +701,6 @@ func randomToken(source io.Reader) (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(value), nil
-}
-
-func remoteIP(remoteAddress string) string {
-	host, _, err := net.SplitHostPort(remoteAddress)
-	if err != nil {
-		return "unknown"
-	}
-	return host
 }
 
 func deviceTypeLabel(value admission.DeviceType) string {

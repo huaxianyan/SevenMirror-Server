@@ -10,6 +10,7 @@ func TestRuntimeConfigDefaultsToLoopbackOnly(t *testing.T) {
 	t.Setenv("NM_ADMIN_ORIGIN", "")
 	t.Setenv("NM_DATABASE_PATH", "")
 	t.Setenv("NM_AUTHORITY_KEY_DIR", "")
+	setAccountEnvironment(t)
 	config, err := LoadRuntimeConfig()
 	if err != nil {
 		t.Fatal(err)
@@ -23,6 +24,7 @@ func TestRuntimeConfigDefaultsToLoopbackOnly(t *testing.T) {
 }
 
 func TestRuntimeConfigRejectsNonLoopbackListenerAndPlaintextExternalOrigin(t *testing.T) {
+	setAccountEnvironment(t)
 	t.Setenv("NM_ADMIN_ADDRESS", "0.0.0.0:8081")
 	if _, err := LoadRuntimeConfig(); err == nil {
 		t.Fatal("non-loopback admin listener was accepted")

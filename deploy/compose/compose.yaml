@@ -3,7 +3,8 @@
 # relay     the persistent public relay. Non-root, read-only root filesystem,
 #           every capability dropped, and published only on host loopback.
 # admin     one-shot workspace administration. Runs with no network at all.
-# admin-web the on-demand management console. Loopback only, never published.
+# admin-web the on-demand management console. Loopback only; reach it through the
+#           reverse proxy on its own origin.
 #
 # Copy .env.example to .env, set every value, then follow docs/deployment.md.
 # Relative bind mounts resolve beside this file, so data/ and authority/ stay
@@ -71,6 +72,11 @@ services:
       NM_AUTHORITY_KEY_DIR: "/authority"
       NM_ADMIN_ADDRESS: ${SEVENMIRROR_ADMIN_ADDRESS:?Set a loopback address and port}
       NM_ADMIN_ORIGIN: ${SEVENMIRROR_ADMIN_ORIGIN:?Set the exact browser-facing origin}
+      NM_ADMIN_USERNAME: ${SEVENMIRROR_ADMIN_USERNAME:?Set the administrator account name}
+      NM_ADMIN_PASSWORD_HASH: ${SEVENMIRROR_ADMIN_PASSWORD_HASH:?Set the scrypt password hash}
+      NM_ADMIN_TOTP_SECRET: ${SEVENMIRROR_ADMIN_TOTP_SECRET:?Set the TOTP shared secret}
+      NM_ADMIN_RECOVERY_CODE: ${SEVENMIRROR_ADMIN_RECOVERY_CODE:-on}
+      NM_ADMIN_TRUSTED_PROXY_CIDRS: ${SEVENMIRROR_ADMIN_TRUSTED_PROXY_CIDRS:-}
     volumes:
       - ./data:/data
       - ./authority:/authority

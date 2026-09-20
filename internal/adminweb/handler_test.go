@@ -105,10 +105,22 @@ func TestAdministratorLogsInOnceAndSeesDeviceStatusWithoutInternalIdentifiers(t 
 			},
 		},
 	}
+	secret, err := parseTOTPSecret(testSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loginMoment := now.Add(3 * time.Minute)
+	validSecondFactor := totpCode(secret, totpCounter(loginMoment))
+	invalidSecondFactor := "000000"
+	if validSecondFactor == invalidSecondFactor {
+		invalidSecondFactor = "111111"
+	}
 	handler, err := NewHandler(store, HandlerConfig{
-		LoginCode: []byte("correct-login-code"), ExpectedOrigin: "http://127.0.0.1:8081",
-		Now:    func() time.Time { return now.Add(3 * time.Minute) },
-		Random: bytes.NewReader(bytes.Repeat([]byte{0x42}, 96)),
+		Account:        testAccount(t, testPassword, secret),
+		RecoveryCode:   []byte("recovery-code-for-tests"),
+		ExpectedOrigin: "http://127.0.0.1:8081",
+		Now:            func() time.Time { return loginMoment },
+		Random:         bytes.NewReader(bytes.Repeat([]byte{0x42}, 96)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -124,8 +136,24 @@ func TestAdministratorLogsInOnceAndSeesDeviceStatusWithoutInternalIdentifiers(t 
 			unauthenticatedResult.Code, unauthenticatedResult.Header().Get("Location"))
 	}
 
+	wrongPassword := postForm(t, handler, "/login", url.Values{
+		"username": {"operator"}, "password": {"not the password"},
+		"totp_code": {validSecondFactor},
+	}, nil)
+	if wrongPassword.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong password response=%d", wrongPassword.Code)
+	}
+	wrongSecondFactor := postForm(t, handler, "/login", url.Values{
+		"username": {"operator"}, "password": {testPassword},
+		"totp_code": {invalidSecondFactor},
+	}, nil)
+	if wrongSecondFactor.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong second factor response=%d", wrongSecondFactor.Code)
+	}
+
 	loginResult := postForm(t, handler, "/login", url.Values{
-		"login_code": {"correct-login-code"},
+		"username": {"operator"}, "password": {testPassword},
+		"totp_code": {validSecondFactor},
 	}, nil)
 	if loginResult.Code != http.StatusSeeOther {
 		t.Fatalf("login response=%d body=%s", loginResult.Code, loginResult.Body.String())
@@ -135,11 +163,14 @@ func TestAdministratorLogsInOnceAndSeesDeviceStatusWithoutInternalIdentifiers(t 
 		t.Fatalf("session cookies=%+v", cookies)
 	}
 
-	reused := postForm(t, handler, "/login", url.Values{
-		"login_code": {"correct-login-code"},
+	// A second factor belongs to its time step: presenting the same code again must
+	// not start a second session.
+	replayed := postForm(t, handler, "/login", url.Values{
+		"username": {"operator"}, "password": {testPassword},
+		"totp_code": {validSecondFactor},
 	}, nil)
-	if reused.Code != http.StatusUnauthorized {
-		t.Fatalf("reused login response=%d", reused.Code)
+	if replayed.Code != http.StatusUnauthorized {
+		t.Fatalf("replayed second factor response=%d", replayed.Code)
 	}
 
 	dashboardRequest := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8081/", nil)
@@ -198,6 +229,62 @@ func TestAdministratorLogsInOnceAndSeesDeviceStatusWithoutInternalIdentifiers(t 
 	logoutWithoutCSRF := postForm(t, handler, "/logout", nil, cookies[0])
 	if logoutWithoutCSRF.Code != http.StatusForbidden {
 		t.Fatalf("logout without CSRF response=%d", logoutWithoutCSRF.Code)
+	}
+}
+
+func TestAdministratorRecoveryCodeIsSingleUseAndExpires(t *testing.T) {
+	secret, err := parseTOTPSecret(testSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moment := time.UnixMilli(1_800_000_000_000)
+	handler, err := NewHandler(&fixedStore{}, HandlerConfig{
+		Account:        testAccount(t, testPassword, secret),
+		RecoveryCode:   []byte("recovery-code-for-tests"),
+		ExpectedOrigin: "http://127.0.0.1:8081",
+		Now:            func() time.Time { return moment },
+		Random:         bytes.NewReader(bytes.Repeat([]byte{0x24}, 512)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The recovery code stands in for both factors, so an operator who lost the
+	// authenticator device can still reach the console.
+	issued := postForm(t, handler, "/login", url.Values{
+		"recovery_code": {"recovery-code-for-tests"},
+	}, nil)
+	if issued.Code != http.StatusSeeOther {
+		t.Fatalf("recovery login response=%d body=%s", issued.Code, issued.Body.String())
+	}
+	replayed := postForm(t, handler, "/login", url.Values{
+		"recovery_code": {"recovery-code-for-tests"},
+	}, nil)
+	if replayed.Code != http.StatusUnauthorized {
+		t.Fatalf("replayed recovery code response=%d", replayed.Code)
+	}
+	wrong := postForm(t, handler, "/login", url.Values{
+		"recovery_code": {"some other code"},
+	}, nil)
+	if wrong.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong recovery code response=%d", wrong.Code)
+	}
+
+	// A code kept from an earlier start is refused once the ten minute window passed,
+	// while the account and second factor keep working without a restart.
+	moment = moment.Add(11 * time.Minute)
+	late := postForm(t, handler, "/login", url.Values{
+		"recovery_code": {"recovery-code-for-tests"},
+	}, nil)
+	if late.Code != http.StatusUnauthorized {
+		t.Fatalf("expired recovery code response=%d", late.Code)
+	}
+	secondFactor := totpCode(secret, totpCounter(moment))
+	account := postForm(t, handler, "/login", url.Values{
+		"username": {"operator"}, "password": {testPassword}, "totp_code": {secondFactor},
+	}, nil)
+	if account.Code != http.StatusSeeOther {
+		t.Fatalf("account login response=%d body=%s", account.Code, account.Body.String())
 	}
 }
 

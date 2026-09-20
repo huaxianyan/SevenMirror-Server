@@ -63,6 +63,9 @@ input[type="checkbox"] { width: auto; margin: .15rem .4rem 0 0; }
 }
 .login-card { width: min(100%, 34rem); box-shadow: 0 12px 34px rgb(29 45 80 / 8%); }
 .login-card h1 { margin: .2rem 0 .75rem; }
+.login-card details { margin-top: 1.25rem; }
+.login-card summary { padding: .35rem 0; color: var(--primary); cursor: pointer; font-weight: 650; }
+.login-card details .muted { margin: 0 0 .5rem; font-size: .85rem; }
 .eyebrow { margin: 0; color: var(--primary); font-size: .78rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
 .muted { color: var(--muted); }
 .error { padding: .75rem; border-radius: .5rem; background: #fde7e7; color: #8e1d1d; }
