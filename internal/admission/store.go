@@ -35,7 +35,9 @@ const (
 	maxMembershipRosterPageRaw = 1 << 20
 	maxAuthorityTransitions    = 256
 	maxAdministratorNameBytes  = 64
-	currentSchemaVersion       = 10
+	maxPreferenceKeyBytes      = 64
+	maxPreferencePayloadBytes  = 256 << 10
+	currentSchemaVersion       = 11
 )
 
 // AdministratorCredential is the single console account. The password travels as
@@ -57,6 +59,9 @@ var (
 	ErrWorkspaceAuthorityUnavailable = errors.New("workspace authority is unavailable")
 	ErrInvalidMembershipProof        = errors.New("membership identity proof denied")
 	ErrMembershipStateUnavailable    = errors.New("membership state is unavailable")
+	ErrPreferenceKeyInvalid          = errors.New("preference key is invalid")
+	ErrPreferencePayloadInvalid      = errors.New("preference payload is invalid")
+	ErrPreferenceRevisionConflict    = errors.New("preference revision conflict")
 )
 
 type WorkspaceID [16]byte
@@ -1622,6 +1627,9 @@ func (s *Store) initialize(ctx context.Context) error {
 	if version == currentSchemaVersion {
 		return nil
 	}
+	if version == 10 {
+		return s.applySchemaVersion11(ctx)
+	}
 	if version == 9 {
 		return s.applySchemaVersion10(ctx)
 	}
@@ -2123,6 +2131,145 @@ func (s *Store) applySchemaVersion10(ctx context.Context) error {
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit schema version 10: %w", err)
+	}
+	return s.applySchemaVersion11(ctx)
+}
+
+// applySchemaVersion11 adds the workspace preference table. It stores opaque
+// client-encrypted blobs under an optimistic revision, so the server relays and
+// preserves a preference value without being able to read it. Version 10
+// databases are the ones deployed before any client had a synced preference, so
+// the table starts empty and every key is created by its first write.
+func (s *Store) applySchemaVersion11(ctx context.Context) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin schema version 11: %w", err)
+	}
+	defer tx.Rollback()
+	// The bounds come from the Go constants so the table constraint and the
+	// method validation cannot drift apart.
+	statement := fmt.Sprintf(`CREATE TABLE workspace_preferences (
+		workspace_id BLOB NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+		preference_key TEXT NOT NULL CHECK(length(preference_key) BETWEEN 1 AND %d),
+		revision INTEGER NOT NULL CHECK(revision > 0),
+		payload BLOB NOT NULL CHECK(length(payload) BETWEEN 1 AND %d),
+		updated_at_ms INTEGER NOT NULL,
+		PRIMARY KEY(workspace_id, preference_key)
+	) STRICT`, maxPreferenceKeyBytes, maxPreferencePayloadBytes)
+	if _, err := tx.ExecContext(ctx, statement); err != nil {
+		return fmt.Errorf("apply schema version 11: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, applied_at_ms) VALUES (11, ?)`,
+		time.Now().UnixMilli()); err != nil {
+		return fmt.Errorf("record schema version 11: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema version 11: %w", err)
+	}
+	return nil
+}
+
+// PreferenceRecord is one durable opaque workspace preference value. The server
+// stores and versions the payload without interpreting it.
+type PreferenceRecord struct {
+	Revision    int64
+	Payload     []byte
+	UpdatedAtMS int64
+}
+
+// ReadWorkspacePreference returns the opaque value stored for one workspace
+// preference key. A missing key reports false rather than an error so the
+// caller can distinguish "never written" from a rejected empty payload.
+func (s *Store) ReadWorkspacePreference(
+	ctx context.Context,
+	workspaceID WorkspaceID,
+	key string,
+) (PreferenceRecord, bool, error) {
+	if err := validatePreferenceKey(key); err != nil {
+		return PreferenceRecord{}, false, err
+	}
+	var record PreferenceRecord
+	err := s.db.QueryRowContext(ctx, `SELECT revision, payload, updated_at_ms
+		FROM workspace_preferences WHERE workspace_id = ? AND preference_key = ?`,
+		workspaceID[:], key).Scan(&record.Revision, &record.Payload, &record.UpdatedAtMS)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PreferenceRecord{}, false, nil
+	}
+	if err != nil {
+		return PreferenceRecord{}, false, fmt.Errorf("read workspace preference: %w", err)
+	}
+	return record, true, nil
+}
+
+// WriteWorkspacePreference stores one opaque value under optimistic
+// concurrency control. An expected revision of zero creates the key; a positive
+// value replaces exactly that revision. Every other stored revision is a
+// conflict, so a client that fell behind cannot silently discard a write that
+// another device already made.
+func (s *Store) WriteWorkspacePreference(
+	ctx context.Context,
+	workspaceID WorkspaceID,
+	key string,
+	expectedRevision int64,
+	payload []byte,
+	now time.Time,
+) (int64, error) {
+	if err := validatePreferenceKey(key); err != nil {
+		return 0, err
+	}
+	if len(payload) < 1 || len(payload) > maxPreferencePayloadBytes {
+		return 0, ErrPreferencePayloadInvalid
+	}
+	if expectedRevision < 0 {
+		return 0, ErrPreferenceRevisionConflict
+	}
+	nowMillis := unixMillis(now)
+	if expectedRevision == 0 {
+		result, err := s.db.ExecContext(ctx, `INSERT INTO workspace_preferences
+			(workspace_id, preference_key, revision, payload, updated_at_ms)
+			VALUES (?, ?, 1, ?, ?)
+			ON CONFLICT(workspace_id, preference_key) DO NOTHING`,
+			workspaceID[:], key, payload, nowMillis)
+		if err != nil {
+			return 0, fmt.Errorf("create workspace preference: %w", err)
+		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("create workspace preference: %w", err)
+		}
+		if rows != 1 {
+			return 0, ErrPreferenceRevisionConflict
+		}
+		return 1, nil
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE workspace_preferences
+		SET payload = ?, updated_at_ms = ?, revision = revision + 1
+		WHERE workspace_id = ? AND preference_key = ? AND revision = ?`,
+		payload, nowMillis, workspaceID[:], key, expectedRevision)
+	if err != nil {
+		return 0, fmt.Errorf("update workspace preference: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("update workspace preference: %w", err)
+	}
+	if rows != 1 {
+		return 0, ErrPreferenceRevisionConflict
+	}
+	return expectedRevision + 1, nil
+}
+
+// validatePreferenceKey bounds the key to visible ASCII so it stays a stable
+// opaque label rather than a second place to smuggle unstructured data.
+func validatePreferenceKey(key string) error {
+	if len(key) < 1 || len(key) > maxPreferenceKeyBytes || !utf8.ValidString(key) {
+		return ErrPreferenceKeyInvalid
+	}
+	for _, character := range key {
+		if character < 0x21 || character > 0x7e {
+			return ErrPreferenceKeyInvalid
+		}
 	}
 	return nil
 }

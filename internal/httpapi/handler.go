@@ -18,8 +18,9 @@ func NewHandler() http.Handler {
 }
 
 // NewProductionHandler enables authority-controlled membership enrollment,
-// credential rotation, and the authenticated relay. These endpoints are not
-// mounted unless all admission dependencies are explicit.
+// credential rotation, the authenticated relay, and workspace preference
+// storage. These endpoints are not mounted unless all admission dependencies
+// are explicit.
 func NewProductionHandler(
 	store *admission.Store,
 	relayHandler http.Handler,
@@ -52,6 +53,9 @@ func newMux(
 		mux.HandleFunc("/v1/membership/register", membership.register)
 		mux.HandleFunc("/v1/membership/prove", membership.prove)
 		mux.HandleFunc("/v1/membership/state", membership.state)
+		preferences := newPreferenceHandler(store)
+		mux.HandleFunc("/v1/workspace/preferences/read", preferences.read)
+		mux.HandleFunc("/v1/workspace/preferences/write", preferences.write)
 		mux.Handle("/v1/relay", relayHandler)
 	}
 	return securityHeaders(mux)

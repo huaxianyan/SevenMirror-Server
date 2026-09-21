@@ -347,7 +347,8 @@ func TestPendingRegistrationRequiresExactIdentityProofBeforeApproval(t *testing.
 		`ALTER TABLE workspaces DROP COLUMN authority_epoch`,
 		`ALTER TABLE devices DROP COLUMN revoked_membership_epoch`,
 		`DROP TABLE administrator_credentials`,
-		`DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9, 10)`,
+		`DROP TABLE workspace_preferences`,
+		`DELETE FROM schema_migrations WHERE version IN (5, 6, 7, 8, 9, 10, 11)`,
 	} {
 		if _, err := legacyDB.Exec(statement); err != nil {
 			legacyDB.Close()
@@ -985,7 +986,8 @@ func TestSchemaVersionEightRevokesLegacyDeviceAndDeletesRotationCode(t *testing.
 		`DROP TRIGGER reject_legacy_device_insert`,
 		`UPDATE devices SET membership_state = 'legacy_active'`,
 		`DROP TABLE administrator_credentials`,
-		`DELETE FROM schema_migrations WHERE version IN (8, 9, 10)`,
+		`DROP TABLE workspace_preferences`,
+		`DELETE FROM schema_migrations WHERE version IN (8, 9, 10, 11)`,
 	} {
 		if _, err := versionSeven.Exec(statement); err != nil {
 			versionSeven.Close()
@@ -1119,7 +1121,8 @@ func TestSchemaVersionTenAddsTheConsoleAccountTable(t *testing.T) {
 	}
 	for _, statement := range []string{
 		`DROP TABLE administrator_credentials`,
-		`DELETE FROM schema_migrations WHERE version = 10`,
+		`DROP TABLE workspace_preferences`,
+		`DELETE FROM schema_migrations WHERE version IN (10, 11)`,
 	} {
 		if _, err := nine.Exec(statement); err != nil {
 			nine.Close()
@@ -1181,4 +1184,125 @@ func testAuthorityPublicKey() membership.AuthorityPublicKey {
 func testPublicKey() []byte {
 	x, y := elliptic.P256().ScalarBaseMult([]byte{1})
 	return elliptic.Marshal(elliptic.P256(), x, y)
+}
+
+func TestSchemaVersionElevenAddsTheWorkspacePreferenceTable(t *testing.T) {
+	ctx := context.Background()
+	path := tempDatabasePath(t)
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ten, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		`DROP TABLE workspace_preferences`,
+		`DELETE FROM schema_migrations WHERE version = 11`,
+	} {
+		if _, err := ten.Exec(statement); err != nil {
+			ten.Close()
+			t.Fatal(err)
+		}
+	}
+	if err := ten.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	var version int
+	if err := migrated.db.QueryRow(`SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil ||
+		version != currentSchemaVersion {
+		t.Fatalf("schema version=%d error=%v", version, err)
+	}
+	now := time.UnixMilli(1_800_000_000_000)
+	workspace, err := migrated.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrated.WriteWorkspacePreference(ctx, workspace, "notification-shortcuts",
+		0, []byte{0x2a}, now); err != nil {
+		t.Fatalf("write to the migrated table: %v", err)
+	}
+}
+
+func TestWorkspacePreferenceRoundTripsWithOptimisticRevision(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t, tempDatabasePath(t))
+	now := time.UnixMilli(1_800_000_000_000)
+	workspace, err := store.CreateWorkspace(ctx, testAuthorityPublicKey(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const key = "notification-shortcuts"
+
+	if _, found, err := store.ReadWorkspacePreference(ctx, workspace, key); err != nil || found {
+		t.Fatalf("unwritten key found=%v error=%v", found, err)
+	}
+	first := []byte{0x00, 0xff, 0x10}
+	revision, err := store.WriteWorkspacePreference(ctx, workspace, key, 0, first, now)
+	if err != nil || revision != 1 {
+		t.Fatalf("create revision=%d error=%v", revision, err)
+	}
+	record, found, err := store.ReadWorkspacePreference(ctx, workspace, key)
+	if err != nil || !found || record.Revision != 1 || !bytes.Equal(record.Payload, first) ||
+		record.UpdatedAtMS != now.UnixMilli() {
+		t.Fatalf("stored record=%+v found=%v error=%v", record, found, err)
+	}
+	if _, err := store.WriteWorkspacePreference(ctx, workspace, key, 0, []byte{0x01}, now); !errors.Is(err, ErrPreferenceRevisionConflict) {
+		t.Fatalf("duplicate create error=%v", err)
+	}
+	if _, err := store.WriteWorkspacePreference(ctx, workspace, key, 5, []byte{0x01}, now); !errors.Is(err, ErrPreferenceRevisionConflict) {
+		t.Fatalf("stale update error=%v", err)
+	}
+	if record, _, err := store.ReadWorkspacePreference(ctx, workspace, key); err != nil ||
+		record.Revision != 1 || !bytes.Equal(record.Payload, first) {
+		t.Fatalf("rejected writes changed the record: %+v error=%v", record, err)
+	}
+	second := []byte{0x02}
+	if revision, err := store.WriteWorkspacePreference(ctx, workspace, key, 1, second, now.Add(time.Second)); err != nil || revision != 2 {
+		t.Fatalf("replace revision=%d error=%v", revision, err)
+	}
+	if record, _, err := store.ReadWorkspacePreference(ctx, workspace, key); err != nil ||
+		record.Revision != 2 || !bytes.Equal(record.Payload, second) {
+		t.Fatalf("replaced record=%+v error=%v", record, err)
+	}
+
+	if _, err := store.WriteWorkspacePreference(ctx, workspace, key, 0, nil, now); !errors.Is(err, ErrPreferencePayloadInvalid) {
+		t.Fatalf("empty payload error=%v", err)
+	}
+	oversized := make([]byte, maxPreferencePayloadBytes+1)
+	if _, err := store.WriteWorkspacePreference(ctx, workspace, key, 0, oversized, now); !errors.Is(err, ErrPreferencePayloadInvalid) {
+		t.Fatalf("oversized payload error=%v", err)
+	}
+	for _, invalid := range []string{"", strings.Repeat("k", maxPreferenceKeyBytes+1), "notification shortcuts", "短"} {
+		if _, _, err := store.ReadWorkspacePreference(ctx, workspace, invalid); !errors.Is(err, ErrPreferenceKeyInvalid) {
+			t.Fatalf("invalid key %q error=%v", invalid, err)
+		}
+	}
+
+	// The same key in another workspace is a different value, not a shared one.
+	other, err := store.CreateWorkspace(ctx, otherTestAuthorityPublicKey(), now)
+	if err != nil || other == workspace {
+		t.Fatalf("second workspace=%x error=%v", other, err)
+	}
+	if _, found, err := store.ReadWorkspacePreference(ctx, other, key); err != nil || found {
+		t.Fatalf("key leaked across workspaces: found=%v error=%v", found, err)
+	}
+}
+
+func otherTestAuthorityPublicKey() membership.AuthorityPublicKey {
+	privateKey := ed25519.NewKeyFromSeed(bytes.Repeat([]byte{0x7b}, ed25519.SeedSize))
+	defer clear(privateKey)
+	var key membership.AuthorityPublicKey
+	copy(key[:], privateKey.Public().(ed25519.PublicKey))
+	return key
 }
