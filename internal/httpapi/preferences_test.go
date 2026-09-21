@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -62,9 +63,17 @@ func TestWorkspacePreferenceHTTPStoresOpaquePayloadWithRevisionGuard(t *testing.
 		return recorder
 	}
 
-	// A key that was never written reports revision zero and no payload.
-	if response := read(); response.Revision != "0" || response.Payload != "" {
+	// A key that was never written reports revision zero and no payload. Both
+	// decimals stay canonical here: an empty updated_at_ms would force every
+	// client to special-case a value the struct's zero field produced.
+	if response := read(); response.Revision != "0" || response.Payload != "" ||
+		response.UpdatedAtMS != "0" {
 		t.Fatalf("unread key reported %+v", response)
+	}
+	unread := httptest.NewRecorder()
+	handler.read(unread, membershipRequest(t, credentials))
+	if body := unread.Body.String(); !strings.Contains(body, `"updated_at_ms":"0"`) {
+		t.Fatalf("unread key body=%s", body)
 	}
 
 	// The server stores opaque bytes, including ones that are not valid UTF-8.

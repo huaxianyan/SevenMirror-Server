@@ -77,7 +77,11 @@ func (h *preferenceHandler) read(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !found {
-		writePreferenceJSON(w, http.StatusOK, preferenceReadResponse{Revision: "0"})
+		// Every field of an absent value is a canonical decimal too. Leaving
+		// updated_at_ms at the struct's zero value would send an empty string, and
+		// the client documents these two fields as canonical, so the "nothing
+		// stored yet" answer must not depend on a client tolerating "".
+		writePreferenceJSON(w, http.StatusOK, preferenceReadResponse{Revision: "0", UpdatedAtMS: "0"})
 		return
 	}
 	writePreferenceJSON(w, http.StatusOK, preferenceReadResponse{
