@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -58,21 +59,35 @@ func ServeAuthenticatedConnection(
 	// instance produced, while an ordinary client disconnect keeps its own error.
 	defer unregister()
 	defer func() { result = sessionEndCause(session, result) }()
+	// Closing the socket is how a stalled write is cut short so that a retired
+	// instance can still release its slot promptly. The same close also destroys
+	// the retirement close frame this loop has yet to send, and a write that has
+	// already returned is not stalled: closing after that point unblocks nothing
+	// and only replaces the policy or ordinary close with a bare hangup. `busy`
+	// separates those two situations, and because it is scoped to one write a
+	// late abort can never reach a frame written after it.
 	writeMessage := func(kind int, encoded []byte) error {
 		operationContext, finish, err := hub.beginOperation(sessionContext, session, writeTimeout)
 		if err != nil {
 			return err
 		}
-		stop := context.AfterFunc(operationContext, func() { _ = connection.Close() })
-		defer func() { stop(); finish() }()
+		defer finish()
+		busy := new(atomic.Bool)
+		stop := context.AfterFunc(operationContext, func() {
+			if busy.Load() {
+				_ = connection.Close()
+			}
+		})
+		defer stop()
 		deadline, _ := operationContext.Deadline()
+		busy.Store(true)
 		if kind == websocket.PingMessage {
-			return connection.WriteControl(kind, encoded, deadline)
+			err = connection.WriteControl(kind, encoded, deadline)
+		} else if err = connection.SetWriteDeadline(deadline); err == nil {
+			err = connection.WriteMessage(kind, encoded)
 		}
-		if err := connection.SetWriteDeadline(deadline); err != nil {
-			return err
-		}
-		return connection.WriteMessage(kind, encoded)
+		busy.Store(false)
+		return err
 	}
 	// SNO1 remains the first server data message.
 	if err := writeMessage(websocket.BinaryMessage, authenticationSuccessAck[:]); err != nil {

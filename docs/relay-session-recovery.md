@@ -104,6 +104,19 @@ reports whichever cause applies in preference to the socket or context error
 that retiring the instance produced, which is what makes the operator categories
 above reliable.
 
+The close frame is written by the write loop, and the same socket write is
+guarded by an abort that closes the connection once its operation context ends.
+Retirement cancels that context, so the abort and the close frame compete for the
+same socket. The abort therefore applies only while a write is actually on the
+socket: after the call has returned, closing unblocks nothing and would replace
+the close frame with a bare hangup, which clients read as `1006` and as a
+transport failure rather than a membership change. The write loop cannot recover
+from that, because gorilla poisons a connection's write path on the first write
+error. A write that is genuinely stalled is still cut short, which is what keeps
+slot release for the replacement bounded. The end-to-end assertion for this is
+`TestReconnectSurvivesAnOldLookupFailureAndHonorsCurrentRevocation`, which failed
+in CI before the abort was scoped this way.
+
 Durable delivery, cumulative ACK, recipient isolation, and one active connection
 per device are all preserved. A handover does not delete or renumber anything:
 the replacement resumes from the same durable history, so ciphertext the
