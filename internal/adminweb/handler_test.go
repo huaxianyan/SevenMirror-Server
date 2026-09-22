@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -939,5 +940,32 @@ func TestConsoleStylesheetDoesNotUpperCaseTheBrand(t *testing.T) {
 	rule := firstCapture(t, stylesheet.Body.String(), `(?s)\.eyebrow\s*\{([^}]*)\}`)
 	if strings.Contains(rule, "text-transform") {
 		t.Fatalf("the brand label is restyled: .eyebrow {%s}", rule)
+	}
+}
+
+// The name has to read as strongly in the console as it does in the extension's
+// settings page, which draws it at 18px in bold. The console used to set it at
+// .78rem with wide tracking, which looked thin beside the client, and the
+// stylesheet turns font synthesis off, so a family without the declared weight
+// would show the name at a regular stroke instead of thickening it. Both values
+// are therefore part of the regression rather than styling taste.
+func TestConsoleStylesheetKeepsTheBrandAsLegibleAsTheClient(t *testing.T) {
+	moment := time.UnixMilli(1_800_000_000_000)
+	handler := newTestHandler(t, storedAccountStore(t), &moment)
+	stylesheet := getPage(t, handler, "/assets/admin.css", nil)
+	if stylesheet.Code != http.StatusOK {
+		t.Fatalf("stylesheet=%d", stylesheet.Code)
+	}
+	rule := firstCapture(t, stylesheet.Body.String(), `(?s)\.eyebrow\s*\{([^}]*)\}`)
+	size, err := strconv.ParseFloat(firstCapture(t, rule, `font-size:\s*([0-9.]+)rem`), 64)
+	if err != nil {
+		t.Fatalf("brand size is not a rem value: .eyebrow {%s}", rule)
+	}
+	weight, err := strconv.Atoi(firstCapture(t, rule, `font-weight:\s*([0-9]+)`))
+	if err != nil {
+		t.Fatalf("brand weight is not numeric: .eyebrow {%s}", rule)
+	}
+	if size < 1.125 || weight < 700 {
+		t.Fatalf("brand is thinner than the client wordmark: size=%grem weight=%d", size, weight)
 	}
 }

@@ -72,7 +72,13 @@ input[type="checkbox"] { width: auto; margin: .15rem .4rem 0 0; }
 .login-card details { margin-top: 1.25rem; }
 .login-card summary { padding: .35rem 0; color: var(--primary); cursor: pointer; font-weight: 650; }
 .login-card details .muted { margin: 0 0 .5rem; font-size: .85rem; }
-.eyebrow { margin: 0; color: var(--primary); font-size: .78rem; font-weight: 750; letter-spacing: .08em; }
+/* The product name is the console's wordmark, so it carries the same weight and
+   size as the one in the extension's settings page: 18px at bold in the text
+   colour, not a small tinted label. It used to be .78rem at 750 with wide
+   tracking, which read as thin next to the client, and `font-synthesis: none`
+   means a family without that weight falls back to regular rather than
+   thickening it. */
+.eyebrow { margin: 0; font-size: 1.125rem; font-weight: 700; letter-spacing: normal; }
 .muted { color: var(--muted); }
 .error { padding: .75rem; border-radius: .5rem; background: #fde7e7; color: #8e1d1d; }
 .notice { width: 100%; padding: 1rem 1.25rem; border: 1px solid #b8c5df; border-radius: .8rem; background: var(--surface); }
@@ -96,7 +102,9 @@ input[type="checkbox"] { width: auto; margin: .15rem .4rem 0 0; }
   backdrop-filter: blur(12px);
 }
 .brand { display: flex; align-items: baseline; gap: .55rem; }
-.brand strong { font-size: 1.05rem; }
+/* Mirrors the extension's top bar, where the version sits next to the wordmark as
+   muted secondary text rather than competing with it. */
+.brand strong { color: var(--muted); font-size: .875rem; font-weight: 400; }
 .topbar form { margin: 0; }
 
 .page { display: grid; justify-items: center; padding: 2rem clamp(1rem, 4vw, 3rem) 4rem; }
