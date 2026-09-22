@@ -577,9 +577,12 @@ func (h *Handler) issuePairingCode(w http.ResponseWriter, r *http.Request) {
 		h.finishAction(w, r, digest, actionFailure())
 		return
 	}
+	// The joining form no longer pre-names the device, so the code carries no bound
+	// name and the client supplies the name when it joins. A bound name has to match
+	// the client's byte for byte, which is the duplicate entry this removed.
 	issued, err := h.manager.IssuePairingCode(
 		r.Context(), workspaceID, admission.DeviceType(r.PostForm.Get("device_type")),
-		r.PostForm.Get("device_name"), h.now(), adminservice.DefaultPairingCodeLifetime)
+		"", h.now(), adminservice.DefaultPairingCodeLifetime)
 	if err != nil {
 		h.finishAction(w, r, digest, actionFailure())
 		return

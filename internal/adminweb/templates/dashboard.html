@@ -174,7 +174,7 @@
           <section id="add-{{.Reference}}" class="add-device" aria-labelledby="add-title-{{.Reference}}">
             <div>
               <h3 id="add-title-{{.Reference}}">添加设备</h3>
-              <p class="muted">加入码十分钟内有效，只能提交一次申请。批准前设备不能同步通知。</p>
+              <p class="muted">加入码十分钟内有效，只能提交一次申请。批准前设备不能同步通知。设备名称由客户端加入时填写。</p>
             </div>
             <form method="post" action="/actions/pairing-code" class="inline-form">
               <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
@@ -184,9 +184,6 @@
                   <option value="android">Android</option>
                   <option value="chrome">Chrome</option>
                 </select>
-              </label>
-              <label>预设名称（可选）
-                <input name="device_name" maxlength="100" autocomplete="off">
               </label>
               <button type="submit">生成加入码</button>
             </form>

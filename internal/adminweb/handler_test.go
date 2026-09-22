@@ -22,6 +22,7 @@ type fixedStore struct {
 	devices          map[admission.WorkspaceID][]admission.DeviceSummary
 	renamedReference string
 	renamedName      string
+	pairingName      string
 }
 
 func (s fixedStore) ListWorkspaces(context.Context) ([]admission.WorkspaceSummary, error) {
@@ -35,14 +36,15 @@ func (s fixedStore) ListDevices(
 	return s.devices[workspaceID], nil
 }
 
-func (s fixedStore) IssuePairingCode(
+func (s *fixedStore) IssuePairingCode(
 	_ context.Context,
 	_ admission.WorkspaceID,
 	_ admission.DeviceType,
-	_ string,
+	deviceName string,
 	now time.Time,
 	_ time.Duration,
 ) (adminservice.PairingCode, error) {
+	s.pairingName = deviceName
 	return adminservice.PairingCode{Code: "JOIN-CODE", ExpiresAt: now.Add(10 * time.Minute)}, nil
 }
 
@@ -295,12 +297,17 @@ func TestAdministratorLogsInOnceAndSeesDeviceStatusWithoutInternalIdentifiers(t 
 		t.Fatalf("rename response=%d reference=%q name=%q", renameResult.Code,
 			store.renamedReference, store.renamedName)
 	}
+	// The console no longer names the device: the client supplies the name when it
+	// joins, so the issued code must not carry a bound name the client would then
+	// have to reproduce byte for byte. The stale field is sent on purpose to pin
+	// that a leftover form value cannot reintroduce one.
 	pairingResult := postForm(t, handler, "/actions/pairing-code", url.Values{
 		"csrf_token": {csrf}, "workspace_ref": {workspaceReference},
 		"device_type": {"android"}, "device_name": {"手机"},
 	}, cookies[0])
-	if pairingResult.Code != http.StatusSeeOther {
-		t.Fatalf("pairing response=%d body=%s", pairingResult.Code, pairingResult.Body.String())
+	if pairingResult.Code != http.StatusSeeOther || store.pairingName != "" {
+		t.Fatalf("pairing response=%d boundName=%q body=%s", pairingResult.Code,
+			store.pairingName, pairingResult.Body.String())
 	}
 	flashRequest := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8081/", nil)
 	flashRequest.Host = "127.0.0.1:8081"
