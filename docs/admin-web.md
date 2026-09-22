@@ -1,6 +1,6 @@
 # SevenMirror Server 管理端
 
-> 状态：设备任务优先的产品界面，内置默认账号加首次登录凭据设置，复用 UX-002 authority 管理闭环
+> 状态：左侧分类导航加右侧面板的任务界面，内置默认账号加首次登录凭据设置，复用 UX-002 authority 管理闭环
 
 `admin-web` 是与公开 relay 分离的按需管理进程。它直接读取同一个 SQLite registry 和 authority key 目录：列表页面不需要私钥，批准、重命名和移除设备时由 `internal/adminservice` 读取对应 authority private key 并签发成员事实。它不会挂载到设备注册、Membership 或 WebSocket Handler，也不会读取通知业务密文。常驻 relay 容器不得挂载 authority key 目录。
 
@@ -10,7 +10,8 @@
 - 用户名加密码加 TOTP 动态验证码；
 - 单次使用、十分钟有效的应急登录码；
 - 仅存内存、最长八小时的管理员会话；
-- 设备任务首页，待处理申请优先于已接入设备；
+- 左侧分类导航加右侧面板，五个分类由服务端路由切换，不依赖脚本；
+- 设备面板：待处理申请优先于已接入设备；
 - Android／Chrome、待批准和已拒绝或移除数量；
 - 待处理申请卡片、已接入设备详情及已拒绝或移除历史；
 - 设备申请、批准、最近认证、采样活动和移除时间；
@@ -19,9 +20,14 @@
 - 待处理申请拒绝；
 - 已接入设备的 certified removal；
 - 已接入设备的 authority-certified 名称变更；
+- 设置面板：只改前端显示的时间时区，服务端记录不变；
 - 严格 Origin、CSRF、CSP、frame、按客户端地址的登录限速与管理操作限速边界。
 
-加入码、批准、拒绝、重命名和移除统一通过 `internal/adminservice` 实现。管理网页和 `cmd/admin` 不复制 authority key 加载、角色模板、事务或 roster 签名逻辑。名称是 authority-signed 全工作区权威事实，只能由 Server 管理端修改；Android 和 Chrome 只读展示，不建立本地别名。已批准设备重命名时，Server 在一个 SQLite transaction 中签发 replacement certificate、包含 exact `DeviceCertificateTransition` 的下一份 roster，并更新设备记录；任一步失败都不会留下部分生效的名称。页面提供设备、凭据、部署与维护、关于四个任务入口。设备详情使用原生可展开区域，窄屏不依赖七列宽表；批准／拒绝、重命名、移除和加入码仍提交到原有 POST 入口。当前界面先提供简体中文；英文资源与完整文案审校仍需在管理端发布验收前完成。
+加入码、批准、拒绝、重命名和移除统一通过 `internal/adminservice` 实现。管理网页和 `cmd/admin` 不复制 authority key 加载、角色模板、事务或 roster 签名逻辑。名称是 authority-signed 全工作区权威事实，只能由 Server 管理端修改；Android 和 Chrome 只读展示，不建立本地别名。已批准设备重命名时，Server 在一个 SQLite transaction 中签发 replacement certificate、包含 exact `DeviceCertificateTransition` 的下一份 roster，并更新设备记录；任一步失败都不会留下部分生效的名称。
+
+界面按左侧分类导航组织，右侧显示所选分类的面板，导航项是链接而不是脚本：CSP 是 `default-src 'none'`，页面里没有任何 JavaScript 能力。分类固定为设备、凭据、设置、部署与维护、关于五项，选中项由服务端路由 `/?section=<分类>` 决定，未知取值落回设备。管理操作成功后重定向回发起操作的那个分类，避免确认动作把管理员弹到别的面板。设备面板内部包含「私有空间」区块：它只有一个，不显示编号，也不提供改名，管理端不建立多账号或多工作区概念，因此区块内只显示工作区创建时间。
+
+工作区名称不进入任何页面。设备详情使用原生可展开区域，窄屏不依赖七列宽表；批准／拒绝、重命名、移除和加入码仍提交到原有 POST 入口。当前界面先提供简体中文；英文资源与完整文案审校仍需在管理端发布验收前完成。
 
 ## 启动
 
@@ -62,7 +68,7 @@ admin_login_code=<应急登录码>
 
 ### 更换凭据
 
-登录后在首页的「凭据」区块点「重新设置凭据」，重走上面的两步即可同时更换账号名、口令和动态验证码密钥。更换成功后其他已经登录的管理会话立即失效。
+登录后在「凭据」页点「重新设置凭据」，重走上面的两步即可同时更换账号名、口令和动态验证码密钥。更换成功后其他已经登录的管理会话立即失效。
 
 验证器丢失时先用启动时打印的应急登录码进入，再重设凭据。口令和验证器同时不可用时，删除数据库里的那一行即可回到默认账号，然后按首次登录流程重设：
 
@@ -134,6 +140,14 @@ NM_ADMIN_TRUSTED_PROXY_CIDRS=127.0.0.1/32
 - 「最近活动」来自成功解析的已认证客户端 frame；
 - Server 最多每分钟为同一设备持久化一次活动时间；
 - 页面显示的是采样后的最近活动，不表示严格实时在线。
+
+### 显示时区
+
+页面上的时间只按一个时区换算显示，默认是 UTC，用来避免管理员自己心算。时间戳一律按 `2006-01-02 15:04:05 -07:00` 打印偏移量，所以同一个时刻在任何设置下含义相同，只有可读性变化。
+
+改时区在「设置」页，选择结果只写进当前浏览器的 `sevenmirror_admin_timezone` cookie（`HttpOnly`、`SameSite=Strict`、一年有效）：它不进 registry、不进管理会话，也不参与任何服务端判断。数据库、设备 API、roster 与 release artifact 仍然只认 UTC，切时区不会改动任何历史数据，其他浏览器或设备要各自设置一次。
+
+镜像里没有 zoneinfo 数据库（distroless 基础镜像不带），所以 `internal/adminweb` 通过 `import _ "time/tzdata"` 把时区数据编进二进制。去掉这个 import 会让除 UTC 以外的任何名字都加载失败，时区设置会静默退回 UTC。
 
 schema v9 新增 nullable `last_authenticated_at_ms` 和 `last_activity_at_ms`。升级前已经存在的设备会显示尚无记录，直到设备下一次成功连接；系统不会用注册时间伪造历史认证时间。
 

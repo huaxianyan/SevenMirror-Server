@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -34,7 +33,53 @@ const (
 
 	setupPath       = "/setup"
 	setupFactorPath = "/setup/totp"
+
+	// Console sections. Each one is a server-rendered panel behind its own URL, so
+	// switching between them is an ordinary navigation: the console's content
+	// policy allows no script, and this keeps it that way.
+	sectionDevices     = "devices"
+	sectionCredentials = "credentials"
+	sectionSettings    = "settings"
+	sectionMaintenance = "maintenance"
+	sectionAbout       = "about"
 )
+
+type consoleSection struct {
+	Key   string
+	Label string
+}
+
+// consoleSections drives the left navigation, in display order. The first entry
+// is also the landing panel.
+var consoleSections = []consoleSection{
+	{Key: sectionDevices, Label: "设备"},
+	{Key: sectionCredentials, Label: "凭据"},
+	{Key: sectionSettings, Label: "设置"},
+	{Key: sectionMaintenance, Label: "部署与维护"},
+	{Key: sectionAbout, Label: "关于"},
+}
+
+// resolveSection answers with the requested panel, falling back to the device
+// tasks that are the reason the console exists. An unknown value is not an error:
+// it lands on the default instead of showing nothing.
+func resolveSection(key string) consoleSection {
+	for _, section := range consoleSections {
+		if section.Key == key {
+			return section
+		}
+	}
+	return consoleSections[0]
+}
+
+func consoleNavigation(active string) []navigationEntry {
+	entries := make([]navigationEntry, 0, len(consoleSections))
+	for _, section := range consoleSections {
+		entries = append(entries, navigationEntry{
+			Key: section.Key, Label: section.Label, Active: section.Key == active,
+		})
+	}
+	return entries
+}
 
 // setupPendingLifetime bounds how long a half-finished credential change stays
 // usable. The pending state lives in the session, so a restart of the console
@@ -139,14 +184,23 @@ type setupFactorView struct {
 type dashboardView struct {
 	CSRFToken      string
 	Flash          *flashMessage
+	Section        string
+	SectionLabel   string
+	Navigation     []navigationEntry
+	Timezone       timezoneView
 	AccountName    string
 	AccountUpdated string
 	Workspaces     []workspaceView
 }
 
+type navigationEntry struct {
+	Key    string
+	Label  string
+	Active bool
+}
+
 type workspaceView struct {
 	Reference      string
-	Name           string
 	CreatedAt      string
 	AndroidCount   int
 	ChromeCount    int
@@ -250,6 +304,7 @@ func NewHandler(manager Manager, accounts AccountStore, config HandlerConfig) (h
 	mux.HandleFunc("/actions/reject", handler.rejectDevice)
 	mux.HandleFunc("/actions/rename", handler.renameDevice)
 	mux.HandleFunc("/actions/remove", handler.removeDevice)
+	mux.HandleFunc("/actions/timezone", handler.changeTimezone)
 	mux.HandleFunc("/assets/admin.css", handler.stylesheet)
 	mux.HandleFunc("/", handler.dashboard)
 	return handler.securityHeaders(mux), nil
@@ -574,7 +629,7 @@ func (h *Handler) issuePairingCode(w http.ResponseWriter, r *http.Request) {
 	}
 	workspaceID, ok := h.resolveWorkspace(r.Context(), r.PostForm.Get("workspace_ref"))
 	if !ok {
-		h.finishAction(w, r, digest, actionFailure())
+		h.finishAction(w, r, digest, sectionDevices, actionFailure())
 		return
 	}
 	// The joining form no longer pre-names the device, so the code carries no bound
@@ -584,11 +639,11 @@ func (h *Handler) issuePairingCode(w http.ResponseWriter, r *http.Request) {
 		r.Context(), workspaceID, admission.DeviceType(r.PostForm.Get("device_type")),
 		"", h.now(), adminservice.DefaultPairingCodeLifetime)
 	if err != nil {
-		h.finishAction(w, r, digest, actionFailure())
+		h.finishAction(w, r, digest, sectionDevices, actionFailure())
 		return
 	}
-	h.finishAction(w, r, digest, &flashMessage{
-		Kind: "success", Message: "加入码已生成，有效期至 " + formatTime(issued.ExpiresAt) + "。",
+	h.finishAction(w, r, digest, sectionDevices, &flashMessage{
+		Kind: "success", Message: "加入码已生成，有效期至 " + formatTime(issued.ExpiresAt, h.displayLocation(r)) + "。",
 		Secret: issued.Code,
 	})
 }
@@ -600,21 +655,21 @@ func (h *Handler) approveDevice(w http.ResponseWriter, r *http.Request) {
 	}
 	workspaceID, ok := h.resolveWorkspace(r.Context(), r.PostForm.Get("workspace_ref"))
 	if !ok {
-		h.finishAction(w, r, digest, actionFailure())
+		h.finishAction(w, r, digest, sectionDevices, actionFailure())
 		return
 	}
 	deviceReference, ok := h.resolveDeviceReference(
 		r.Context(), workspaceID, r.PostForm.Get("device_ref"))
 	if !ok {
-		h.finishAction(w, r, digest, actionFailure())
+		h.finishAction(w, r, digest, sectionDevices, actionFailure())
 		return
 	}
 	if _, err := h.manager.ApproveDevice(
 		r.Context(), workspaceID, deviceReference, h.now()); err != nil {
-		h.finishAction(w, r, digest, actionFailure())
+		h.finishAction(w, r, digest, sectionDevices, actionFailure())
 		return
 	}
-	h.finishAction(w, r, digest, &flashMessage{
+	h.finishAction(w, r, digest, sectionDevices, &flashMessage{
 		Kind: "success", Message: "设备已批准，可以继续完成连接。",
 	})
 }
@@ -630,26 +685,26 @@ func (h *Handler) renameDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.PostForm.Get("confirm") != "yes" {
-		h.finishAction(w, r, digest, actionFailure())
+		h.finishAction(w, r, digest, sectionDevices, actionFailure())
 		return
 	}
 	workspaceID, ok := h.resolveWorkspace(r.Context(), r.PostForm.Get("workspace_ref"))
 	if !ok {
-		h.finishAction(w, r, digest, actionFailure())
+		h.finishAction(w, r, digest, sectionDevices, actionFailure())
 		return
 	}
 	deviceReference, ok := h.resolveDeviceReference(
 		r.Context(), workspaceID, r.PostForm.Get("device_ref"))
 	if !ok {
-		h.finishAction(w, r, digest, actionFailure())
+		h.finishAction(w, r, digest, sectionDevices, actionFailure())
 		return
 	}
 	if _, err := h.manager.RenameDevice(r.Context(), workspaceID, deviceReference,
 		r.PostForm.Get("new_name"), h.now()); err != nil {
-		h.finishAction(w, r, digest, actionFailure())
+		h.finishAction(w, r, digest, sectionDevices, actionFailure())
 		return
 	}
-	h.finishAction(w, r, digest, &flashMessage{
+	h.finishAction(w, r, digest, sectionDevices, &flashMessage{
 		Kind: "success", Message: "设备名称已更新。已接入设备将在同步后显示新名称。",
 	})
 }
@@ -670,26 +725,26 @@ func (h *Handler) changeDeviceAccess(
 		return
 	}
 	if r.PostForm.Get("confirm") != "yes" {
-		h.finishAction(w, r, digest, actionFailure())
+		h.finishAction(w, r, digest, sectionDevices, actionFailure())
 		return
 	}
 	workspaceID, ok := h.resolveWorkspace(r.Context(), r.PostForm.Get("workspace_ref"))
 	if !ok {
-		h.finishAction(w, r, digest, actionFailure())
+		h.finishAction(w, r, digest, sectionDevices, actionFailure())
 		return
 	}
 	deviceReference, ok := h.resolveDeviceReference(
 		r.Context(), workspaceID, r.PostForm.Get("device_ref"))
 	if !ok {
-		h.finishAction(w, r, digest, actionFailure())
+		h.finishAction(w, r, digest, sectionDevices, actionFailure())
 		return
 	}
 	if _, err := h.manager.ChangeDeviceAccess(
 		r.Context(), workspaceID, deviceReference, action, h.now()); err != nil {
-		h.finishAction(w, r, digest, actionFailure())
+		h.finishAction(w, r, digest, sectionDevices, actionFailure())
 		return
 	}
-	h.finishAction(w, r, digest, &flashMessage{Kind: "success", Message: successMessage})
+	h.finishAction(w, r, digest, sectionDevices, &flashMessage{Kind: "success", Message: successMessage})
 }
 
 func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
@@ -712,16 +767,21 @@ func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accountState := h.currentAccount()
+	section := resolveSection(r.URL.Query().Get("section"))
+	location := h.displayLocation(r)
 	view := dashboardView{
 		CSRFToken: current.csrfToken, Flash: h.takeFlash(digest),
-		AccountName: accountState.name, AccountUpdated: formatTime(accountState.updatedAt),
+		Section: section.Key, SectionLabel: section.Label,
+		Navigation:  consoleNavigation(section.Key),
+		Timezone:    timezoneDisplay(h.now(), h.timezoneName(r)),
+		AccountName: accountState.name, AccountUpdated: formatTime(accountState.updatedAt, location),
 	}
 	workspaces, err := h.manager.ListWorkspaces(r.Context())
 	if err != nil {
 		http.Error(w, "unable to load the private space", http.StatusInternalServerError)
 		return
 	}
-	for index, workspace := range workspaces {
+	for _, workspace := range workspaces {
 		devices, err := h.manager.ListDevices(r.Context(), workspace.ID)
 		if err != nil {
 			http.Error(w, "unable to load devices", http.StatusInternalServerError)
@@ -729,7 +789,7 @@ func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		item := workspaceView{
 			Reference: h.workspaceReference(workspace.ID),
-			Name:      "私有空间 " + strconv.Itoa(index+1), CreatedAt: formatTime(workspace.CreatedAt),
+			CreatedAt: formatTime(workspace.CreatedAt, location),
 		}
 		for _, device := range devices {
 			if device.MembershipState == "approved" && !device.Revoked {
@@ -751,11 +811,11 @@ func (h *Handler) dashboard(w http.ResponseWriter, r *http.Request) {
 				Reference: h.deviceActionReference(workspace.ID, device.Reference),
 				Name:      device.DeviceName,
 				Type:      deviceTypeLabel(device.DeviceType), Status: deviceStatus(device),
-				RegisteredAt:      formatTime(device.RegisteredAt),
-				ApprovedAt:        formatOptionalTime(device.ApprovedAt),
-				LastAuthenticated: formatOptionalTime(device.LastAuthenticatedAt),
-				LastActivity:      activityLabel(device.LastActivityAt, h.now()),
-				RemovedAt:         formatOptionalTime(device.RevokedAt),
+				RegisteredAt:      formatTime(device.RegisteredAt, location),
+				ApprovedAt:        formatOptionalTime(device.ApprovedAt, location),
+				LastAuthenticated: formatOptionalTime(device.LastAuthenticatedAt, location),
+				LastActivity:      activityLabel(device.LastActivityAt, h.now(), location),
+				RemovedAt:         formatOptionalTime(device.RevokedAt, location),
 				CanApprove:        device.MembershipState == "pending_approval" && !device.Revoked,
 				CanReject:         pending,
 				CanRename:         device.MembershipState == "approved" && !device.Revoked,
@@ -887,10 +947,13 @@ func (h *Handler) resolveDeviceReference(
 	return matched, matched != ""
 }
 
+// finishAction stores the flash and sends the administrator back to the panel
+// that started the action, so a confirmed change does not move them elsewhere.
 func (h *Handler) finishAction(
 	w http.ResponseWriter,
 	r *http.Request,
 	digest [sha256.Size]byte,
+	section string,
 	message *flashMessage,
 ) {
 	h.mu.Lock()
@@ -900,7 +963,7 @@ func (h *Handler) finishAction(
 		h.sessions[digest] = current
 	}
 	h.mu.Unlock()
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, "/?section="+url.QueryEscape(section), http.StatusSeeOther)
 }
 
 func (h *Handler) takeFlash(digest [sha256.Size]byte) *flashMessage {
@@ -1040,13 +1103,15 @@ func deviceStatus(device admission.DeviceSummary) string {
 	}
 }
 
-func activityLabel(value *time.Time, now time.Time) string {
+// Relative labels are computed from the instant itself and read the same in every
+// time zone; only the absolute fallbacks are converted.
+func activityLabel(value *time.Time, now time.Time, location *time.Location) string {
 	if value == nil {
 		return "从未成功连接"
 	}
 	age := now.Sub(*value)
 	if age < 0 {
-		return formatTime(*value)
+		return formatTime(*value, location)
 	}
 	if age <= 2*time.Minute {
 		return "刚刚活动"
@@ -1054,16 +1119,20 @@ func activityLabel(value *time.Time, now time.Time) string {
 	if age <= time.Hour {
 		return "最近活动"
 	}
-	return formatTime(*value)
+	return formatTime(*value, location)
 }
 
-func formatOptionalTime(value *time.Time) string {
+func formatOptionalTime(value *time.Time, location *time.Location) string {
 	if value == nil {
 		return "—"
 	}
-	return formatTime(*value)
+	return formatTime(*value, location)
 }
 
-func formatTime(value time.Time) string {
-	return value.UTC().Format("2006-01-02 15:04:05 UTC")
+// formatTime renders an instant in the display zone the administrator chose.
+// Stored timestamps and every device-facing value stay on UTC; only this
+// rendering follows the setting, and the offset is printed so a displayed time
+// is never ambiguous about which zone it is in.
+func formatTime(value time.Time, location *time.Location) string {
+	return value.In(location).Format("2006-01-02 15:04:05 -07:00")
 }

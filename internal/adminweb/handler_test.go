@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"html"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -415,14 +416,16 @@ func getPage(
 	t *testing.T,
 	handler http.Handler,
 	path string,
-	cookie *http.Cookie,
+	cookies ...*http.Cookie,
 ) *httptest.ResponseRecorder {
 	t.Helper()
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:8081"+path, nil)
 	request.Host = "127.0.0.1:8081"
 	request.RemoteAddr = "127.0.0.1:32100"
-	if cookie != nil {
-		request.AddCookie(cookie)
+	for _, cookie := range cookies {
+		if cookie != nil {
+			request.AddCookie(cookie)
+		}
 	}
 	result := httptest.NewRecorder()
 	handler.ServeHTTP(result, request)
@@ -786,5 +789,155 @@ func TestUnparsableStoredCredentialStopsTheConsole(t *testing.T) {
 		}); err == nil {
 			t.Fatalf("NewHandler accepted a credential with a %s", name)
 		}
+	}
+}
+
+func cookieNamed(t *testing.T, cookies []*http.Cookie, name string) *http.Cookie {
+	t.Helper()
+	for _, cookie := range cookies {
+		if cookie.Name == name {
+			return cookie
+		}
+	}
+	t.Fatalf("cookie %q not set in %v", name, cookies)
+	return nil
+}
+
+// loginCookie signs in with the stored credential at the test's own moment, which
+// is all the console tests below need from the sign-in flow.
+func loginCookie(t *testing.T, handler http.Handler, moment time.Time) *http.Cookie {
+	t.Helper()
+	secret, err := parseTOTPSecret(testSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := postForm(t, handler, "/login", url.Values{
+		"username": {testStoredName}, "password": {testPassword},
+		"totp_code": {totpCode(secret, totpCounter(moment))},
+	}, nil)
+	if result.Code != http.StatusSeeOther {
+		t.Fatalf("login response=%d body=%s", result.Code, result.Body.String())
+	}
+	cookies := result.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("login cookies=%v", cookies)
+	}
+	return cookies[0]
+}
+
+// The console shows one panel at a time, chosen by the left navigation, and the
+// display time zone applies to every time it prints. Both are view behaviour:
+// neither changes what the server stores or what the devices send.
+func TestConsoleSectionsAndDisplayTimeZone(t *testing.T) {
+	now := time.UnixMilli(1_800_000_000_000)
+	var workspaceID admission.WorkspaceID
+	copy(workspaceID[:], []byte("workspace-id-002"))
+	store := &fixedStore{
+		workspaces: []admission.WorkspaceSummary{{ID: workspaceID, CreatedAt: now}},
+	}
+	moment := now
+	handler, err := NewHandler(store, storedAccountStore(t), HandlerConfig{
+		RecoveryCode:   []byte("recovery-code-for-tests"),
+		ExpectedOrigin: "http://127.0.0.1:8081",
+		Now:            func() time.Time { return moment },
+		Random:         &countingRandom{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := loginCookie(t, handler, moment)
+	utcStamp := now.UTC().Format("2006-01-02 15:04:05 -07:00")
+
+	// The template escapes the "+" of a printed UTC offset, which a browser decodes
+	// back, so every assertion below reads the rendered text rather than the bytes.
+	devicesResult := getPage(t, handler, "/", cookie)
+	devices := html.UnescapeString(devicesResult.Body.String())
+	if devicesResult.Code != http.StatusOK || !strings.Contains(devices, ">待处理申请</h3>") ||
+		!strings.Contains(devices, `href="/?section=settings"`) {
+		t.Fatalf("devices panel=%d body=%s", devicesResult.Code, devices)
+	}
+	// The private space cannot be renamed and there is only ever one of them, so
+	// the console no longer numbers it.
+	if !strings.Contains(devices, "<h2>私有空间</h2>") || strings.Contains(devices, "私有空间 1") {
+		t.Fatalf("private space heading: %s", devices)
+	}
+	// Times start on UTC, which is what the server and the clients record.
+	if !strings.Contains(devices, utcStamp) {
+		t.Fatalf("creation time is not printed in UTC: %s", devices)
+	}
+
+	// Each section is its own panel behind its own URL, and an unknown one lands on
+	// the default rather than rendering an empty page.
+	settingsResult := getPage(t, handler, "/?section=settings", cookie)
+	if settings := html.UnescapeString(settingsResult.Body.String()); settingsResult.Code != http.StatusOK ||
+		!strings.Contains(settings, `action="/actions/timezone"`) ||
+		!strings.Contains(settings, `aria-current="page"`) ||
+		strings.Contains(settings, ">待处理申请</h3>") {
+		t.Fatalf("settings panel=%d body=%s", settingsResult.Code, settings)
+	}
+	fallback := html.UnescapeString(getPage(t, handler, "/?section=does-not-exist", cookie).Body.String())
+	if !strings.Contains(fallback, ">待处理申请</h3>") {
+		t.Fatalf("unknown section body=%s", fallback)
+	}
+
+	// Choosing a zone stores a cookie in this browser. It has to outlive the sign-in
+	// and must not reach the registry, the session or any device.
+	csrf := firstCapture(t, devices, `name="csrf_token" value="([^"]+)"`)
+	changed := postForm(t, handler, "/actions/timezone", url.Values{
+		"csrf_token": {csrf}, "timezone": {"Asia/Shanghai"},
+	}, cookie)
+	if changed.Code != http.StatusSeeOther || changed.Header().Get("Location") != "/?section=settings" {
+		t.Fatalf("timezone response=%d location=%q body=%s", changed.Code,
+			changed.Header().Get("Location"), changed.Body.String())
+	}
+	timezoneCookie := cookieNamed(t, changed.Result().Cookies(), timezoneCookieName)
+	if timezoneCookie.Value != "Asia/Shanghai" || !timezoneCookie.HttpOnly ||
+		timezoneCookie.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("timezone cookie=%+v", timezoneCookie)
+	}
+
+	shanghai, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	zoned := html.UnescapeString(getPage(t, handler, "/", cookie, timezoneCookie).Body.String())
+	if !strings.Contains(zoned, now.In(shanghai).Format("2006-01-02 15:04:05 -07:00")) {
+		t.Fatalf("display zone did not change formatting: %s", zoned)
+	}
+	if strings.Contains(zoned, utcStamp) {
+		t.Fatalf("page still prints UTC after the zone changed: %s", zoned)
+	}
+	selected := html.UnescapeString(
+		getPage(t, handler, "/?section=settings", cookie, timezoneCookie).Body.String())
+	if !strings.Contains(selected, `value="Asia/Shanghai" selected`) {
+		t.Fatalf("chosen zone is not selected: %s", selected)
+	}
+
+	// A name that is not a zone is refused instead of being written to the cookie.
+	rejected := postForm(t, handler, "/actions/timezone", url.Values{
+		"csrf_token": {csrf}, "timezone": {"Mars/Olympus"},
+	}, cookie)
+	if rejected.Code != http.StatusSeeOther || len(rejected.Result().Cookies()) != 0 {
+		t.Fatalf("unknown zone response=%d cookies=%v", rejected.Code, rejected.Result().Cookies())
+	}
+	reported := html.UnescapeString(getPage(t, handler, "/?section=settings", cookie).Body.String())
+	if !strings.Contains(reported, "没有这个时区") {
+		t.Fatalf("unknown zone was not reported: %s", reported)
+	}
+}
+
+// The brand is written "SevenMirror" in the console, the clients and the docs. A
+// style rule used to upper-case it wherever it appeared as a label, so the one
+// name read differently depending on where it showed up.
+func TestConsoleStylesheetDoesNotUpperCaseTheBrand(t *testing.T) {
+	moment := time.UnixMilli(1_800_000_000_000)
+	handler := newTestHandler(t, storedAccountStore(t), &moment)
+	stylesheet := getPage(t, handler, "/assets/admin.css", nil)
+	if stylesheet.Code != http.StatusOK {
+		t.Fatalf("stylesheet=%d", stylesheet.Code)
+	}
+	rule := firstCapture(t, stylesheet.Body.String(), `(?s)\.eyebrow\s*\{([^}]*)\}`)
+	if strings.Contains(rule, "text-transform") {
+		t.Fatalf("the brand label is restyled: .eyebrow {%s}", rule)
 	}
 }
