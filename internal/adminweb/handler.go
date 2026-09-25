@@ -86,7 +86,7 @@ func consoleNavigation(active string) []navigationEntry {
 // simply asks the administrator to start the setup over.
 const setupPendingLifetime = 10 * time.Minute
 
-//go:embed templates/*.html assets/*.css
+//go:embed templates/*.html assets/*.css assets/*.ico
 var files embed.FS
 
 type Manager interface {
@@ -306,6 +306,7 @@ func NewHandler(manager Manager, accounts AccountStore, config HandlerConfig) (h
 	mux.HandleFunc("/actions/remove", handler.removeDevice)
 	mux.HandleFunc("/actions/timezone", handler.changeTimezone)
 	mux.HandleFunc("/assets/admin.css", handler.stylesheet)
+	mux.HandleFunc("/favicon.ico", handler.favicon)
 	mux.HandleFunc("/", handler.dashboard)
 	return handler.securityHeaders(mux), nil
 }
@@ -1000,6 +1001,25 @@ func (h *Handler) stylesheet(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(encoded)
 }
 
+// favicon serves the console's tab icon. It is embedded rather than linked from a CDN
+// because the console is served by a distroless image with no writable static root, and
+// because the CSP below only ever allows same-origin images. Chromium also requests
+// /favicon.ico on its own when a page declares no icon, so this path is answered too.
+func (h *Handler) favicon(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	encoded, err := files.ReadFile("assets/favicon.ico")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "image/x-icon")
+	_, _ = w.Write(encoded)
+}
+
 func (h *Handler) currentSession(r *http.Request) (session, [sha256.Size]byte, bool) {
 	cookie, err := r.Cookie(sessionCookieName)
 	if err != nil || cookie.Value == "" {
@@ -1042,7 +1062,11 @@ func (h *Handler) validOrigin(r *http.Request) bool {
 func (h *Handler) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+		// img-src 'self' exists solely for /favicon.ico: a favicon fetch is an image
+		// load, so with default-src 'none' and no img-src directive Chromium refuses
+		// to draw it and the tab falls back to a blank page glyph. It stays
+		// same-origin, so nothing here lets a page reach an off-host image.
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 		// Chromium derives the Origin header of a navigation request (which is what a
 		// form submission is) from the referrer, so "no-referrer" makes every form
 		// post arrive as origin null and validOrigin rejects the login before the

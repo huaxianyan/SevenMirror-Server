@@ -29,6 +29,8 @@
 
 顶栏左侧的产品名与客户端设置页保持同一规格：18px、粗体、正文色，与它并列的「管理端」是次要灰色小字，对应扩展顶栏里版本号所在的位置。样式表根部设了 `font-synthesis: none`，字体族若不带所声明的字重不会由浏览器合成加粗，因此品牌名的字重必须落在字体真实携带的字重上，且不得退回小号细体或全大写。
 
+标签页图标是编译进二进制的 `assets/favicon.ico`（16、32、48 三帧，PNG 载荷），由 `/favicon.ico` 提供，四个模板都在 head 里显式声明它——Chromium 只在页面没有声明任何图标时才自己去要这个默认路径。图标与客户端的启动图标同出一份母版；各尺寸的派生脚本在 `.tools/extension-icon/`，改图标要从那份脚本与母版出发，不要直接改位图。
+
 工作区名称不进入任何页面。设备详情使用原生可展开区域，窄屏不依赖七列宽表；批准／拒绝、重命名、移除和加入码仍提交到原有 POST 入口。当前界面先提供简体中文；英文资源与完整文案审校仍需在管理端发布验收前完成。
 
 ## 启动
@@ -96,7 +98,9 @@ TOTP 使用 RFC 6238 的 SHA1、六位、三十秒一步，接受前后各一步
 
 ## 安全响应头
 
-每个响应都带 `Cache-Control: no-store`、CSP（`default-src 'none'`，只放行同源样式与同源表单提交）、`Referrer-Policy: same-origin`、`X-Content-Type-Options: nosniff` 与 `X-Frame-Options: DENY`。
+每个响应都带 `Cache-Control: no-store`、CSP（`default-src 'none'`，只放行同源样式、同源图片与同源表单提交）、`Referrer-Policy: same-origin`、`X-Content-Type-Options: nosniff` 与 `X-Frame-Options: DENY`。
+
+`img-src 'self'` **只为标签页图标而存在**，不要当成通用的图片能力删掉。favicon 的获取是一次图片加载，在 `default-src 'none'` 且没有 `img-src` 的情况下 Chromium 会拒绝绘制它，标签页退回空白图标，而且**不会有任何其他东西报错**。它仍然限定同源，因此页面依旧拿不到任何站外图片。`TestConsoleFaviconIsServedAndAllowedByThePolicy` 把「图标可服务」与「策略放行它」两半钉在一起，就是防止后续某次收紧把图标悄悄弄坏。
 
 `Referrer-Policy` **不要改成 `no-referrer`**。Chromium 会用 referrer 推导导航请求的 `Origin`，而表单提交就是导航：在 `no-referrer` 下浏览器提交表单时发的是 `Origin: null`，严格的 `Origin` 校验会先于凭据校验把它拒掉，现场表现是「登录后显示 request rejected」，且换浏览器、换设备、换网络都一样。`same-origin` 仍然保证任何跨源请求都不带 Referer，这正是这里要的性质。
 

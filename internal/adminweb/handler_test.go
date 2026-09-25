@@ -969,3 +969,39 @@ func TestConsoleStylesheetKeepsTheBrandAsLegibleAsTheClient(t *testing.T) {
 		t.Fatalf("brand is thinner than the client wordmark: size=%grem weight=%d", size, weight)
 	}
 }
+
+// The tab icon is served from the binary, and a favicon fetch is an image load, so
+// the policy has to allow same-origin images or Chromium refuses to draw it and the
+// tab falls back to a blank glyph. Both halves are pinned together on purpose:
+// tightening img-src away again breaks the icon without failing anything else.
+func TestConsoleFaviconIsServedAndAllowedByThePolicy(t *testing.T) {
+	moment := time.UnixMilli(1_800_000_000_000)
+	handler := newTestHandler(t, storedAccountStore(t), &moment)
+
+	page := getPage(t, handler, "/assets/admin.css", nil)
+	if policy := page.Header().Get("Content-Security-Policy"); !strings.Contains(policy, "img-src 'self'") {
+		t.Fatalf("the policy does not allow the favicon: %q", policy)
+	}
+
+	icon := getPage(t, handler, "/favicon.ico", nil)
+	if icon.Code != http.StatusOK {
+		t.Fatalf("favicon=%d", icon.Code)
+	}
+	if contentType := icon.Header().Get("Content-Type"); contentType != "image/x-icon" {
+		t.Fatalf("favicon content type=%q", contentType)
+	}
+	body, _ := io.ReadAll(icon.Result().Body)
+	if len(body) < 6 || string(body[:4]) != "\x00\x00\x01\x00" {
+		t.Fatalf("favicon is not an ICO: %q", body)
+	}
+	if frames := int(body[4]) | int(body[5])<<8; frames != 3 {
+		t.Fatalf("favicon carries %d frames, expected 16/32/48", frames)
+	}
+
+	// Chromium only asks for /favicon.ico unasked when the page declares nothing, so
+	// the templates have to point at it rather than relying on the default request.
+	login := getPage(t, handler, "/login", nil)
+	if !strings.Contains(login.Body.String(), `rel="icon" href="/favicon.ico"`) {
+		t.Fatalf("the console templates do not link the icon: %s", login.Body.String())
+	}
+}
