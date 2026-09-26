@@ -6,3 +6,9 @@ useDefault = true
 [[allowlists]]
 description = "Published deterministic protocol vectors contain test-only keys and credentials."
 paths = ['''^protocol/test-vectors/''']
+
+[[allowlists]]
+description = "The canonical protocol README records the SHA-256 digest of every published asset. Those digests are public integrity metadata, not credentials. Matching on the line rather than on a commit-plus-line fingerprint keeps the exemption valid when the file is edited and the digests shift."
+paths = ['''^protocol/README\.md$''']
+regexTarget = "line"
+regexes = ['''SHA-256: [0-9a-f]{64}''']
