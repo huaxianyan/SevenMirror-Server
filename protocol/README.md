@@ -2,7 +2,7 @@
 
 This directory is the canonical source for protocol schemas and cross-client test vectors.
 
-The current schema is **provisional**. Do not treat `0.1.0-dev` as a compatibility promise. Applicable security and transport ADRs, including ADR-005 centralized workspace membership, must be implemented and independently reviewed before protocol v1 is frozen.
+The current schema is **provisional**. Do not treat `0.1.0` as a compatibility promise. Applicable security and transport ADRs, including ADR-005 centralized workspace membership, must be implemented and independently reviewed before protocol v1 is frozen.
 
 Client repositories vendor a tagged copy of these files and record schema integrity metadata. They must not depend on a relative path to this repository.
 
@@ -29,9 +29,9 @@ Client repositories vendor a tagged copy of these files and record schema integr
 `trusted-device-pairing-v1.md` defines the older server-independent bidirectional QR and 60-bit safety-code transcript. It remains only as a frozen provisional 1 × 1 spike artifact while ADR-005 replacement is implemented; it must not be expanded into the production membership trust source.
 
 ```text
-device-auth-frame-v1.md SHA-256: 0b0070a2c6d1ffee926b3ef57dddbc3c89fd226863dfedbea867c4f30756b4b9
+device-auth-frame-v1.md SHA-256: 2526f6c3f5fd5b5403cbf741ebd07a349d229023032903bdf22e5c56a0151c2b
 device-auth-frame-v1.json SHA-256: 1896def3b76e7c3dbd2d59c30df684587159fb7134121a927c652fc276879076
-trusted-device-pairing-v1.md SHA-256: e013d6a59b3ddae4826875603b3b431d460751a2ff93c143e13b2dbfe6093706
+trusted-device-pairing-v1.md SHA-256: 24bedac04327fa36205ee11ca39cfdc45f6edba40671fbdcec7810d86e397473
 trusted-device-pairing-v1.json SHA-256: a7254975e5c831133453ff107b97323e722385c7ae44d5a5732cb8b27eeff861
 transport-credential-rotation-v1.md SHA-256: 6f8fb759ce11ca2b7f8470b830ae99feaf199ec2272318224deb2ae0cd190294
 relay-delivery-v1.md SHA-256: f4a827814754c3b6be54cecf77f3470865c5a69294b62a3da48102af2fdd7659

@@ -1,21 +1,46 @@
-# Notification Mirroring Server
+# SevenMirror Server
 
-Private self-hosted relay for Notification Mirroring. This is one of three independent repositories.
+Private, self-hosted relay for SevenMirror. This is one of three independent repositories.
 
 Repository: <https://github.com/huaxianyan/SevenMirror-Server>
 
-> Status: the provisional system implements private admission, authenticated opaque ciphertext relay, authority-signed workspace membership, verified authority backup／restore and dual-signed rotation, recipient-specific durable delivery, cumulative cursors, and authority-certified snapshot recovery. Real mixed `2 Android × 2 Chrome` convergence has passed; production security review, approval of the third-party notification gate, and release compatibility policy remain incomplete. Third-party notification content already travels only for packages the phone user explicitly selects, and only through the mandatory per-recipient E2EE and authority-authorized recipient chain; no reviewed release has approved that gate.
+> Status: the provisional system implements private admission, authenticated opaque ciphertext relay, authority-signed workspace membership, verified authority backup／restore and dual-signed rotation, recipient-specific durable delivery, cumulative cursors, and authority-certified snapshot recovery. All three clients carry the post-authentication `SNH1`／`SNH2` heartbeat. Real mixed `2 Android × 2 Chrome` convergence has passed; production security review, approval of the third-party notification gate, and release compatibility policy remain incomplete. Third-party notification content already travels only for packages the phone user explicitly selects, and only through the mandatory per-recipient E2EE and authority-authorized recipient chain; no reviewed release has approved that gate.
+
+## What this is
+
+SevenMirror shows Android notifications on a desktop browser. The phone is the only
+source: the extension never asks for notification access on the desktop, and no
+readable notification content leaves either endpoint. This repository is the relay —
+the one component that runs on a host you control, and the canonical source of the
+protocol the other two repositories vendor with a checksummed copy.
+
+A workspace is private by construction. There is no open registration: a device
+joins with a short-lived code the operator issues, and joins the relay only after
+the operator approves it. Relay traffic is opaque ciphertext addressed to one
+recipient, so the relay stores and forwards without being able to read. The
+membership trust source is an Ed25519 workspace authority whose private key never
+leaves operator custody.
+
+To stand a workspace up:
+
+1. Run the relay on a host both the phone and the browser can reach.
+2. Initialize the workspace once from the local admin CLI (`init-workspace`).
+3. Back the workspace up and verify the copy (`backup-workspace`, `verify-workspace-backup`) before approving real devices.
+4. Issue one joining code per device (`issue-pairing-code`), then approve each device in the management console.
+5. Point the Android app and the Chrome extension at the relay.
 
 ## Current functionality
 
 - `GET /healthz` and `GET /readyz`
 - SQLite/WAL schema migration and durable private device registry with pending-proof, pending-approval, approved, and revoked membership states; schema v8 revokes historical `legacy_active` rows and prevents their recreation, while schema v9 records nullable successful-authentication and sampled activity times
 - Local admin CLI for workspace initialization with a unique Ed25519 authority and 192-bit, short-lived, one-time pairing codes
-- Separate, on-demand, loopback-only [`admin-web`](docs/admin-web.md) console with a single-use login code, in-memory session, device status, pairing-code issuance, fixed-policy approval, rejection, and certified removal
+- Separate, on-demand, loopback-only [`admin-web`](docs/admin-web.md) console with one account stored in the registry — account name, password, and TOTP — a forced credential setup on first login, a per-process emergency login code for a lost authenticator, section navigation, a display time zone that only changes what this browser renders, an in-memory session of at most eight hours, device status, joining-code issuance, fixed-policy approval, rejection, rename, and certified removal
 - Authority-controlled ADR-005 `POST /v1/membership/register|prove|state` enrollment flow; the former `/v1/devices/register` route is not mounted and no open registration mode exists
+- Opaque versioned workspace preference blobs, stored and returned by revision; a preference that was never written is reported with a canonical zero timestamp rather than a fabricated one
 - First-binary-frame WebSocket authentication at `GET /v1/relay`
-- Bounded opaque ciphertext routing with workspace/device sender binding
+- Bounded opaque ciphertext routing with workspace/device sender binding; an authenticated replacement may take over a relay slot still occupied by a stale session for the same device tuple
 - Bounded configurable membership, rotation and relay-authentication limits; slow-header/body/auth deadlines; Ping/Pong liveness; and graceful shutdown
+- Post-`SNO1` `SNH1`／`SNH2` liveness exchange, consumed outside the ciphertext hub as [`protocol/transport-heartbeat-v1.md`](protocol/transport-heartbeat-v1.md) specifies; all three clients originate it
 - Canonical provisional notification and Workspace Membership v1 schemas with cross-client test vectors
 - Recipient-specific durable ciphertext delivery, cumulative ACK, bounded history gaps, and explicit snapshot-required recovery
 - Accepted protocol and Chrome recovery decisions in [`docs/adr/ADR-001-protocol-encoding-and-versioning.md`](docs/adr/ADR-001-protocol-encoding-and-versioning.md) and [`docs/adr/ADR-003-chrome-realtime-connection-and-recovery.md`](docs/adr/ADR-003-chrome-realtime-connection-and-recovery.md)
@@ -46,7 +71,7 @@ The management console is a separate process:
 NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin-web
 ```
 
-It prints one short-lived login code to the operator terminal and defaults to `http://127.0.0.1:8081`. See [`docs/admin-web.md`](docs/admin-web.md) before using SSH forwarding or an HTTPS management origin. Verified release artifact sets include separate `admin-web` binaries for linux/amd64 and linux/arm64. The Server container also includes `/app/admin-web`, while its default entrypoint remains `/app/server`; management stays disabled unless an operator starts a separate, short-lived container with the data and authority key mounts.
+It defaults to `http://127.0.0.1:8081` and signs the operator in with an account name, a password, and a TOTP code. That single account lives in the registry, not in environment variables: until credentials are set, the built-in default account (`admin`／`sevenmirror`) can reach the credential setup screen and nothing else. Each process start also prints one ten-minute emergency login code for the case where the authenticator device is lost. See [`docs/admin-web.md`](docs/admin-web.md) for the credential lifecycle and for the SSH-forwarding and HTTPS-origin forms, which cannot both be active at once. Verified release artifact sets include separate `admin-web` binaries for linux/amd64 and linux/arm64. The Server container also includes `/app/admin-web`, while its default entrypoint remains `/app/server`; management stays disabled unless an operator starts a separate, short-lived container with the data and authority key mounts.
 
 Configuration:
 
@@ -135,7 +160,17 @@ NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
 
 Approval loads the exact workspace authority key from `NM_AUTHORITY_KEY_DIR`, applies the product-fixed Android `send` or Chrome `receive,invoke` role template, signs the device certificate, advances and signs the roster, and commits the certificate, device state, and roster in one SQLite transaction. It prints only the redacted device reference and roster epoch. `revoke-device` uses the same authority custody path for certified members: one SQLite transaction removes the exact certificate from the active set, appends its revocation, advances and signs the roster, and marks the device revoked. Historical uncertified devices are fail-closed and migrated directly to revoked state; they cannot re-enroll without a new pairing code and identity.
 
-The list and revoke commands never print a full device ID, transport credential, or E2EE public key. Revocation is durable and idempotent. New authentication fails immediately; the running server revalidates active peers every 250 ms, atomically removes a revoked peer from ciphertext routing, and closes its WebSocket with a fixed policy response. Authorization lookup failures disconnect only the affected peer fail-closed.
+A display name is a workspace fact the authority signs, not a local alias. Rename an approved device with:
+
+```sh
+NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
+  rename-device --workspace <base64url-workspace-id> \
+  --device-ref <redacted-ref> --name <display-name>
+```
+
+One SQLite transaction issues a replacement certificate, advances and signs the roster carrying the exact transition, and updates the device record, so a failure at any step leaves no partially applied name. Android and Chrome display the name read-only and keep no local alias. The management console performs the same operation; the command exists for operators who work from a terminal.
+
+The list, revoke, and rename commands never print a full device ID, transport credential, or E2EE public key. Revocation is durable and idempotent. New authentication fails immediately; the running server revalidates active peers every 250 ms, atomically removes a revoked peer from ciphertext routing, and closes its WebSocket with a fixed policy response. Authorization lookup failures disconnect only the affected peer fail-closed.
 
 Issue an exact-device-bound, short-lived rotation authorization from the same redacted list:
 
@@ -165,7 +200,9 @@ The first-message authentication format is documented in [`protocol/device-auth-
 
 ## Protocol ownership
 
-`protocol/proto` is the canonical schema source. Android and Chrome repositories vendor a released, checksummed copy.
+`protocol/` is the canonical source for the schemas, the cross-client test vectors, and the normative documents. `protocol/PROTOCOL_VERSION` holds the version those assets are released under: the release workflow requires a tag equal to `v` plus that exact value, and rejects a development version outright. The schema stays provisional — a version number is not a compatibility promise until protocol v1 is frozen.
+
+Android and Chrome vendor a fixed copy of the documents they implement and pin each one with a recorded SHA-256, so a drifted copy fails their own build instead of being discovered at runtime.
 
 ## License
 
