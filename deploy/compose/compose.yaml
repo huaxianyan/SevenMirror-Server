@@ -6,6 +6,12 @@
 # admin-web the on-demand management console. Loopback only; reach it through the
 #           reverse proxy on its own origin.
 #
+# All three services use the same ${SEVENMIRROR_IMAGE} reference and run from one
+# image that carries all three binaries; the entrypoint selects which one. Only
+# the mount list separates the relay from the authority key directory, so the
+# relay container never sees it. See docs/deployment.md for what that means when
+# you upgrade a single service.
+#
 # Copy .env.example to .env, set every value, then follow docs/deployment.md.
 # Relative bind mounts resolve beside this file, so data/ and authority/ stay
 # under deploy/compose/ unless the operator changes the paths deliberately.

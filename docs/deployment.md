@@ -26,6 +26,44 @@ All three services run as `65532:65532` with a read-only root filesystem, every
 capability dropped, and `no-new-privileges`. Writable state is limited to the bind
 mounts and a `16 MiB` `noexec` tmpfs at `/tmp`.
 
+### One image, three services
+
+All three services use the same `${SEVENMIRROR_IMAGE}` reference. The image ships
+three static binaries (`/app/server`, `/app/admin`, `/app/admin-web`) and each
+service selects one through its `entrypoint`; the image's own entrypoint is the
+relay. Building or publishing a release therefore produces exactly one
+multi-arch image per revision.
+
+The privilege boundary between the relay and the console comes from the mount
+list, not from the image contents: only `admin` and `admin-web` mount
+`authority`, and the relay's only persistent mount is `data`. Splitting the image
+per service would not widen that boundary, because the relay binary and the
+console binary already live in one image while the relay still cannot read the
+key.
+
+Because all three share one reference, updating any one of them updates the
+reference for all. A feature change that touches only the console still means the
+next `docker compose up -d` replaces the relay container too, and the devices
+reconnect a few seconds later. That is an accepted cost of the single-image
+layout, not a failure.
+
+### `.env` versus the running revision
+
+The image is pinned by digest and the running containers are not restarted when
+`.env` changes, so `.env` may name a newer revision than the containers are
+already serving. Read the `org.opencontainers.image.revision` label on the
+running image to learn what is actually running:
+
+```sh
+docker inspect "$(docker compose ps -q relay)" \
+  --format '{{index .Config.Labels "org.opencontainers.image.revision"}}'
+```
+
+Before restarting a service to close that gap, check whether the revision range
+touches the build inputs (`go.mod`, `go.sum`, `cmd/`, `internal/`). A release that
+changes only documentation or the protocol text produces the same binaries, so
+restarting buys no behavior change and costs a reconnect.
+
 ## 2. Prerequisites
 
 - Linux host with Docker Engine and Compose v2.
@@ -184,10 +222,17 @@ Restore refuses to overwrite an existing registry or a different key file.
 
 1. Create and verify a workspace backup, and keep it outside `data`.
 2. Set `SEVENMIRROR_IMAGE` to the new immutable digest.
-3. `docker compose up -d relay` and re-check `readyz`.
-4. Confirm devices reconnect. Both clients keep a durable rollback floor for the
+3. Check whether the new revision changes the build inputs. If it does not, the
+   binaries are identical and there is nothing to upgrade; restarting only costs a
+   device reconnect.
+4. `docker compose up -d relay` and re-check `readyz`.
+5. Confirm devices reconnect. Both clients keep a durable rollback floor for the
    signed roster, so a newer registry can reject an older client, but an older
    relay cannot silently downgrade a client that already advanced.
+
+`docker compose up -d` without a service name also replaces the console with the
+same image. That is harmless when the console is not running; the profile keeps it
+stopped until you start it explicitly.
 
 Keep the previous image reference and the consistent backup from step 1 as the
 rollback pair. Follow
