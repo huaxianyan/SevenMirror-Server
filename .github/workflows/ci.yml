@@ -33,6 +33,8 @@ jobs:
           cache: true
       - name: Verify release artifact manifest tamper detection
         run: python3 scripts/test_build_release_artifacts.py
+      - name: Verify release note format
+        run: python3 scripts/test_verify_release_notes.py
       - name: Build and verify release artifact manifest
         run: |
           git status --short

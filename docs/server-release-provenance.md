@@ -119,6 +119,27 @@ graph and scans both registry-served runtime platforms. Registry evidence is a
 fourth separately attested and uploaded scope; the source-revision tag is not the
 deployment identity.
 
+## Published release
+
+The `publish-release` job runs only for a tag and only after the build job
+succeeds. It downloads the verified binary artifact set, assembles the release
+body from `docs/release-notes/<tag>.md` plus a generated `## 构建信息` table, and
+creates the GitHub Release with `gh release create --verify-tag`.
+
+Only the binary set becomes Release assets. The container set stays a workflow
+artifact and is distributed through the container registry, which follows the
+decided channel split; both sets also contain a `SHA256SUMS` file, and a GitHub
+Release cannot hold two assets with the same name.
+
+`docs/release-notes/<tag>.md` is short by design: one summary paragraph, a
+`## 主要更新` section, and a link to this document under the tag. Usage,
+validation evidence and build ranges belong here or in the README, not in the
+release body. `scripts/verify_release_notes.py` enforces that shape, and
+`scripts/test_verify_release_notes.py` runs it as part of CI.
+
+The release title is the tag alone. A product-name prefix turns the Release list
+into a column of identical truncated names and hides which version each entry is.
+
 ## Remaining signing work
 
 Sigstore/GitHub provenance is not platform-native code signing. Default-branch
