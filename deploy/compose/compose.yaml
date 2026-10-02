@@ -1,10 +1,9 @@
 # SevenMirror Server deployment.
 #
 # relay     the persistent public relay. Non-root, read-only root filesystem,
-#           every capability dropped, and published only on host loopback.
+#           every capability dropped, and bound to host loopback only.
 # admin     one-shot workspace administration. Runs with no network at all.
-# admin-web the on-demand management console. Loopback only; reach it through the
-#           reverse proxy on its own origin.
+# admin-web the on-demand management console. Loopback only.
 #
 # All three services use the same ${SEVENMIRROR_IMAGE} reference and run from one
 # image that carries all three binaries; the entrypoint selects which one. Only
@@ -12,9 +11,14 @@
 # relay container never sees it. See docs/deployment.md for what that means when
 # you upgrade a single service.
 #
-# Copy .env.example to .env, set every value, then follow docs/deployment.md.
-# Relative bind mounts resolve beside this file, so data/ and authority/ stay
-# under deploy/compose/ unless the operator changes the paths deliberately.
+# Persistent state stays beside this file, under data/, authority/ and backups/,
+# so backing up the deployment is copying this directory.
+#
+# None of these services terminate TLS or issue a certificate. Put your own
+# reverse proxy in front of the relay's loopback address; see deploy/caddy/ or
+# deploy/nginx/ for a starting point.
+#
+# Copy .env.example to .env, set the values, then follow docs/deployment.md.
 
 services:
   relay:
@@ -24,12 +28,20 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    ports:
-      - "${SEVENMIRROR_RELAY_BIND:?Set the host loopback address and port}:8080"
+    # Shares the host network namespace so the relay binds loopback directly and
+    # your reverse proxy reaches it over loopback. That is the topology the
+    # trusted-proxy check is designed for: the socket peer is a loopback address
+    # you can state up front, instead of a Compose bridge gateway you would have
+    # to look up after the first start. It also means no pinned subnet, so this
+    # stack cannot collide with networks you already have.
+    network_mode: host
     environment:
-      NM_ADDRESS: "0.0.0.0:8080"
+      NM_ADDRESS: ${SEVENMIRROR_RELAY_BIND:?Set the host loopback address and port}
       NM_DATABASE_PATH: "/data/registry.db"
-      NM_TRUSTED_PROXY_CIDRS: ${SEVENMIRROR_TRUSTED_PROXY:?Set the exact reverse-proxy source address}
+      # Only your reverse proxy may name a client address, and it always connects
+      # from loopback. Never widen this to a subnet: every peer inside it could
+      # then spoof the forwarded client address.
+      NM_TRUSTED_PROXY_CIDRS: ${SEVENMIRROR_TRUSTED_PROXY:-127.0.0.1/32}
     volumes:
       - ./data:/data
     tmpfs:
@@ -69,9 +81,11 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    # The console refuses any non-loopback listen address and the relay never mounts
-    # the authority directory, so it shares the host loopback namespace instead of
-    # publishing a port. This makes the service Linux-only.
+    # The console refuses any non-loopback listen address, so it shares the host
+    # loopback namespace instead of publishing a port. Start it with
+    # `docker compose up -d admin-web` (naming the service enables its profile)
+    # and stop it when you are done; it keeps sessions in memory only. This makes
+    # the console Linux-only.
     network_mode: host
     environment:
       NM_DATABASE_PATH: "/data/registry.db"
@@ -79,7 +93,7 @@ services:
       NM_ADMIN_ADDRESS: ${SEVENMIRROR_ADMIN_ADDRESS:?Set a loopback address and port}
       NM_ADMIN_ORIGIN: ${SEVENMIRROR_ADMIN_ORIGIN:?Set the exact browser-facing origin}
       NM_ADMIN_RECOVERY_CODE: ${SEVENMIRROR_ADMIN_RECOVERY_CODE:-on}
-      NM_ADMIN_TRUSTED_PROXY_CIDRS: ${SEVENMIRROR_ADMIN_TRUSTED_PROXY_CIDRS:-}
+      NM_ADMIN_TRUSTED_PROXY_CIDRS: ${SEVENMIRROR_ADMIN_TRUSTED_PROXY_CIDRS:-127.0.0.1/32}
     volumes:
       - ./data:/data
       - ./authority:/authority

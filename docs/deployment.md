@@ -12,9 +12,17 @@ and a browser can join. It does not replace the operator-owned work listed under
 
 | Service | Role | Network | Mounts |
 |---|---|---|---|
-| `relay` | Persistent public relay, default entrypoint `/app/server` | Publishes `${SEVENMIRROR_RELAY_BIND}`, which must be a host loopback address | `data` only |
+| `relay` | Persistent public relay, default entrypoint `/app/server` | Host network namespace; binds `${SEVENMIRROR_RELAY_BIND}` directly, which must be a host loopback address | `data` only |
 | `admin` | One-shot workspace administration, entrypoint `/app/admin` | `network_mode: none` | `data`, `authority`, `backups` |
 | `admin-web` | On-demand management console, entrypoint `/app/admin-web` | Host loopback namespace, no published port | `data`, `authority` |
+
+`relay` and `admin-web` share the host network namespace. For the relay that is
+deliberate: your reverse proxy connects over loopback, so the only peer allowed to
+name a client address is a loopback address stated up front, and no Compose subnet
+is pinned that could collide with networks already on the host. The relay still
+binds loopback only, so it stays unreachable from outside the host; check it with
+`ss -ltn` rather than `docker compose port`, because a host-network service has no
+published port mapping.
 
 `admin` and `admin-web` sit behind Compose profiles, so `up` alone never starts
 them. The console refuses any non-loopback listen address, and the relay never
@@ -85,13 +93,18 @@ install -d -m 0700 -o 65532 -g 65532 data authority backups
 cp .env.example .env
 ```
 
-Edit `.env` and set all five values. Two of them need local inspection:
+Edit `.env` and set it up. Only `SEVENMIRROR_IMAGE` needs a decision:
 
-- `SEVENMIRROR_TRUSTED_PROXY` must be the exact source address the relay sees for
-  proxy traffic. Start once, run `docker network inspect` on the Compose network,
-  and pin the single IPv4 gateway with `/32`. Never widen it to a subnet: every
-  peer inside that range could otherwise spoof the forwarded client address.
-- `SEVENMIRROR_IMAGE` must be the digest-pinned reference from the release ledger.
+- `SEVENMIRROR_IMAGE` is the image to run. Pin a published digest before exposing
+the relay to real traffic; a tag can move. The release ledger in
+[`security/registry-release-ledger.json`](../security/registry-release-ledger.json)
+records the published digests, and the rules for trusting one are in
+[`docs/server-container-provenance.md`](server-container-provenance.md).
+- `SEVENMIRROR_TRUSTED_PROXY` is pre-set to `127.0.0.1/32`. The relay container
+shares the host network namespace and your reverse proxy connects over loopback,
+so the default is already correct and needs no lookup. Only change it if you put
+the proxy somewhere else. Never widen it to a subnet: every peer inside that range
+could otherwise spoof the forwarded client address.
 
 `data` holds the SQLite registry, `authority` holds the workspace authority
 PKCS#8 private key, and `backups` receives consistent workspace backups. The
@@ -121,26 +134,44 @@ curl -fsS http://127.0.0.1:18081/readyz
 ```
 
 `healthz` proves the process is up; `readyz` proves it can serve from its
-registry. Confirm the relay never mounts the authority directory, and that the
-published port is bound to loopback only:
+registry. Confirm the relay never mounts the authority directory, and that it
+listens on loopback only. The relay uses the host network namespace, so check the
+listening socket on the host rather than looking for a published port:
 
 ```sh
-docker compose config | grep -A3 published
 docker inspect "$(docker compose ps -q relay)" --format '{{json .Mounts}}'
+ss -ltn '( sport = :18081 )'
 ```
+
+The `ss` output must show `127.0.0.1:18081` and never `0.0.0.0:18081` or
+`[::]:18081`. If it shows a wildcard address, stop the relay before exposing the
+host to any network.
 
 ## 6. Publish through a reverse proxy
 
-Choose either a host-installed proxy or the Compose-adjacent baseline:
+This stack terminates no TLS and issues no certificate. Point your own reverse
+proxy at the published loopback address; only the relay needs to be exposed.
 
-- Host-installed Caddy: follow [`docs/caddy-reverse-proxy.md`](caddy-reverse-proxy.md),
-  which fixes the trusted-proxy resolution, the reduced access log, and the
-  `wss://` upgrade path.
-- Container Caddy: the baseline file is
-  [`deploy/caddy/Caddyfile`](../deploy/caddy/Caddyfile). It expects
-  `SEVENMIRROR_LISTEN_ADDRESS`, `SEVENMIRROR_TLS_CERT_FILE`,
-  `SEVENMIRROR_TLS_KEY_FILE`, `SEVENMIRROR_ACCESS_LOG`, and
-  `SEVENMIRROR_UPSTREAM` in the proxy's environment.
+Two example proxy configurations are checked in:
+
+- Caddy: [`deploy/caddy/Caddyfile`](../deploy/caddy/Caddyfile) is the
+tested baseline. [`docs/caddy-reverse-proxy.md`](caddy-reverse-proxy.md)
+explains the trusted-proxy resolution, the reduced access log and the `wss://`
+upgrade path, and it expects `SEVENMIRROR_LISTEN_ADDRESS`,
+`SEVENMIRROR_TLS_CERT_FILE`, `SEVENMIRROR_TLS_KEY_FILE`, `SEVENMIRROR_ACCESS_LOG`
+and `SEVENMIRROR_UPSTREAM` in the proxy environment.
+- nginx: [`deploy/nginx/mirror.conf`](../deploy/nginx/mirror.conf) is a starting
+point for a host-installed nginx with certbot. It shows the WebSocket upgrade
+headers and replaces rather than appends `X-Forwarded-For`.
+
+Whichever you use, two rules decide whether the relay behaves correctly:
+
+- The proxy must set `X-Forwarded-For` to the direct client address rather than
+appending to it. Only the proxy may name the client address, otherwise a caller
+picks its own rate-limit bucket.
+- The proxy must pass the WebSocket upgrade through. The relay authenticates on the
+first binary frame, so a proxy that strips `Upgrade` breaks device connectivity
+instead of failing loudly.
 
 The relay must not be reachable from any other interface. Do not add a second
 published port and do not forward the container address from the proxy host.
