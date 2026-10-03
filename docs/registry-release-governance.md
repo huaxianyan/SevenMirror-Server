@@ -31,8 +31,13 @@ There are currently no production-approved SevenMirror Server images.
   `ghcr.io/huaxianyan/sevenmirror-server@sha256:<index>`.
 - A 40-character source-revision tag is only a retrieval aid. The protected
   workflow refuses to repoint an existing revision tag to different content.
+- A tag build also publishes `latest` and the `protocol/PROTOCOL_VERSION` value.
+  Both are moveable retrieval aids that always point at the exact index digest the
+  same run verified, so they cannot silently disagree with the immutable tag at
+  publication time.
 - No `latest`, environment, release-name or rollback tag may be used in a service
-  definition.
+  definition. This rule is unchanged and is what keeps it possible to say which
+  revision is deployed.
 - Registry digest availability does not replace offline OCI graph verification,
   GitHub attestation verification or the ledger decision.
 
@@ -40,6 +45,27 @@ An owner can still mutate or remove tags through the GHCR UI or API. Digest-pinn
 deployment prevents a changed tag from silently changing deployed bytes, but it
 cannot prevent owner deletion. Until a second package owner and independently
 controlled archive exist, this remains a release-governance limitation.
+
+### Following a moveable tag
+
+Deploying by digest and following a moveable tag are different choices, and a
+service definition can only state one of them.
+
+Following `latest` — for example with an automated updater such as watchtower —
+trades three guarantees for convenience:
+
+- **Which revision is running** stops being answerable from the deployment file.
+  Read `org.opencontainers.image.revision` from the running image instead.
+- **Rollback stops being a pin change.** A digest-pinned deployment rolls back by
+  reverting one value; a tag follower has to pin a digest at incident time, while
+  the registry may already have moved.
+- **A newer registry can refuse an older client.** The signed roster keeps a
+  one-way rollback floor, so an update that advances it cannot be undone by
+  restarting an older image. Check the protocol and storage compatibility notes
+  before letting an updater run unattended.
+
+An automated updater is a deliberate operational choice, not a supported default.
+If you use one, keep a known-good digest recorded so an incident has a target.
 
 ## Ledger states
 

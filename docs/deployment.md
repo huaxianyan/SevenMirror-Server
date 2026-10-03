@@ -95,8 +95,18 @@ cp .env.example .env
 
 Edit `.env` and set it up. Only `SEVENMIRROR_IMAGE` needs a decision:
 
-- `SEVENMIRROR_IMAGE` is the image to run. Pin a published digest before exposing
-the relay to real traffic; a tag can move. The release ledger in
+- `SEVENMIRROR_IMAGE` is the image to run. A tag build publishes `latest`, the
+`protocol/PROTOCOL_VERSION` value and the 40-character commit, all pointing at
+the same verified image, so any of these pulls:
+
+```sh
+docker pull ghcr.io/huaxianyan/sevenmirror-server:latest
+docker pull ghcr.io/huaxianyan/sevenmirror-server:0.1.0
+```
+
+Pin a digest before exposing the relay to real traffic. The digest is the only
+identity that cannot move, so it is the one that answers which revision is
+running; a tag can be repointed. The release ledger in
 [`security/registry-release-ledger.json`](../security/registry-release-ledger.json)
 records the published digests, and the rules for trusting one are in
 [`docs/server-container-provenance.md`](server-container-provenance.md).
@@ -105,6 +115,16 @@ shares the host network namespace and your reverse proxy connects over loopback,
 so the default is already correct and needs no lookup. Only change it if you put
 the proxy somewhere else. Never widen it to a subnet: every peer inside that range
 could otherwise spoof the forwarded client address.
+
+### If you follow a moveable tag
+
+An automated updater such as watchtower can follow `latest` so you do not upgrade
+by hand. That is a deliberate choice with three costs, spelled out in
+[`docs/registry-release-governance.md`](registry-release-governance.md): the
+deployment file stops saying which revision runs, rollback stops being a one-value
+change, and an update that advances the signed roster's rollback floor cannot be
+undone by restarting an older image. Record a known-good digest before you let an
+updater run unattended.
 
 `data` holds the SQLite registry, `authority` holds the workspace authority
 PKCS#8 private key, and `backups` receives consistent workspace backups. The
