@@ -199,8 +199,17 @@ func TestReconnectSurvivesAnOldLookupFailureAndHonorsCurrentRevocation(t *testin
 	if !errors.As(err, &closeError) || closeError.Code != websocket.ClosePolicyViolation {
 		t.Fatalf("revoked connection error = %v", err)
 	}
-	if hub.IsConnected(peer) {
-		t.Fatal("revoked peer remained registered")
+	// The policy close frame is written by the connection's own goroutine as soon
+	// as the retirement signal closes, while the monitor goroutine that called
+	// Disconnect still has to reacquire the hub lock to drop the entry. Reading
+	// the frame therefore does not prove the entry is gone yet, so wait for it the
+	// same way the check above waits for the original connection to leave.
+	deadline = time.Now().Add(2 * time.Second)
+	for hub.IsConnected(peer) {
+		if time.Now().After(deadline) {
+			t.Fatal("revoked peer remained registered")
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
