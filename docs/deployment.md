@@ -12,7 +12,7 @@ and a browser can join. It does not replace the operator-owned work listed under
 
 | Service | Role | Network | Mounts |
 |---|---|---|---|
-| `relay` | Persistent public relay, default entrypoint `/app/server` | Host network namespace; binds `${SEVENMIRROR_RELAY_BIND}` directly, which must be a host loopback address | `data` only |
+| `relay` | Persistent public relay, default entrypoint `/app/server` | Host network namespace; binds `NM_ADDRESS` directly, which is a host loopback address | `data` only |
 | `admin` | One-shot workspace administration, entrypoint `/app/admin` | `network_mode: none` | `data`, `authority`, `backups` |
 | `admin-web` | On-demand management console, entrypoint `/app/admin-web` | Host loopback namespace, no published port | `data`, `authority` |
 
@@ -30,13 +30,22 @@ mounts the authority directory; approving, renaming, or removing a device is the
 only operation that needs the workspace authority private key, and it runs in the
 console container.
 
-All three services run as `65532:65532` with a read-only root filesystem, every
+All three services run as `0:0` with a read-only root filesystem, every
 capability dropped, and `no-new-privileges`. Writable state is limited to the bind
 mounts and a `16 MiB` `noexec` tmpfs at `/tmp`.
 
+Running as root is what removes the manual directory step. Docker creates a
+missing bind-mount directory as `root`, and a non-root container cannot write
+into it; matching the container user to that owner is simpler than requiring the
+operator to run `install -d -o <uid> -g <gid>` first. It does not widen what the
+process can do: `cap_drop: [ALL]` leaves no capability to use, the root
+filesystem is read-only, and the image still declares `nonroot:nonroot` so any
+other runtime keeps the least-privileged default.
+
 ### One image, three services
 
-All three services use the same `${SEVENMIRROR_IMAGE}` reference. The image ships
+All three services use the same image reference, defined once at the top of
+`compose.yaml`. The image ships
 three static binaries (`/app/server`, `/app/admin`, `/app/admin-web`) and each
 service selects one through its `entrypoint`; the image's own entrypoint is the
 relay. Building or publishing a release therefore produces exactly one
@@ -55,12 +64,12 @@ next `docker compose up -d` replaces the relay container too, and the devices
 reconnect a few seconds later. That is an accepted cost of the single-image
 layout, not a failure.
 
-### `.env` versus the running revision
+### Pinning a revision
 
-The image is pinned by digest and the running containers are not restarted when
-`.env` changes, so `.env` may name a newer revision than the containers are
-already serving. Read the `org.opencontainers.image.revision` label on the
-running image to learn what is actually running:
+The image reference lives in `compose.yaml`, and the running containers are not
+restarted when you change it, so the file may name a newer revision than the
+containers are already serving. Read the `org.opencontainers.image.revision`
+label on the running image to learn what is actually running:
 
 ```sh
 docker inspect "$(docker compose ps -q relay)" \
@@ -83,21 +92,19 @@ restarting buys no behavior change and costs a reconnect.
   [`docs/server-container-provenance.md`](server-container-provenance.md) for the
   rules on verifying a published image.
 
-## 3. Prepare the directory
+## 3. Choose the image
 
-From the repository root:
+Nothing needs preparing. `compose.yaml` is the only file, and the directories are
+created on first start with the ownership the containers need.
 
 ```sh
 cd deploy/compose
-install -d -m 0700 -o 65532 -g 65532 data authority backups
-cp .env.example .env
 ```
 
-Edit `.env` and set it up. Only `SEVENMIRROR_IMAGE` needs a decision:
-
-- `SEVENMIRROR_IMAGE` is the image to run. A tag build publishes `latest`, the
-`protocol/PROTOCOL_VERSION` value and the 40-character commit, all pointing at
-the same verified image, so any of these pulls:
+The one value worth a decision is the image reference at the top of
+`compose.yaml`. A tag build publishes `latest`, the `protocol/PROTOCOL_VERSION`
+value and the 40-character commit, all pointing at the same verified image, so any
+of these pulls:
 
 ```sh
 docker pull ghcr.io/huaxianyan/sevenmirror-server:latest
@@ -110,11 +117,6 @@ running; a tag can be repointed. The release ledger in
 [`security/registry-release-ledger.json`](../security/registry-release-ledger.json)
 records the published digests, and the rules for trusting one are in
 [`docs/server-container-provenance.md`](server-container-provenance.md).
-- `SEVENMIRROR_TRUSTED_PROXY` is pre-set to `127.0.0.1/32`. The relay container
-shares the host network namespace and your reverse proxy connects over loopback,
-so the default is already correct and needs no lookup. Only change it if you put
-the proxy somewhere else. Never widen it to a subnet: every peer inside that range
-could otherwise spoof the forwarded client address.
 
 ### If you follow a moveable tag
 
@@ -126,9 +128,12 @@ change, and an update that advances the signed roster's rollback floor cannot be
 undone by restarting an older image. Record a known-good digest before you let an
 updater run unattended.
 
+### What the directories hold
+
 `data` holds the SQLite registry, `authority` holds the workspace authority
 PKCS#8 private key, and `backups` receives consistent workspace backups. The
-container user must own all three, and `authority` must stay `0700`.
+containers own all three. `authority` is tightened to `0700` the first time it is
+used, and files inside it are written `0600`.
 
 ## 4. Initialize the workspace
 
@@ -224,8 +229,8 @@ as the way back in after a lost authenticator device.
 
 Stop the console with `Ctrl-C` when done; every in-memory session is discarded and
 the container is removed. If you use a dedicated HTTPS management origin instead,
-keep the proxy upstream on loopback and set `SEVENMIRROR_ADMIN_ORIGIN` to the
-exact browser origin. Never put the console and the device API behind the same
+keep the proxy upstream on loopback and set `NM_ADMIN_ORIGIN` in `compose.yaml` to
+the exact browser origin. Never put the console and the device API behind the same
 public origin.
 
 ## 8. Enroll a device
@@ -272,7 +277,8 @@ Restore refuses to overwrite an existing registry or a different key file.
 ## 10. Upgrade and roll back
 
 1. Create and verify a workspace backup, and keep it outside `data`.
-2. Set `SEVENMIRROR_IMAGE` to the new immutable digest.
+2. Change the image reference at the top of `compose.yaml` to the new immutable
+   digest.
 3. Check whether the new revision changes the build inputs. If it does not, the
    binaries are identical and there is nothing to upgrade; restarting only costs a
    device reconnect.

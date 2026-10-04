@@ -20,31 +20,23 @@ SevenMirror 的中继服务端。它在你自己的主机上路由手机与浏�
 
 需要一台 Linux 主机、Docker Engine 与 Compose v2。如果要让手机和浏览器从外网连入，还需要一个带有效 TLS 证书的域名。
 
-仓库自带一份可以直接启动的 Compose 文件。持久化状态放在 Compose 文件旁边，备份就是把那个目录复制走。
+仓库自带一份可以直接启动的 Compose 文件。不需要 `.env`，也不需要预先建目录，持久化状态就在这个文件旁边。
 
 ```sh
 cd deploy/compose
-cp .env.example .env
-# 编辑 .env，至少改 SEVENMIRROR_IMAGE
-install -d -m 0700 data authority backups
-docker compose up -d relay
-```
-
-只需要决定一个值：
-
-```ini
-SEVENMIRROR_IMAGE=ghcr.io/huaxianyan/sevenmirror-server:0.1.0
-```
-
-也可以钉摘要，或换成 `latest`。三者指向同一个镜像，区别是摘要不会移动。
-
-接着初始化私有空间，并把它备份一次：
-
-```sh
+docker compose up -d
 docker compose run --rm admin init-workspace
 ```
 
-这一步会输出一个工作区 ID 与一把权威私钥。私钥文件必须离线备份，丢了就无法再批准设备。
+需要改的只有一处，就是文件开头的镜像引用：
+
+```yaml
+x-image: &sevenmirror-image ghcr.io/huaxianyan/sevenmirror-server:0.1.0
+```
+
+也可以换成 `latest` 或钉摘要。三者指向同一个镜像，区别是摘要不会移动。
+
+`init-workspace` 会输出一个工作区 ID 与一把权威私钥。私钥文件必须离线备份，丢了就无法再批准设备。
 
 之后为每台设备签发加入码，并在管理端批准：
 

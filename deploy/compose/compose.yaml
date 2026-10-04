@@ -1,47 +1,41 @@
-# SevenMirror Server deployment.
+# SevenMirror Server 部署文件。
 #
-# relay     the persistent public relay. Non-root, read-only root filesystem,
-#           every capability dropped, and bound to host loopback only.
-# admin     one-shot workspace administration. Runs with no network at all.
-# admin-web the on-demand management console. Loopback only.
+# 部署两步，都在这个目录里执行：
 #
-# All three services use the same ${SEVENMIRROR_IMAGE} reference and run from one
-# image that carries all three binaries; the entrypoint selects which one. Only
-# the mount list separates the relay from the authority key directory, so the
-# relay container never sees it. See docs/deployment.md for what that means when
-# you upgrade a single service.
+#   1. docker compose up -d
+#   2. docker compose run --rm admin init-workspace
 #
-# Persistent state stays beside this file, under data/, authority/ and backups/,
-# so backing up the deployment is copying this directory.
+# 没有 .env 文件，也不需要预先创建目录。持久化数据就放在这个文件旁边的
+# data/、authority/、backups/ 三个目录里，备份就是把它们复制走。
 #
-# None of these services terminate TLS or issue a certificate. Put your own
-# reverse proxy in front of the relay's loopback address; see deploy/caddy/ or
-# deploy/nginx/ for a starting point.
-#
-# Copy .env.example to .env, set the values, then follow docs/deployment.md.
+# 需要改的只有一处：下面的镜像引用。升级时把 :0.1.0 改成新版本号；
+# 想固定到不可变的摘要，就换成 @sha256:<index digest>。
+
+x-image: &sevenmirror-image ghcr.io/huaxianyan/sevenmirror-server:0.1.0
 
 services:
+  # 常驻的中继。对外只绑定宿主机回环地址，由你自己的反向代理转发进来。
   relay:
-    image: ${SEVENMIRROR_IMAGE:?Set SEVENMIRROR_IMAGE to an immutable image reference}
+    image: *sevenmirror-image
     restart: unless-stopped
-    user: "65532:65532"
+    # 用 root 是为了让 Docker 自动创建的 data/ 目录直接可用，从而省掉
+    # 手工 mkdir 与 chown。除此之外仍保留了只读根文件系统、丢弃全部
+    # capability、禁止提权这三项收紧。
+    user: "0:0"
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    # Shares the host network namespace so the relay binds loopback directly and
-    # your reverse proxy reaches it over loopback. That is the topology the
-    # trusted-proxy check is designed for: the socket peer is a loopback address
-    # you can state up front, instead of a Compose bridge gateway you would have
-    # to look up after the first start. It also means no pinned subnet, so this
-    # stack cannot collide with networks you already have.
+    # 直接使用宿主机网络命名空间，所以监听地址就是宿主机上的回环地址，
+    # 反向代理走回环连进来。这样不需要查任何网桥地址，也不会和已有的
+    # Docker 网络冲突。
     network_mode: host
     environment:
-      NM_ADDRESS: ${SEVENMIRROR_RELAY_BIND:?Set the host loopback address and port}
-      NM_DATABASE_PATH: "/data/registry.db"
-      # Only your reverse proxy may name a client address, and it always connects
-      # from loopback. Never widen this to a subnet: every peer inside it could
-      # then spoof the forwarded client address.
-      NM_TRUSTED_PROXY_CIDRS: ${SEVENMIRROR_TRUSTED_PROXY:-127.0.0.1/32}
+      # 反向代理转发到这个地址。改端口时记得同步改反代配置。
+      NM_ADDRESS: 127.0.0.1:18081
+      NM_DATABASE_PATH: /data/registry.db
+      # 只有反向代理可以声明客户端地址，而它总是从回环连入。
+      # 不要放宽成网段：那样该网段内任何对端都能伪造客户端地址。
+      NM_TRUSTED_PROXY_CIDRS: 127.0.0.1/32
     volumes:
       - ./data:/data
     tmpfs:
@@ -52,18 +46,19 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # 一次性工作区管理。不连接网络，也是唯一能读到权威私钥的服务。
   admin:
     profiles: [admin]
-    image: ${SEVENMIRROR_IMAGE:?Set SEVENMIRROR_IMAGE to an immutable image reference}
+    image: *sevenmirror-image
     entrypoint: ["/app/admin"]
-    user: "65532:65532"
+    user: "0:0"
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     network_mode: none
     environment:
-      NM_DATABASE_PATH: "/data/registry.db"
-      NM_AUTHORITY_KEY_DIR: "/authority"
+      NM_DATABASE_PATH: /data/registry.db
+      NM_AUTHORITY_KEY_DIR: /authority
     volumes:
       - ./data:/data
       - ./authority:/authority
@@ -73,27 +68,24 @@ services:
     logging:
       driver: none
 
+  # 按需启动的管理界面。用完就停，会话只存在内存里。
+  # 只监听回环地址，通过 SSH 隧道访问；不对外暴露。
   admin-web:
     profiles: [admin-web]
-    image: ${SEVENMIRROR_IMAGE:?Set SEVENMIRROR_IMAGE to an immutable image reference}
+    image: *sevenmirror-image
     entrypoint: ["/app/admin-web"]
-    user: "65532:65532"
+    user: "0:0"
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    # The console refuses any non-loopback listen address, so it shares the host
-    # loopback namespace instead of publishing a port. Start it with
-    # `docker compose up -d admin-web` (naming the service enables its profile)
-    # and stop it when you are done; it keeps sessions in memory only. This makes
-    # the console Linux-only.
     network_mode: host
     environment:
-      NM_DATABASE_PATH: "/data/registry.db"
-      NM_AUTHORITY_KEY_DIR: "/authority"
-      NM_ADMIN_ADDRESS: ${SEVENMIRROR_ADMIN_ADDRESS:?Set a loopback address and port}
-      NM_ADMIN_ORIGIN: ${SEVENMIRROR_ADMIN_ORIGIN:?Set the exact browser-facing origin}
-      NM_ADMIN_RECOVERY_CODE: ${SEVENMIRROR_ADMIN_RECOVERY_CODE:-on}
-      NM_ADMIN_TRUSTED_PROXY_CIDRS: ${SEVENMIRROR_ADMIN_TRUSTED_PROXY_CIDRS:-127.0.0.1/32}
+      NM_DATABASE_PATH: /data/registry.db
+      NM_AUTHORITY_KEY_DIR: /authority
+      NM_ADMIN_ADDRESS: 127.0.0.1:8081
+      # 只有通过域名访问管理端时才需要这一项，默认值就是上面的地址。
+      # 如果设了，必须与浏览器地址栏逐字符一致，含协议与端口。
+      # NM_ADMIN_ORIGIN: https://sevenmirror-admin.example.com
     volumes:
       - ./data:/data
       - ./authority:/authority
