@@ -20,14 +20,93 @@ SevenMirror 的中继服务端。它在你自己的主机上路由手机与浏�
 
 需要一台 Linux 主机、Docker Engine 与 Compose v2。如果要让手机和浏览器从外网连入，还需要一个带有效 TLS 证书的域名。
 
-1. 从镜像仓库拉取镜像，或自行从源码构建。
-2. 按 [Docker 部署指引](docs/deployment.md) 准备目录与 `.env` 文件。
-3. 初始化私有空间，并把它备份一次。
-4. 为每台设备签发一个加入码。
-5. 在管理端批准设备。
-6. 把 Android 应用与浏览器扩展指向这个中继地址。
+仓库自带一份可以直接启动的 Compose 文件。持久化状态放在 Compose 文件旁边，备份就是把那个目录复制走。
 
-中继只绑定主机回环地址，通过反向代理对外提供服务。管理端与设备 API 不共用同一个公开入口。完整步骤见 [Docker 部署指引](docs/deployment.md)。
+```sh
+cd deploy/compose
+cp .env.example .env
+# 编辑 .env，至少改 SEVENMIRROR_IMAGE
+install -d -m 0700 data authority backups
+docker compose up -d relay
+```
+
+只需要决定一个值：
+
+```ini
+SEVENMIRROR_IMAGE=ghcr.io/huaxianyan/sevenmirror-server:0.1.0
+```
+
+也可以钉摘要，或换成 `latest`。三者指向同一个镜像，区别是摘要不会移动。
+
+接着初始化私有空间，并把它备份一次：
+
+```sh
+docker compose run --rm admin init-workspace
+```
+
+这一步会输出一个工作区 ID 与一把权威私钥。私钥文件必须离线备份，丢了就无法再批准设备。
+
+之后为每台设备签发加入码，并在管理端批准：
+
+```sh
+docker compose run --rm admin list-pending-devices --workspace <工作区 ID>
+docker compose run --rm admin approve-device --workspace <工作区 ID> --device-ref <设备引用>
+docker compose up -d admin-web        # 默认只监听 127.0.0.1:8081
+docker compose stop admin-web         # 用完就停
+```
+
+签发加入码用 `issue-pairing-code`：
+
+```sh
+docker compose run --rm admin issue-pairing-code \
+  --workspace <工作区 ID> --type android --name Pixel
+```
+
+加入码只打印一次，数据库只存它的哈希。管理端不对外暴露，通过 SSH 隧道访问。完整参数见 [配置与运维命令](docs/operator-reference.md)。
+
+### 反向代理
+
+中继只绑定主机回环地址，不终止 TLS，也不需要发布端口。它直接使用主机的网络命名空间，所以你不用在启动后去查任何网桥地址。
+
+反代必须满足两条。第一条是替换而不是追加 `X-Forwarded-For`，否则调用方可以自己挑限流桶。第二条是转发 WebSocket 升级头，否则设备连接会被静默掐断。
+
+仓库提供两份可用的起点，按你用哪个反代选一份：
+
+| 反代 | 示例文件 |
+| --- | --- |
+| Caddy | [`deploy/caddy/Caddyfile`](deploy/caddy/Caddyfile) |
+| nginx | [`deploy/nginx/mirror.conf`](deploy/nginx/mirror.conf) |
+
+以 nginx 为例，把示例里的域名换成自己的，放进 `sites-available` 并签发证书：
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:18081;
+    proxy_http_version 1.1;
+
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header Host $host;
+
+    proxy_read_timeout 3600s;
+    proxy_buffering off;
+}
+```
+
+`$connection_upgrade` 需先用 `map` 定义，完整文件含 TLS、证书路径与日志策略。
+
+### 验证
+
+```sh
+docker compose ps
+curl -fsS http://127.0.0.1:18081/healthz
+curl -fsS http://127.0.0.1:18081/readyz
+```
+
+两个接口都返回 `200`，且 `ss -ltn` 里只出现回环地址、没有 `0.0.0.0`，才算就绪。
+
+管理端与设备 API **不共用同一个公开入口**，请分别用子域。逐条说明与故障处理见 [Docker 部署指引](docs/deployment.md)。
 
 ## 运行要求
 
