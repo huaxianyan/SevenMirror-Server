@@ -1,12 +1,12 @@
 # SevenMirror Server 部署文件。
 #
-# 部署两步，都在这个目录里执行：
+# 部署一条命令：
 #
-#   1. docker compose up -d
-#   2. docker compose run --rm admin init-workspace
+#   docker compose up -d
 #
-# 没有 .env 文件，也不需要预先创建目录。持久化数据就放在这个文件旁边的
-# data/、authority/、backups/ 三个目录里，备份就是把它们复制走。
+# 首次启动时会自动创建工作区，不需要手工初始化，也不需要 .env 文件。
+# 持久化数据就在这个文件旁边的 data/、authority/、backups/ 三个目录里，
+# 备份就是把它们复制走。
 #
 # 需要改的只有一处：下面的镜像引用。升级时把 :0.1.0 改成新版本号；
 # 想固定到不可变的摘要，就换成 @sha256:<index digest>。
@@ -14,13 +14,47 @@
 x-image: &sevenmirror-image ghcr.io/huaxianyan/sevenmirror-server:0.1.0
 
 services:
+  # 每次 up 都跑一次的初始化。只在没有工作区时创建，已存在则直接成功退出，
+  # 所以重复启动不会多出一把权威私钥，也不会挡住 relay。
+  #
+  # 它的输出不落容器日志（见下方 logging），因为签发加入码的命令会在 stdout
+  # 交付一次性密钥，项目规定 admin 输出不得进入日志管道。要看工作区 ID 就用：
+  #   docker compose run --rm admin list-workspaces
+  prepare:
+    image: *sevenmirror-image
+    entrypoint: ["/app/admin"]
+    command: ["init-workspace"]
+    # 用 root 是为了让 Docker 自动创建的挂载目录直接可用，省掉手工 mkdir 与
+    # chown。安全收紧三项仍保留：只读根文件系统、丢弃全部 capability、禁止提权。
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    # 初始化不需要网络。
+    network_mode: none
+    restart: "no"
+    environment:
+      NM_DATABASE_PATH: /data/registry.db
+      NM_AUTHORITY_KEY_DIR: /authority
+      # 备份挂载点由部署声明，程序据此把目录收成 0700。
+      NM_BACKUP_DIR: /backups
+    volumes:
+      - ./data:/data
+      - ./authority:/authority
+      - ./backups:/backups
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    logging:
+      driver: none
+
   # 常驻的中继。对外只绑定宿主机回环地址，由你自己的反向代理转发进来。
   relay:
     image: *sevenmirror-image
     restart: unless-stopped
-    # 用 root 是为了让 Docker 自动创建的 data/ 目录直接可用，从而省掉
-    # 手工 mkdir 与 chown。除此之外仍保留了只读根文件系统、丢弃全部
-    # capability、禁止提权这三项收紧。
+    depends_on:
+      # 等工作区建好再启动，否则中继会先对着一个没有工作区的库跑起来。
+      prepare:
+        condition: service_completed_successfully
     user: "0:0"
     read_only: true
     cap_drop: [ALL]
@@ -59,6 +93,7 @@ services:
     environment:
       NM_DATABASE_PATH: /data/registry.db
       NM_AUTHORITY_KEY_DIR: /authority
+      NM_BACKUP_DIR: /backups
     volumes:
       - ./data:/data
       - ./authority:/authority

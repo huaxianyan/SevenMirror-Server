@@ -11,6 +11,7 @@
 | `NM_ADDRESS` | `127.0.0.1:8080` | HTTP 监听地址 |
 | `NM_DATABASE_PATH` | `data/syncnotifications.db` | SQLite registry 与迁移数据库 |
 | `NM_AUTHORITY_KEY_DIR` | 数据库旁目录 `authority-keys` | 存放工作区权威 PKCS#8 私钥的属主独占目录。只有 admin CLI 与按需启动的管理端进程使用，中继永不读取 |
+| `NM_BACKUP_DIR` | 未设置 | 工作区备份目录的挂载点。设了就把该目录收成 `0700`，不设则保持挂载时的模式 |
 | `NM_SHUTDOWN_TIMEOUT_SECONDS` | `10` | 关闭前的等待超时 |
 | `NM_READ_HEADER_TIMEOUT_SECONDS` | `5` | 接收完整 HTTP 请求头的时限 |
 | `NM_REQUEST_READ_TIMEOUT_SECONDS` | `10` | 接收完整 HTTP 请求（含受限正文）的时限 |
@@ -57,6 +58,8 @@ go run ./cmd/admin init-workspace
 NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin \
   issue-pairing-code --workspace <base64url-id> --type android --name Pixel
 ```
+
+`init-workspace` 只在没有工作区时创建；已有工作区时它会打印现有 ID、输出 `result=already-initialized` 后正常退出。因此它可以安全地每次启动都跑一次，部署文件里的 `prepare` 服务就是这么用的。查现有工作区用 `list-workspaces`。
 
 `init-workspace` 只在 SQLite 里存权威公钥，私钥写入属主独占的 PKCS#8 文件。CLI 会打印它的位置与经过域分隔的公钥 ID，从不打印私钥材料。早于 schema v3 的工作区不会被静默分配权威。
 

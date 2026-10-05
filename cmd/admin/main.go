@@ -13,6 +13,7 @@ import (
 	"github.com/huaxianyan/SyncNotifications-Server/internal/adminservice"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/admission"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/membership"
+	"github.com/huaxianyan/SyncNotifications-Server/internal/protecteddir"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/workspacebackup"
 )
 
@@ -33,8 +34,13 @@ func main() {
 	if databasePath == "" {
 		databasePath = "data/syncnotifications.db"
 	}
-	if err := os.MkdirAll(filepath.Dir(databasePath), 0o700); err != nil {
-		fatal("create data directory", err)
+	// The backup mount is declared by the deployment, not derived from the
+	// registry path, so it is named explicitly and tightened here. Without this it
+	// keeps whatever mode the container runtime created, which is 0755.
+	if backupDirectory := os.Getenv("NM_BACKUP_DIR"); backupDirectory != "" {
+		if err := protecteddir.Ensure(backupDirectory); err != nil {
+			fatal("prepare workspace backup directory", err)
+		}
 	}
 	store, err := admission.Open(context.Background(), databasePath)
 	if err != nil {
@@ -52,23 +58,7 @@ func main() {
 			usage()
 			os.Exit(2)
 		}
-		authority, err := membership.GenerateAuthority(authorityKeyDirectory(databasePath))
-		if err != nil {
-			fatal("generate workspace authority", err)
-		}
-		workspace, err := store.CreateWorkspace(
-			context.Background(), authority.PublicKey, time.Now())
-		if err != nil {
-			if cleanupErr := os.Remove(authority.Path); cleanupErr != nil {
-				fatal("initialize workspace",
-					fmt.Errorf("%w; also failed to remove uncommitted authority key %q: %v",
-						err, authority.Path, cleanupErr))
-			}
-			fatal("initialize workspace", err)
-		}
-		fmt.Printf("workspace_id=%s\n", base64.RawURLEncoding.EncodeToString(workspace[:]))
-		fmt.Printf("authority_key_id=%s\n", authority.KeyID)
-		fmt.Printf("authority_private_key_file=%s\n", authority.Path)
+		initializeWorkspace(store, databasePath)
 	case "backup-workspace":
 		backupWorkspace(store, databasePath, os.Args[2:])
 	case "prepare-authority-rotation":
@@ -77,6 +67,8 @@ func main() {
 		rotateAuthority(store, management, os.Args[2:])
 	case "issue-pairing-code":
 		issuePairingCode(management, os.Args[2:])
+	case "list-workspaces":
+		listWorkspaces(store)
 	case "list-devices":
 		listDevices(store, os.Args[2:])
 	case "list-pending-devices":
@@ -94,6 +86,43 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
+}
+
+// initializeWorkspace creates the single workspace this deployment serves. It is
+// safe to run on every start: when a workspace already exists it reports that and
+// returns success, so the Compose prepare service can gate the relay without
+// blocking later `up` invocations. It never leaves a second authority key behind.
+// The store still supports several workspaces, because the isolation tests depend
+// on that; this is where the product decision that there is exactly one is
+// enforced.
+func initializeWorkspace(store *admission.Store, databasePath string) {
+	existing, err := store.ListWorkspaces(context.Background())
+	if err != nil {
+		fatal("read existing workspaces", err)
+	}
+	if len(existing) > 0 {
+		fmt.Printf("workspace_id=%s\n",
+			base64.RawURLEncoding.EncodeToString(existing[0].ID[:]))
+		fmt.Println("result=already-initialized")
+		return
+	}
+	authority, err := membership.GenerateAuthority(authorityKeyDirectory(databasePath))
+	if err != nil {
+		fatal("generate workspace authority", err)
+	}
+	workspace, err := store.CreateWorkspace(
+		context.Background(), authority.PublicKey, time.Now())
+	if err != nil {
+		if cleanupErr := os.Remove(authority.Path); cleanupErr != nil {
+			fatal("initialize workspace",
+				fmt.Errorf("%w; also failed to remove uncommitted authority key %q: %v",
+					err, authority.Path, cleanupErr))
+		}
+		fatal("initialize workspace", err)
+	}
+	fmt.Printf("workspace_id=%s\n", base64.RawURLEncoding.EncodeToString(workspace[:]))
+	fmt.Printf("authority_key_id=%s\n", authority.KeyID)
+	fmt.Printf("authority_private_key_file=%s\n", authority.Path)
 }
 
 func backupWorkspace(store *admission.Store, databasePath string, args []string) {
@@ -254,6 +283,22 @@ func issuePairingCode(management *adminservice.Service, args []string) {
 	fmt.Printf("expires_in=%s\n", ttl.String())
 }
 
+// listWorkspaces prints the workspace IDs this registry holds. The deployment
+// serves one workspace, created by the prepare service on the first start, and
+// admin stdout is not written to a container log, so this is how an operator
+// looks the ID up for a command that needs it.
+func listWorkspaces(store *admission.Store) {
+	workspaces, err := store.ListWorkspaces(context.Background())
+	if err != nil {
+		fatal("list workspaces", err)
+	}
+	for _, workspace := range workspaces {
+		fmt.Printf("workspace_id=%s created_at=%s\n",
+			base64.RawURLEncoding.EncodeToString(workspace.ID[:]),
+			workspace.CreatedAt.UTC().Format(time.RFC3339))
+	}
+}
+
 func listDevices(store *admission.Store, args []string) {
 	flags := flag.NewFlagSet("list-devices", flag.ExitOnError)
 	workspaceText := flags.String("workspace", "", "base64url workspace ID")
@@ -405,6 +450,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin prepare-authority-rotation")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin rotate-authority --workspace <id> --new-key-file <path>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin issue-pairing-code --workspace <id> --type android|chrome [--name name] [--ttl 10m]")
+	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin list-workspaces")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin list-devices --workspace <id>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin list-pending-devices --workspace <id>")
 	fmt.Fprintln(os.Stderr, "  notification-mirroring-admin approve-device --workspace <id> --device-ref <ref>")

@@ -25,10 +25,9 @@ SevenMirror 的中继服务端。它在你自己的主机上路由手机与浏�
 ```sh
 cd deploy/compose
 docker compose up -d
-docker compose run --rm admin init-workspace
 ```
 
-需要改的只有一处，就是文件开头的镜像引用：
+首次启动会自动创建工作区与权威私钥，不需要手工初始化。需要改的只有一处，就是文件开头的镜像引用：
 
 ```yaml
 x-image: &sevenmirror-image ghcr.io/huaxianyan/sevenmirror-server:0.1.0
@@ -36,7 +35,11 @@ x-image: &sevenmirror-image ghcr.io/huaxianyan/sevenmirror-server:0.1.0
 
 也可以换成 `latest` 或钉摘要。三者指向同一个镜像，区别是摘要不会移动。
 
-`init-workspace` 会输出一个工作区 ID 与一把权威私钥。私钥文件必须离线备份，丢了就无法再批准设备。
+私钥文件必须离线备份，丢了就无法再批准设备。查工作区 ID：
+
+```sh
+docker compose run --rm admin list-workspaces
+```
 
 之后为每台设备签发加入码，并在管理端批准：
 

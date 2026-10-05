@@ -14,10 +14,13 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/huaxianyan/SyncNotifications-Server/internal/protecteddir"
 
 	authority "github.com/huaxianyan/SyncNotifications-Server/internal/membership"
 	membershipv1 "github.com/huaxianyan/SyncNotifications-Server/protocol/generated/membership/v1"
@@ -219,9 +222,17 @@ type MembershipStateView struct {
 	LatestRosterEpoch    int64
 }
 
+// Open prepares the directory that holds local state, then opens the registry.
+//
+// The directory is tightened rather than only created, because a bind mount is
+// created by the container runtime as root 0755; see internal/protecteddir for
+// why that matters here.
 func Open(ctx context.Context, path string) (*Store, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, errors.New("database path is required")
+	}
+	if err := protecteddir.Ensure(filepath.Dir(path)); err != nil {
+		return nil, err
 	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {

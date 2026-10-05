@@ -132,19 +132,36 @@ updater run unattended.
 
 `data` holds the SQLite registry, `authority` holds the workspace authority
 PKCS#8 private key, and `backups` receives consistent workspace backups. The
-containers own all three. `authority` is tightened to `0700` the first time it is
-used, and files inside it are written `0600`.
+containers own all three.
 
-## 4. Initialize the workspace
+All three directories are tightened to `0700` on startup. A bind mount is created
+by the container runtime as root `0755`, and creating a directory with `0700` does
+not change one that already exists, so the programs narrow the directory they own
+after opening it. `NM_BACKUP_DIR` names the backup mount, since it is declared by
+the deployment rather than derived from the registry path. Files inside are written
+`0600`, and a workspace backup directory is created `0700`.
+
+## 4. The workspace is created for you
+
+The `prepare` service runs `init-workspace` on every `up` and exits. It creates
+the workspace and its authority key only when none exists, then reports
+`result=already-initialized`, so a later `up` neither blocks the relay nor leaves
+a second authority key behind. The relay waits for it through
+`depends_on: service_completed_successfully`, which is why a first `up -d` does not
+serve traffic against an empty registry.
+
+Its output is not written to a container log, because `issue-pairing-code` and
+`issue-rotation-code` deliver a one-time secret on the same stdout stream and
+[`docs/deployment-artifact-boundary.md`](deployment-artifact-boundary.md) requires
+admin output to stay out of log pipelines. Read the workspace ID when you need it:
 
 ```sh
-docker compose run --rm admin init-workspace
+docker compose run --rm admin list-workspaces
 ```
 
-The command prints the workspace ID, the authority key ID, and the authority
-private key file path inside the container. Record the workspace ID; the key ID
-and path are useful when verifying a backup. Initialization is idempotent only in
-the sense that a second run creates a second workspace, so run it once.
+The authority private key file inside `authority/` must be backed up offline. Its
+permissions and failure rules are in
+[`docs/workspace-authority-key-lifecycle.md`](workspace-authority-key-lifecycle.md).
 
 `authority-keys/` inside `authority/` is the directory named by
 `NM_AUTHORITY_KEY_DIR`. Its permissions and failure rules are in

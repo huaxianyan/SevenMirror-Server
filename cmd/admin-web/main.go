@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -24,10 +23,6 @@ func main() {
 	config, err := adminweb.LoadRuntimeConfig()
 	if err != nil {
 		logger.Error("invalid admin configuration", "error", err)
-		os.Exit(1)
-	}
-	if err := os.MkdirAll(filepath.Dir(config.DatabasePath), 0o700); err != nil {
-		logger.Error("create data directory", "error", err)
 		os.Exit(1)
 	}
 	store, err := admission.Open(context.Background(), config.DatabasePath)

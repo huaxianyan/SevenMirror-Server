@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -62,10 +61,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(cfg.DatabasePath), 0o700); err != nil {
-		logger.Error("create data directory", "error", err)
-		os.Exit(1)
-	}
 	store, err := admission.Open(context.Background(), cfg.DatabasePath)
 	if err != nil {
 		logger.Error("open admission database", "error", err)
