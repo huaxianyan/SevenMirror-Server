@@ -9,12 +9,25 @@ package protecteddir
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
-// Ensure makes path exist as a directory owned by the caller and readable only
-// by the caller. A symlink is rejected, because chmod would otherwise follow it
-// and tighten a different directory.
+// Ensure makes path exist as a directory owned by the caller and readable only by
+// the caller. A symlink is rejected, because chmod would otherwise follow it and
+// tighten a different directory.
+//
+// A root or relative-self path is rejected too. Both are reachable by accident: a
+// relative NM_DATABASE_PATH such as "registry.db" yields ".", and
+// "/registry.db" yields the filesystem root. Narrowing either would change a
+// directory the deployment does not own, which creating a directory with 0700
+// never did.
 func Ensure(path string) error {
+	cleaned := filepath.Clean(path)
+	if cleaned == "." || cleaned == string(filepath.Separator) {
+		return fmt.Errorf(
+			"refuse to narrow %q: it resolves to the current or root directory, not a state directory",
+			path)
+	}
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
 	}

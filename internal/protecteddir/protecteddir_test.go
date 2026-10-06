@@ -53,9 +53,7 @@ func TestEnsureCreatesAMissingDirectory(t *testing.T) {
 }
 
 // A symlink would make chmod tighten whatever it points at, so it is refused
-// instead of followed. os.Symlink needs no privilege on the platforms the tests
-// run on here, and the assertion is about the returned error and the untouched
-// target rather than about mode bits.
+// instead of followed.
 func TestEnsureRejectsASymlink(t *testing.T) {
 	root := t.TempDir()
 	real := filepath.Join(root, "real")
@@ -76,5 +74,26 @@ func TestEnsureRejectsASymlink(t *testing.T) {
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o755 {
 		t.Fatalf("target mode changed to %o", info.Mode().Perm())
+	}
+}
+
+// A relative NM_DATABASE_PATH such as "registry.db" gives filepath.Dir the value
+// ".", so this path reaches Ensure whenever nobody configured a directory. It must
+// not narrow the working directory, which creating a directory never did.
+func TestEnsureRejectsTheCurrentDirectory(t *testing.T) {
+	for _, path := range []string{".", "./", "registry.db/.."} {
+		if err := Ensure(path); err == nil {
+			t.Fatalf("%q was accepted", path)
+		}
+	}
+}
+
+// "/registry.db" gives filepath.Dir the filesystem root. Narrowing that would be
+// far worse than the working directory, so it is refused as well. The check itself
+// is platform independent; this only exercises the branch that can run here.
+func TestEnsureRejectsTheRootDirectory(t *testing.T) {
+	root := string(filepath.Separator)
+	if err := Ensure(root); err == nil {
+		t.Fatalf("%q was accepted", root)
 	}
 }
