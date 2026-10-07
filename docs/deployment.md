@@ -175,8 +175,12 @@ curl -fsS http://127.0.0.1:18081/healthz
 curl -fsS http://127.0.0.1:18081/readyz
 ```
 
-`healthz` proves the process is up; `readyz` proves it can serve from its
-registry. Confirm the relay never mounts the authority directory, and that it
+`healthz` proves the process is up. `readyz` proves it can serve from its
+registry: it reads the schema version and answers `503` when that read fails, so a
+relay that is listening but cannot reach its registry is reported as not ready.
+The Compose healthcheck runs `/app/server healthcheck`, which requests `/readyz`
+and fails on anything but `200`; the images ship no shell, curl or wget, so the
+probe is the same binary that is already in the image. Confirm the relay never mounts the authority directory, and that it
 listens on loopback only. The relay uses the host network namespace, so check the
 listening socket on the host rather than looking for a published port:
 

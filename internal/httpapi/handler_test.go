@@ -51,3 +51,76 @@ func TestHealth(t *testing.T) {
 		t.Fatalf("body = %q", got)
 	}
 }
+
+// /readyz has to read the registry, otherwise it cannot tell a relay that is up
+// from one that cannot serve, and the Compose healthcheck would only ever repeat
+// what /healthz already says.
+func TestReadinessReadsTheRegistry(t *testing.T) {
+	store, err := admission.Open(context.Background(), t.TempDir()+"/admission.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	handler, err := NewProductionHandler(
+		store,
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+		clientaddress.New(nil),
+		DefaultRateLimits(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("ready status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if got := response.Body.String(); got != "{\"status\":\"ready\"}\n" {
+		t.Fatalf("body = %q", got)
+	}
+}
+
+// The store can be closed underneath the handler, which is the case this endpoint
+// exists to surface: listening but unable to read the registry.
+func TestReadinessReportsAnUnreadableRegistry(t *testing.T) {
+	store, err := admission.Open(context.Background(), t.TempDir()+"/admission.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, err := NewProductionHandler(
+		store,
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+		clientaddress.New(nil),
+		DefaultRateLimits(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusServiceUnavailable)
+	}
+}
+
+// With no store mounted there is nothing to read, so the plain response stands.
+func TestReadinessWithoutAStore(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	response := httptest.NewRecorder()
+
+	NewHandler().ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+}

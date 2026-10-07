@@ -47,6 +47,15 @@ go run ./cmd/server
 
 所有命令通过 `cmd/admin` 运行，读取同一份数据库路径：
 
+就绪探针是 `server` 二进制的子命令，不是 admin 命令：
+
+```sh
+/app/server healthcheck
+```
+
+它读取 `NM_ADDRESS` 与 TLS 配置，请求 `/readyz`，非 `200` 即返回非零退出码。
+镜像内没有 shell、curl 或 wget，容器 healthcheck 用它代替。
+
 ```sh
 NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin <子命令>
 ```

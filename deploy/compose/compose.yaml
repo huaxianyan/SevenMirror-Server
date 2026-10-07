@@ -74,6 +74,15 @@ services:
       - ./data:/data
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=16m
+    # 镜像里没有 shell、curl 或 wget，所以探针用镜像自己的二进制。
+    # /readyz 会真的读一次 registry，因此“起得来但读不到 registry”
+    # 会被报成 unhealthy，而不是看起来正常。
+    healthcheck:
+      test: ["CMD", "/app/server", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     logging:
       driver: json-file
       options:

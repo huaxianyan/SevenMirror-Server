@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/huaxianyan/SyncNotifications-Server/internal/admission"
 	"github.com/huaxianyan/SyncNotifications-Server/internal/clientaddress"
@@ -12,6 +14,12 @@ import (
 type statusResponse struct {
 	Status string `json:"status"`
 }
+
+// readyCheckTimeout bounds the registry read behind /readyz. It is short on
+// purpose: the probe shares a single SQLite connection with request handling
+// (Store uses SetMaxOpenConns(1)), so a stuck read must not hold the endpoint
+// open longer than a probe would wait.
+const readyCheckTimeout = 2 * time.Second
 
 func NewHandler() http.Handler {
 	return newMux(nil, nil, nil, nil)
@@ -46,7 +54,10 @@ func newMux(
 ) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", status("ok"))
-	mux.HandleFunc("/readyz", status("ready"))
+	// /readyz reports whether the registry can serve a read. When no store is
+	// mounted there is nothing to check, so it keeps the plain status response
+	// that NewHandler uses.
+	mux.HandleFunc("/readyz", readiness(store))
 	if store != nil && relayHandler != nil {
 		mux.Handle("/v1/devices/rotate", newCredentialRotationHandler(store, rotationLimiter))
 		membership := newMembershipHandler(store, membershipLimiter)
@@ -70,6 +81,31 @@ func status(value string) http.HandlerFunc {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(statusResponse{Status: value})
+	}
+}
+
+// readiness reports whether the process can serve from its registry. A relay that
+// listens but cannot reach its registry answers 503, which is what lets a Compose
+// healthcheck distinguish the two: a process that is up from one that is usable.
+func readiness(store *admission.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if store != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), readyCheckTimeout)
+			defer cancel()
+			if err := store.HealthCheck(ctx); err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_ = json.NewEncoder(w).Encode(statusResponse{Status: "unavailable"})
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(statusResponse{Status: "ready"})
 	}
 }
 

@@ -53,6 +53,12 @@ func configuredRelayAuthenticationLimits(
 }
 
 func main() {
+	// A container healthcheck cannot use a shell, curl or wget in these images,
+	// so the probe is this same binary.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		healthcheckMain()
+		return
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
 	cfg, err := config.Load()

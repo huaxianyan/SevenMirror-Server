@@ -260,6 +260,20 @@ func Open(ctx context.Context, path string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
+// HealthCheck reports whether the registry can still serve a read. It is used by
+// /readyz so that a relay which started but cannot reach its registry is reported
+// as not ready instead of ready. The query is intentionally the same shape as the
+// one initialize uses to read the schema version: a single indexed read on a
+// one-row table with no lock held after it returns.
+func (s *Store) HealthCheck(ctx context.Context) error {
+	var version int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+		return fmt.Errorf("read schema version: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) CreateWorkspace(
 	ctx context.Context,
 	authorityPublicKey authority.AuthorityPublicKey,
