@@ -56,6 +56,11 @@ go run ./cmd/server
 它读取 `NM_ADDRESS` 与 TLS 配置，请求 `/readyz`，非 `200` 即返回非零退出码。
 镜像内没有 shell、curl 或 wget，容器 healthcheck 用它代替。
 
+设了 `NM_TLS_CERT_FILE` 时探针走 HTTPS，并用同一份证书链校验对端。这里不做
+主机名匹配，因为 `NM_ADDRESS` 是绑定地址，不必出现在证书里；但有效期与签名
+仍会检查，所以证书过期或被替换时探针会失败，而不是把一个客户端无法使用的
+监听端报成就绪。
+
 ```sh
 NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin <子命令>
 ```
