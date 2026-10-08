@@ -25,6 +25,26 @@ security review, protocol/storage compatibility and backup requirements.
 
 There are currently no production-approved SevenMirror Server images.
 
+## Automatic publication
+
+Code acceptance and required CI checks happen before merging into `main`. Push a
+release tag only after that acceptance; the release workflow publishes the image
+and GitHub Release automatically. It runs only on `v*` tag pushes, not on branch
+pushes or manual dispatches.
+
+The `release-candidate` environment permits `v*` tags without required reviewers
+or a wait timer. Vulnerability gates, artifact verification, registry pull-back
+checks and provenance remain part of publication. There is no second manual
+approval at publication time.
+
+The current tag-binding check still requires the tag to equal
+`v<protocol/PROTOCOL_VERSION>`. Product release versioning is not yet independent
+of protocol versioning; do not change the protocol merely to release a patch or
+move an existing release tag.
+
+Automatic publication does not grant the independent `approved` ledger status.
+The review limitations described below remain open.
+
 ## Immutable identities and tags
 
 - The deployable identity is
@@ -88,7 +108,7 @@ validator requires two distinct actors for `approved` and `retired`. Emergency
 blocked by reviewer availability, but must receive independent post-incident
 review.
 
-A newly published digest must be added as `candidate` by pull request promptly
+A newly published digest must be added as `candidate` by a checked topic branch promptly
 after its protected evidence is verified. Publication and approval are separate
 changes; a workflow must not create an `approved` entry automatically.
 
@@ -157,7 +177,7 @@ first change the trust and deployment decision, not merely hide registry bytes.
 
 For a suspected signing, workflow, dependency or image compromise:
 
-1. stop further release workflow dispatches and deployments;
+1. stop further release tag pushes and deployments;
 2. identify exact affected index and platform digests—never only a tag;
 3. add or update each ledger entry to `revoked`, with incident reference,
    decision actor, decision time and replacement digest when known;
