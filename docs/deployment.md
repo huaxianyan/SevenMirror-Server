@@ -102,13 +102,13 @@ cd deploy/compose
 ```
 
 The one value worth a decision is the image reference at the top of
-`compose.yaml`. A tag build publishes `latest`, the `protocol/PROTOCOL_VERSION`
-value and the 40-character commit, all pointing at the same verified image, so any
+`compose.yaml`. A tag build publishes `latest`, the release version (without `v`)
+and the 40-character commit, all pointing at the same verified image, so any
 of these pulls:
 
 ```sh
 docker pull ghcr.io/huaxianyan/sevenmirror-server:latest
-docker pull ghcr.io/huaxianyan/sevenmirror-server:0.1.0
+docker pull ghcr.io/huaxianyan/sevenmirror-server:0.1.1
 ```
 
 Pin a digest before exposing the relay to real traffic. The digest is the only

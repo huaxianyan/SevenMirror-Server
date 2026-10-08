@@ -37,10 +37,9 @@ or a wait timer. Vulnerability gates, artifact verification, registry pull-back
 checks and provenance remain part of publication. There is no second manual
 approval at publication time.
 
-The current tag-binding check still requires the tag to equal
-`v<protocol/PROTOCOL_VERSION>`. Product release versioning is not yet independent
-of protocol versioning; do not change the protocol merely to release a patch or
-move an existing release tag.
+Release tags use `vMAJOR.MINOR.PATCH` independently of
+`protocol/PROTOCOL_VERSION`. A patch release keeps the protocol version unchanged
+when the wire protocol is unchanged. Existing release tags must not be moved.
 
 Automatic publication does not grant the independent `approved` ledger status.
 The review limitations described below remain open.
@@ -51,7 +50,7 @@ The review limitations described below remain open.
   `ghcr.io/huaxianyan/sevenmirror-server@sha256:<index>`.
 - A 40-character source-revision tag is only a retrieval aid. The protected
   workflow refuses to repoint an existing revision tag to different content.
-- A tag build also publishes `latest` and the `protocol/PROTOCOL_VERSION` value.
+- A tag build also publishes `latest` and the release tag with its `v` removed.
   Both are moveable retrieval aids that always point at the exact index digest the
   same run verified, so they cannot silently disagree with the immutable tag at
   publication time.

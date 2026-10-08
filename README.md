@@ -125,7 +125,8 @@ NM_DATABASE_PATH=data/syncnotifications.db go run ./cmd/admin-web
 
 ## 发布
 
-推送形如 `v0.1.0` 的标签即触发发布。标签必须与 `protocol/PROTOCOL_VERSION` 一致，带 `-dev` 的版本不能按标签发布。
+代码验收并通过必需 CI 后，推送形如 `v0.1.1` 的标签即自动发布，无需人工审批。
+Release 标签使用 `vMAJOR.MINOR.PATCH`，独立于 `protocol/PROTOCOL_VERSION`。协议未变时，补丁发布保留原协议版本。
 
 发布页只放二进制产物集，容器产物集继续通过容器镜像仓库分发。发布页正文来自 `docs/release-notes/<标签>.md`，标题只写标签本身。完整规则见 [发布溯源](docs/server-release-provenance.md)。
 

@@ -33,14 +33,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Verify release tag binding
+      - name: Verify release version tag
         if: github.ref_type == 'tag'
         run: |
-          protocol_version="$(cat protocol/PROTOCOL_VERSION)"
-          test "$GITHUB_REF_NAME" = "v${protocol_version}"
-          case "$protocol_version" in
-            *-dev) echo 'Development protocol versions cannot be released by tag.' >&2; exit 1 ;;
-          esac
+          # Release versions are independent of the wire protocol version.
+          [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo 'Release tags must use vMAJOR.MINOR.PATCH.' >&2
+            exit 1
+          }
       - name: Validate vulnerability evidence and exception registry
         run: |
           test -z "$(git status --porcelain=v1)"
@@ -155,16 +155,15 @@ jobs:
             "${REGISTRY_REPOSITORY}@${expected_index_digest}" \
             "ocidir://${pulled}:${GITHUB_SHA}"
 
-          # Moveable tags, published only for a tag build. The tag binding was
-          # already checked at the start of this job, so read the version here
-          # rather than re-testing it. These are a retrieval convenience, not a
+          # Moveable tags, published only for a tag build. The release version
+          # comes from the validated Git tag, not the wire protocol version. These are a retrieval convenience, not a
           # deployable identity: docs/registry-release-governance.md still requires
           # an exact approved digest in any service definition, and an automated
           # updater following these tags gives up the ability to say which revision
           # is running. Both point at the exact index digest just verified above,
           # so they cannot disagree with the immutable tag.
           if test "$GITHUB_REF_TYPE" = tag; then
-            for moveable_tag in latest "$(cat protocol/PROTOCOL_VERSION)"; do
+            for moveable_tag in latest "${GITHUB_REF_NAME#v}"; do
               target_ref="${REGISTRY_REPOSITORY}:${moveable_tag}"
               "$regctl" image copy \
                 "${REGISTRY_REPOSITORY}@${expected_index_digest}" "$target_ref"

@@ -4,24 +4,21 @@ Status: **protected release-candidate baseline; independent review still require
 
 ## Release authority
 
-The release job targets the GitHub `release-candidate` environment. That
-environment accepts deployments only from protected branches and requires an
-explicit approval from the repository administrator before a runner can access
-the job permissions or produce attestations. The `main` branch separately
-requires a pull request and its Server CI check, blocks force-push and deletion,
-and applies those rules to administrators.
+Code acceptance and required Server CI checks happen before a topic branch is
+fast-forwarded into protected `main`. Main blocks force-push and deletion; the
+current development process does not require a pull request.
 
-Only `huaxianyan` currently has repository access, so the environment approval
-is a deliberate second step by the same identity, not independent approval. It
-reduces accidental dispatch and direct-push risk but cannot establish separation
-of duties. Before production release, add a second trusted reviewer, require at
-least one approval from someone other than the last pusher, enable environment
-self-review prevention, and verify the resulting audit trail.
+Push a release tag after acceptance to publish automatically. The release job
+targets the GitHub `release-candidate` environment, which allows only `v*` tags
+and has no manual approval or wait timer. Publication still verifies artifacts,
+scans runtime inputs and generates provenance.
+
+Independent review remains open. Automatic publication is not an independent
+approval and does not change the ledger's `candidate` or `approved` meanings.
 
 ## Artifact set
 
-`.github/workflows/release-artifacts.yml` runs on an explicit manual dispatch or
-a version tag. It builds the following `CGO_ENABLED=0` artifacts with the exact
+`.github/workflows/release-artifacts.yml` runs only on a version tag. It builds the following `CGO_ENABLED=0` artifacts with the exact
 Go toolchain required by `go.mod`:
 
 - `sevenmirror-server-linux-amd64`
@@ -53,10 +50,10 @@ python3 scripts/build_release_artifacts.py \
   --verify-only
 ```
 
-A version-tag run additionally requires the tag to equal
-`v$(cat protocol/PROTOCOL_VERSION)` and rejects a protocol version ending in
-`-dev`. Manual dispatch remains available for attested release-candidate evidence
-without claiming that the development version is a published release.
+A version-tag run requires `vMAJOR.MINOR.PATCH`. The release version comes from
+that tag, independently of `protocol/PROTOCOL_VERSION`, which still records the
+wire protocol in the artifact manifest. A compatible patch release does not
+change the protocol version. There is no manual dispatch entry point.
 
 ## Signed GitHub provenance
 
