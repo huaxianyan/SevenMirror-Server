@@ -137,6 +137,33 @@ release body. `scripts/verify_release_notes.py` enforces that shape, and
 The release title is the tag alone. A product-name prefix turns the Release list
 into a column of identical truncated names and hides which version each entry is.
 
+### v0.1.1 publication and deployment
+
+Release `v0.1.1` binds source revision
+`7de593dfe621296443395a7010f40e3902696199`; its protocol version remains `0.1.0`.
+The automatic tag workflow is
+[run 37717790152](https://github.com/huaxianyan/SevenMirror-Server/actions/runs/37717790152).
+Downloaded binaries and container/registry evidence passed their manifest
+verifiers and GitHub attestation verification.
+
+The multi-architecture index is
+`sha256:ad55652bcfce2faec73491679f7a94b716171d7555984c4a4e59cd97aa0f5b39`.
+Both the deployed relay and admin-web now use that index. Existing deployment
+network settings, data mounts and runtime user were preserved. Before switching,
+both writers were stopped for a state archive; isolated workspace backups also
+passed the image's backup verifier. The relay is healthy, public readiness
+returns 200, and the admin HTTPS origin reaches its login page with 200 after
+redirects. Workspace identities were preserved.
+
+A separate empty-directory Compose check using the published image confirmed
+healthy startup and a single workspace/authority key after repeated startup and
+initialization. Its containers and data were removed afterwards.
+
+The deployment retains its pre-upgrade state/configuration backups and old image
+IDs for recovery. It does not claim that downgrading a migrated registry is safe:
+check storage compatibility and the workspace backup procedure before rollback.
+Ledger state remains `candidate`; external review and archive risks remain open.
+
 ## Remaining signing work
 
 Sigstore/GitHub provenance is not platform-native code signing. Default-branch
