@@ -18,7 +18,7 @@ def result(database_time: str, finding: str = "") -> subprocess.CompletedProcess
     messages: list[dict[str, object]] = [{
         "config": {
             "scanner_name": "govulncheck",
-            "scanner_version": "v1.1.4",
+            "scanner_version": "v1.9.0",
             "db": "https://vuln.go.dev",
             "db_last_modified": database_time,
             "go_version": "go1.25.13",

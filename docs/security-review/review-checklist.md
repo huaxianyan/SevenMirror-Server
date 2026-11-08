@@ -461,7 +461,7 @@ vectors are not secrets.
   exception binding. Default-branch base-image and published-runtime sets have
   passed offline and attestation verification; cryptographic-library baseline
   review remains open. (`PARTIAL`)
-- [ ] **B-02 — Vulnerability scan.** Server CI runs `govulncheck v1.1.4` against
+- [ ] **B-02 — Vulnerability scan.** Server CI runs `govulncheck v1.9.0` against
   reachable Go code. Its first run found 12 reachable standard-library findings
   under Go 1.24.13; `go.mod`, CI, and the container builder now enforce the fixed
   Go 1.27.3 floor. A 2026-11-08 rescan reopened 12 reachable standard-library

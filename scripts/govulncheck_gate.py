@@ -11,7 +11,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-SCANNER_VERSION = "v1.1.4"
+SCANNER_VERSION = "v1.9.0"
 DATABASE = "https://vuln.go.dev"
 MAX_DATABASE_AGE = timedelta(days=7)
 
