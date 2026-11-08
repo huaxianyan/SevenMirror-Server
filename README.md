@@ -3,7 +3,7 @@
 
   # SevenMirror Server
 
-  [项目总仓库](https://github.com/huaxianyan/SevenMirror-Project) · [Android 应用](https://github.com/huaxianyan/SevenMirror-Android) · [浏览器扩展](https://github.com/huaxianyan/SevenMirror-Extension) · 本仓库
+[项目总仓库](https://github.com/huaxianyan/SevenMirror-Project) · [Android 应用](https://github.com/huaxianyan/SevenMirror-Android) · [浏览器扩展](https://github.com/huaxianyan/SevenMirror-Extension) · 服务端
 </div>
 
 SevenMirror 的中继服务端。它在你自己的主机上路由手机与浏览器之间的端到端加密通知，并持有决定哪些设备可以加入的私有空间权威。
@@ -110,7 +110,7 @@ curl -fsS http://127.0.0.1:18081/readyz
 ## 运行要求
 
 - Linux 主机，Docker Engine 与 Compose v2
-- Go 1.25.13 或更高版本（仅自行构建二进制时需要）
+- Go 1.27.3 或更高版本（仅自行构建二进制时需要）
 - 对外服务时需要一个带有效 TLS 证书的域名
 
 ## 自行构建与运行

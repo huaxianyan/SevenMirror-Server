@@ -454,7 +454,7 @@ vectors are not secrets.
 
 - [ ] **B-01 — Dependency inventory.** Go, npm, Gradle/plugin and retained GitHub
   Action inventories are locked. Server now pins the multi-platform OCI index
-  digests for its Go 1.25.13 Alpine builder and distroless Debian 12 nonroot
+  digests for its Go 1.27.3 Alpine builder and distroless Debian 12 nonroot
   runtime and records the resolved content-addressed image graph. A
   checksum-pinned Trivy release gate now produces four CycloneDX base-image SBOMs
   and four complete vulnerability reports with database freshness and exact
@@ -464,7 +464,8 @@ vectors are not secrets.
 - [ ] **B-02 — Vulnerability scan.** Server CI runs `govulncheck v1.1.4` against
   reachable Go code. Its first run found 12 reachable standard-library findings
   under Go 1.24.13; `go.mod`, CI, and the container builder now enforce the fixed
-  Go 1.25.13 floor. Chrome CI runs `npm audit --audit-level=high` against the
+  Go 1.27.3 floor. A 2026-11-08 rescan reopened 12 reachable standard-library
+  findings; the 1.27.3 floor is the release that closes them. Chrome CI runs `npm audit --audit-level=high` against the
   lockfile; the initial `nanoid < 3.3.18` High finding was remediated. Android
   locks real build/test/runtime classpaths in strict mode, verifies artifact
   SHA-256 metadata, regenerates an exact 90-package release-runtime inventory,

@@ -6,8 +6,8 @@ Status: **public GHCR candidate and pull-side graph/runtime evidence verified; g
 
 The Dockerfile pins both upstream image indexes by digest:
 
-- `golang:1.25.13-alpine` —
-  `sha256:1e0126852075c9c60731c8ba49088448b91f63e2aed97ca9d1a9791622a05946`;
+- `golang:1.27.3-alpine` —
+  `sha256:fa3d596898d9f126af7c01d14ee7597bab3f39cccf392ef36b69fe77cd681f18`;
 - `gcr.io/distroless/static-debian12:nonroot` —
   `sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab`.
 

@@ -1,6 +1,6 @@
 module github.com/huaxianyan/SyncNotifications-Server
 
-go 1.25.13
+go 1.27.3
 
 require (
 	filippo.io/hpke v0.4.0
