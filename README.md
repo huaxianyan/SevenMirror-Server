@@ -1,8 +1,12 @@
-# SevenMirror Server
+<div align="center">
+  <img src="docs/images/icon.png" width="120" alt="SevenMirror 图标">
 
-SevenMirror 的中继服务端。它在你自己的主机上路由手机与浏览器之间的端到端加密通知，并持有决定哪些设备可以加入的私有空间权威。三个独立仓库之一。
+  # SevenMirror Server
 
-仓库地址：<https://github.com/huaxianyan/SevenMirror-Server>
+  [项目总仓库](https://github.com/huaxianyan/SevenMirror-Project) · [Android 应用](https://github.com/huaxianyan/SevenMirror-Android) · [浏览器扩展](https://github.com/huaxianyan/SevenMirror-Extension) · 本仓库
+</div>
+
+SevenMirror 的中继服务端。它在你自己的主机上路由手机与浏览器之间的端到端加密通知，并持有决定哪些设备可以加入的私有空间权威。
 
 > 状态：日常自托管已经可用。密文中继、权威签名的成员管理、持久投递与快照恢复、管理端页面、Docker 部署资产都已实现。生产级安全评审与协议兼容性政策尚未完成。
 
