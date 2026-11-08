@@ -137,6 +137,27 @@ release body. `scripts/verify_release_notes.py` enforces that shape, and
 The release title is the tag alone. A product-name prefix turns the Release list
 into a column of identical truncated names and hides which version each entry is.
 
+### v0.1.2 publication and deployment
+
+Release `v0.1.2` binds source revision
+`bc5b0432f60577103861b6706827c925ff147491`; its protocol version remains `0.1.0`.
+The automatic tag workflow is
+[run 42501495495](https://github.com/huaxianyan/SevenMirror-Server/actions/runs/42501495495).
+Downloaded binaries and container/registry evidence passed their manifest
+verifiers; both platform scans reported an empty blocking finding set.
+
+The multi-architecture index is
+`sha256:e0afd808f63d789b6d62726c0a783b5ef5d2bb71f519464a94cfc93941df1cb1`.
+It was built from Go 1.27.3, which closes the twelve reachable standard-library
+findings that appeared under the previous floor.
+
+The deployment switched image digest only. Before the switch a workspace backup
+was produced and verified with the running image, and the three state
+directories were copied while both writers were stopped. Both the relay and
+admin-web now run the new index; workspace ID, authority key ID and the device
+roster are unchanged, the relay is healthy with no restarts, local readiness
+returns 200, and the public device origin and admin origin both answer 200.
+
 ### v0.1.1 publication and deployment
 
 Release `v0.1.1` binds source revision
