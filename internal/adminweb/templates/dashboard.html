@@ -68,43 +68,47 @@
                   <h3 id="pending-{{.Reference}}">待处理申请</h3>
                   <span class="count">{{.PendingCount}}</span>
                 </div>
-                <div class="device-cards">
-                  {{range .PendingDevices}}
-                  <article class="device-card pending-device">
-                    <div class="device-card-heading">
-                      <div><h4>{{.Name}}</h4><p>{{.Type}} · {{.Status}}</p></div>
-                      <span class="status pending">待处理</span>
-                    </div>
-                    <dl class="device-facts compact">
-                      <div><dt>申请时间</dt><dd>{{.RegisteredAt}}</dd></div>
-                    </dl>
-                    <div class="primary-actions">
-                      {{if .CanApprove}}
-                      <form method="post" action="/actions/approve">
-                        <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-                        <input type="hidden" name="workspace_ref" value="{{$workspace.Reference}}">
-                        <input type="hidden" name="device_ref" value="{{.Reference}}">
-                        <button type="submit">批准</button>
-                      </form>
-                      {{end}}
-                      {{if .CanReject}}
-                      <details class="action-menu">
-                        <summary>拒绝</summary>
-                        <form method="post" action="/actions/reject" class="confirm-form">
-                          <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-                          <input type="hidden" name="workspace_ref" value="{{$workspace.Reference}}">
-                          <input type="hidden" name="device_ref" value="{{.Reference}}">
-                          <label><input type="checkbox" name="confirm" value="yes" required> 确认拒绝这项申请</label>
-                          <button class="danger" type="submit">拒绝申请</button>
-                        </form>
-                      </details>
-                      {{end}}
-                    </div>
-                  </article>
-                  {{else}}
-                  <p class="empty">没有待处理申请。</p>
-                  {{end}}
-                </div>
+                {{if .PendingDevices}}
+                <table class="device-table">
+                  <thead>
+                    <tr><th scope="col">设备</th><th scope="col">申请时间</th><th scope="col">操作</th></tr>
+                  </thead>
+                  <tbody>
+                    {{range .PendingDevices}}
+                    <tr>
+                      <td class="device-name"><strong>{{.Name}}</strong><small>{{.Type}} · {{.Status}}</small></td>
+                      <td>{{.RegisteredAt}}</td>
+                      <td>
+                        <div class="row-actions">
+                          {{if .CanApprove}}
+                          <form method="post" action="/actions/approve">
+                            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                            <input type="hidden" name="workspace_ref" value="{{$workspace.Reference}}">
+                            <input type="hidden" name="device_ref" value="{{.Reference}}">
+                            <button type="submit">批准</button>
+                          </form>
+                          {{end}}
+                          {{if .CanReject}}
+                          <details class="action-menu">
+                            <summary>拒绝</summary>
+                            <form method="post" action="/actions/reject" class="confirm-form">
+                              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                              <input type="hidden" name="workspace_ref" value="{{$workspace.Reference}}">
+                              <input type="hidden" name="device_ref" value="{{.Reference}}">
+                              <label><input type="checkbox" name="confirm" value="yes" required> 确认拒绝这项申请</label>
+                              <button class="danger" type="submit">拒绝申请</button>
+                            </form>
+                          </details>
+                          {{end}}
+                        </div>
+                      </td>
+                    </tr>
+                    {{end}}
+                  </tbody>
+                </table>
+                {{else}}
+                <p class="empty">没有待处理申请。</p>
+                {{end}}
               </section>
 
               <section class="device-group" aria-labelledby="active-{{.Reference}}">
@@ -112,53 +116,61 @@
                   <h3 id="active-{{.Reference}}">已接入设备</h3>
                   <span class="count">{{.AndroidCount}} Android · {{.ChromeCount}} Chrome</span>
                 </div>
-                <div class="device-cards">
-                  {{range .ActiveDevices}}
-                  <details class="device-card">
-                    <summary class="device-summary">
-                      <span><strong>{{.Name}}</strong><small>{{.Type}} · {{.Status}}</small></span>
-                      <span><small>最近活动</small><strong>{{.LastActivity}}</strong></span>
-                    </summary>
-                    <div class="device-detail">
-                      <dl class="device-facts">
-                        <div><dt>申请时间</dt><dd>{{.RegisteredAt}}</dd></div>
-                        <div><dt>批准时间</dt><dd>{{.ApprovedAt}}</dd></div>
-                        <div><dt>最近认证</dt><dd>{{.LastAuthenticated}}</dd></div>
-                        <div><dt>最近活动</dt><dd>{{.LastActivity}}</dd></div>
-                      </dl>
-                      <div class="device-actions">
-                        {{if .CanRename}}
-                        <details class="action-menu">
-                          <summary>重命名</summary>
-                          <form method="post" action="/actions/rename" class="confirm-form">
-                            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-                            <input type="hidden" name="workspace_ref" value="{{$workspace.Reference}}">
-                            <input type="hidden" name="device_ref" value="{{.Reference}}">
-                            <label class="field-label">新名称<input name="new_name" maxlength="100" autocomplete="off" required></label>
-                            <label><input type="checkbox" name="confirm" value="yes" required> 确认将新名称同步到已接入设备</label>
-                            <button type="submit">更新名称</button>
-                          </form>
+                {{if .ActiveDevices}}
+                <table class="device-table">
+                  <thead>
+                    <tr><th scope="col">设备</th><th scope="col">最近活动</th><th scope="col">操作</th></tr>
+                  </thead>
+                  <tbody>
+                    {{range .ActiveDevices}}
+                    <tr>
+                      <td class="device-name">
+                        <details class="row-details">
+                          <summary><strong>{{.Name}}</strong><small>{{.Type}} · {{.Status}}</small></summary>
+                          <dl class="device-facts compact">
+                            <div><dt>申请时间</dt><dd>{{.RegisteredAt}}</dd></div>
+                            <div><dt>批准时间</dt><dd>{{.ApprovedAt}}</dd></div>
+                            <div><dt>最近认证</dt><dd>{{.LastAuthenticated}}</dd></div>
+                          </dl>
                         </details>
-                        {{end}}
-                        {{if .CanRemove}}
-                        <details class="action-menu">
-                          <summary>移除</summary>
-                          <form method="post" action="/actions/remove" class="confirm-form">
-                            <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-                            <input type="hidden" name="workspace_ref" value="{{$workspace.Reference}}">
-                            <input type="hidden" name="device_ref" value="{{.Reference}}">
-                            <label><input type="checkbox" name="confirm" value="yes" required> 确认停止这台设备的同步</label>
-                            <button class="danger" type="submit">移除设备</button>
-                          </form>
-                        </details>
-                        {{end}}
-                      </div>
-                    </div>
-                  </details>
-                  {{else}}
-                  <p class="empty">还没有已接入设备。</p>
-                  {{end}}
-                </div>
+                      </td>
+                      <td>{{.LastActivity}}</td>
+                      <td>
+                        <div class="row-actions">
+                          {{if .CanRename}}
+                          <details class="action-menu">
+                            <summary>重命名</summary>
+                            <form method="post" action="/actions/rename" class="confirm-form">
+                              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                              <input type="hidden" name="workspace_ref" value="{{$workspace.Reference}}">
+                              <input type="hidden" name="device_ref" value="{{.Reference}}">
+                              <label class="field-label">新名称<input name="new_name" maxlength="100" autocomplete="off" required></label>
+                              <label><input type="checkbox" name="confirm" value="yes" required> 确认将新名称同步到已接入设备</label>
+                              <button type="submit">更新名称</button>
+                            </form>
+                          </details>
+                          {{end}}
+                          {{if .CanRemove}}
+                          <details class="action-menu">
+                            <summary>移除</summary>
+                            <form method="post" action="/actions/remove" class="confirm-form">
+                              <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+                              <input type="hidden" name="workspace_ref" value="{{$workspace.Reference}}">
+                              <input type="hidden" name="device_ref" value="{{.Reference}}">
+                              <label><input type="checkbox" name="confirm" value="yes" required> 确认停止这台设备的同步</label>
+                              <button class="danger" type="submit">移除设备</button>
+                            </form>
+                          </details>
+                          {{end}}
+                        </div>
+                      </td>
+                    </tr>
+                    {{end}}
+                  </tbody>
+                </table>
+                {{else}}
+                <p class="empty">还没有已接入设备。</p>
+                {{end}}
               </section>
 
               {{if .PastDevices}}

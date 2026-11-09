@@ -21,7 +21,9 @@
 }
 
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+/* Reserve the scrollbar column on every page, otherwise the centred shell jumps sideways
+   on the one page long enough to scroll. */
+html { scroll-behavior: smooth; scrollbar-gutter: stable; }
 body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--background); color: var(--text); }
 button, input, select { font: inherit; }
 a { color: var(--primary); }
@@ -163,6 +165,31 @@ input[type="checkbox"] { width: auto; margin: .15rem .4rem 0 0; }
 .group-heading h3 { margin: 0; font-size: 1.1rem; }
 .count { color: var(--muted); font-size: .85rem; }
 .device-cards { display: grid; gap: .75rem; }
+/* Device lists are tables, not stacks of cards: the console is read as a roster. */
+.device-table { width: 100%; margin-top: .75rem; border-collapse: collapse; }
+.device-table th {
+  padding: .5rem .75rem .5rem 0;
+  border-bottom: 1px solid var(--border-strong);
+  color: var(--muted); font-size: .78rem; font-weight: 500; text-align: left;
+}
+.device-table td { padding: .75rem .75rem .75rem 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+.device-table tr:last-child td { border-bottom: 0; }
+.device-table th:last-child, .device-table td:last-child { padding-right: 0; text-align: right; }
+.device-table tbody tr:hover { background: var(--surface-subtle); }
+.device-name strong { display: block; font-weight: 600; }
+.device-name small { display: block; margin-top: 2px; color: var(--muted); font-size: .78rem; }
+/* The native marker sits on its own line once the summary holds block children, so the caret
+   rides inline with the device name instead. */
+.row-details summary { cursor: pointer; list-style: none; }
+.row-details summary::-webkit-details-marker { display: none; }
+.row-details summary strong::before { content: "▸"; margin-right: .4rem; color: var(--muted); font-weight: 400; }
+.row-details[open] summary strong::before { content: "▾"; }
+.row-details .device-facts { margin-top: .5rem; }
+.row-actions { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; }
+.row-actions form { margin: 0; }
+.row-actions > details { position: relative; }
+.row-actions > details > summary { min-height: 32px; }
+
 .device-card { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
 article.device-card { padding: 1rem; }
 .pending-device { border-inline-start: 4px solid #c27b18; }
