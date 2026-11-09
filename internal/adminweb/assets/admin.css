@@ -123,7 +123,8 @@ input[type="checkbox"] { width: auto; margin: .15rem .4rem 0 0; }
   background: color-mix(in srgb, var(--surface) 94%, transparent);
   backdrop-filter: blur(12px);
 }
-.brand { display: flex; align-items: baseline; gap: .55rem; }
+.brand { display: flex; align-items: center; gap: .55rem; }
+.brand-mark { width: 22px; height: 22px; border-radius: 5px; flex: none; }
 /* Mirrors the extension's top bar, where the version sits next to the wordmark as
    muted secondary text rather than competing with it. */
 .brand strong { color: var(--muted); font-size: .875rem; font-weight: 400; }
@@ -284,7 +285,7 @@ article.device-card { padding: 1rem; }
 }
 
 @media (max-width: 520px) {
-  .brand { display: block; }
+  .brand { display: flex; align-items: center; }
   .brand .eyebrow { margin-bottom: .15rem; }
   .sidebar a { white-space: nowrap; }
   .device-summary { grid-template-columns: 1fr; }
