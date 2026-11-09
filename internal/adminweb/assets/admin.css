@@ -58,12 +58,9 @@ input[type="hidden"], input[type="checkbox"] { min-height: auto; }
 input[type="checkbox"] { width: auto; margin: .15rem .4rem 0 0; }
 
 .centered { display: grid; place-items: center; padding: 1.5rem; }
-.panel {
-  padding: clamp(1.1rem, 3vw, 1.6rem);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-}
+/* The panel is a page, not a card: sections inside it carry their own surfaces, the way the
+   extension's settings page does. Wrapping everything in one more card only doubled the edges. */
+.panel { padding: 0; border: 0; border-radius: 0; background: none; }
 .login-card {
   width: min(100%, 34rem);
   padding: clamp(1.1rem, 3vw, 1.6rem);
