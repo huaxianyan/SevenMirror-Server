@@ -229,6 +229,29 @@
       "replacement_index_digest": null,
       "source_revision": "5db3037fb1eeb78d246df9f7471865ca726391d7",
       "state": "candidate"
+    },
+    {
+      "archive_reference": null,
+      "decided_at": null,
+      "decision_actors": [],
+      "decision_reference": null,
+      "index_digest": "sha256:d4adf088a132f315fd4c0aab61e31bd56cfa1ef77142f5de89ce4394a7481916",
+      "platforms": [
+        {
+          "architecture": "amd64",
+          "manifest_digest": "sha256:02dda6ff30baa2cbc62bd2fbc9241d330466f762ed6cdee7b6bbd0efd37ced20"
+        },
+        {
+          "architecture": "arm64",
+          "manifest_digest": "sha256:e2a9798c43f13443d8aefa01ecf88292ebf206fa369e0b65f256396677a54017"
+        }
+      ],
+      "publication_run": "https://github.com/huaxianyan/SevenMirror-Server/actions/runs/42651167820",
+      "published_at": "2026-11-09T16:06:56Z",
+      "registry_availability": "expected",
+      "replacement_index_digest": null,
+      "source_revision": "5c813b6fb692c31b3e3fe4be6a2ffcf30bdb0731",
+      "state": "candidate"
     }
   ],
   "registry_repository": "ghcr.io/huaxianyan/sevenmirror-server",
