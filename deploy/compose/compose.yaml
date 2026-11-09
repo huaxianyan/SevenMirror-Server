@@ -8,10 +8,10 @@
 # 持久化数据就在这个文件旁边的 data/、authority/、backups/ 三个目录里，
 # 备份就是把它们复制走。
 #
-# 下面固定为 v0.1.3 的已核验镜像摘要。升级时只修改这一处，
+# 下面固定为 v0.1.4 的已核验镜像摘要。升级时只修改这一处，
 # 新摘要及其源提交见 security/registry-release-ledger.json。
 
-x-image: &sevenmirror-image ghcr.io/huaxianyan/sevenmirror-server@sha256:0eae2cebeb3266170ebf8e9230fbb2a3cb16458b85ba45abd3d365376ed0a782
+x-image: &sevenmirror-image ghcr.io/huaxianyan/sevenmirror-server@sha256:5da22844219f247b15b2d9bfe0dfa140122788f34737f1323df58055b494b466
 
 services:
   # 每次 up 都跑一次的初始化。只在没有工作区时创建，已存在则直接成功退出，
