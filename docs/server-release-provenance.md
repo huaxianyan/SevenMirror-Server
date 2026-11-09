@@ -137,6 +137,18 @@ release body. `scripts/verify_release_notes.py` enforces that shape, and
 The release title is the tag alone. A product-name prefix turns the Release list
 into a column of identical truncated names and hides which version each entry is.
 
+### v0.1.5 publication and deployment
+
+Release `v0.1.5` binds source revision `4e5d531794ced7073c69f4f7168589802d99597a`; protocol version
+remains `0.1.0`. The add-device form is a popover instead of an inline block, disclosures animate
+their height, the pending group has a refresh control, and every secondary button shares one shape.
+
+The automatic tag workflow is
+[run 42641998460](https://github.com/huaxianyan/SevenMirror-Server/actions/runs/42641998460).
+The multi-architecture index is
+`sha256:5f40262716e30ced8a6887af2fc5447f9ca1da3c8f5550a035788b51968347fd`; both platform scans
+reported an empty blocking finding set.
+
 ### v0.1.4 publication and deployment
 
 Release `v0.1.4` binds source revision
