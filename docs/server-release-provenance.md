@@ -137,6 +137,19 @@ release body. `scripts/verify_release_notes.py` enforces that shape, and
 The release title is the tag alone. A product-name prefix turns the Release list
 into a column of identical truncated names and hides which version each entry is.
 
+### v0.1.6 publication and deployment
+
+Release `v0.1.6` binds source revision `5db3037fb1eeb78d246df9f7471865ca726391d7`; protocol version
+remains `0.1.0`. A popover must stay hidden until opened, and setting `display:block` to centre it
+overrode the browser's own hiding rule, which is why the add-device form appeared right after
+sign-in and could not be closed. The closed state is restored.
+
+The automatic tag workflow is
+[run 42645806094](https://github.com/huaxianyan/SevenMirror-Server/actions/runs/42645806094).
+The multi-architecture index is
+`sha256:199e28bcfeb5bd72566db96c7676fd31c07cfff82a1fd0aada2151f547856e95`; both platform scans
+reported an empty blocking finding set.
+
 ### v0.1.5 publication and deployment
 
 Release `v0.1.5` binds source revision `4e5d531794ced7073c69f4f7168589802d99597a`; protocol version
