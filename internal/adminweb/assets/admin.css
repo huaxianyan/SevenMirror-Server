@@ -206,10 +206,10 @@ input[type="checkbox"] { width: auto; margin: .15rem .4rem 0 0; }
 .row-actions { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; }
 .row-actions form { margin: 0; }
 .row-actions > details { position: relative; }
+.popover-panel:not(:popover-open) { display: none; }
 .popover-panel {
   position: fixed;
   inset: 0;
-  display: block;
   width: min(30rem, calc(100vw - 2rem));
   max-height: min(80vh, 30rem);
   overflow: auto;
