@@ -21,6 +21,16 @@
 }
 
 * { box-sizing: border-box; }
+
+/* Chrome 131+ animates the generated details wrapper; older engines simply show and hide. */
+:root { interpolate-size: allow-keywords; }
+::details-content {
+  block-size: 0;
+  overflow: hidden;
+  transition: block-size .18s ease, content-visibility .18s allow-discrete;
+}
+details[open]::details-content { block-size: auto; }
+@media (prefers-reduced-motion: reduce) { ::details-content { transition: none; } }
 /* Reserve the scrollbar column on every page, otherwise the centred shell jumps sideways
    on the one page long enough to scroll. */
 html { scroll-behavior: smooth; scrollbar-gutter: stable; }
@@ -43,7 +53,15 @@ button, .button-link {
 }
 button:hover, .button-link:hover { background: var(--primary-hover); }
 button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
-button.secondary { background: var(--surface-subtle); color: var(--text); }
+/* Secondary controls — the topbar's 退出, the row menus, 刷新 — share one shape so the page does
+   not offer three different kinds of button. */
+button.secondary, .button-link.ghost {
+  border: 1px solid var(--border);
+  background: var(--surface-subtle);
+  color: var(--text);
+  font-weight: 600;
+}
+button.secondary:hover, .button-link.ghost:hover { background: var(--brand-tint, var(--surface-subtle)); border-color: var(--border-strong); }
 button.danger { background: var(--danger); }
 button.danger:hover { background: #88252b; }
 input, select {
@@ -188,7 +206,24 @@ input[type="checkbox"] { width: auto; margin: .15rem .4rem 0 0; }
 .row-actions { display: flex; flex-wrap: wrap; gap: .5rem; justify-content: flex-end; }
 .row-actions form { margin: 0; }
 .row-actions > details { position: relative; }
-.row-actions > details > summary { min-height: 32px; }
+.popover-panel {
+  position: fixed;
+  inset: 0;
+  display: block;
+  width: min(30rem, calc(100vw - 2rem));
+  max-height: min(80vh, 30rem);
+  overflow: auto;
+  margin: auto;
+  padding: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: 0 18px 48px rgb(22 32 43 / 18%);
+}
+.popover-panel::backdrop { background: rgb(22 32 43 / 32%); }
+.popover-heading { display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
+.popover-heading h3 { margin: 0 0 .5rem; }
+.row-actions > details > summary { min-height: 36px; }
 
 .device-card { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
 article.device-card { padding: 1rem; }
@@ -210,7 +245,8 @@ article.device-card { padding: 1rem; }
 .device-facts div { min-width: 0; }
 .device-facts dt { color: var(--muted); font-size: .8rem; }
 .device-facts dd { margin: .2rem 0 0; overflow-wrap: anywhere; }
-.action-menu > summary { min-height: 44px; display: flex; align-items: center; padding: 0 .9rem; border: 1px solid var(--border); border-radius: var(--radius); color: var(--primary); cursor: pointer; font-weight: 650; list-style: none; }
+.action-menu > summary { min-height: 36px; display: inline-flex; align-items: center; padding: 0 .9rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-subtle); color: var(--text); cursor: pointer; font-weight: 600; list-style: none; }
+.action-menu > summary:hover { border-color: var(--border-strong); }
 .action-menu > summary::-webkit-details-marker { display: none; }
 .confirm-form { display: grid; gap: .75rem; width: min(22rem, calc(100vw - 4rem)); margin-top: .6rem; padding: .9rem; border: 1px solid var(--border); border-radius: .7rem; background: var(--surface-subtle); }
 .confirm-form label { display: flex; align-items: flex-start; }
@@ -222,9 +258,9 @@ article.device-card { padding: 1rem; }
 .history-list div:last-child { border-bottom: 0; }
 .history-list span { color: var(--muted); }
 
-.add-device { display: grid; grid-template-columns: minmax(14rem, .8fr) minmax(25rem, 1.5fr); gap: 1.25rem; margin-top: 2rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius-lg); scroll-margin-top: 5rem; }
+.add-device { display: grid; gap: .75rem; }
 .add-device h3 { margin-top: 0; }
-.inline-form { display: grid; grid-template-columns: minmax(8rem, .7fr) minmax(12rem, 1fr) auto; align-items: end; gap: .75rem; }
+.inline-form { display: grid; grid-template-columns: 1fr; align-items: end; gap: .75rem; }
 .inline-form input, .inline-form select { margin-bottom: 0; }
 .empty { margin: 0; padding: 1.25rem; border: 1px dashed var(--border); border-radius: var(--radius-lg); color: var(--muted); text-align: center; }
 .empty-card { padding: 1.25rem; border: 1px dashed var(--border); border-radius: var(--radius-lg); text-align: center; }
