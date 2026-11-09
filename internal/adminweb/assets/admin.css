@@ -125,6 +125,7 @@ input[type="checkbox"] { width: auto; margin: .15rem .4rem 0 0; }
 }
 .brand { display: flex; align-items: center; gap: .55rem; }
 .brand-mark { width: 22px; height: 22px; border-radius: 5px; flex: none; }
+.brand-line { display: flex; align-items: center; gap: .45rem; }
 /* Mirrors the extension's top bar, where the version sits next to the wordmark as
    muted secondary text rather than competing with it. */
 .brand strong { color: var(--muted); font-size: .875rem; font-weight: 400; }
