@@ -53,15 +53,16 @@ button, .button-link {
 }
 button:hover, .button-link:hover { background: var(--primary-hover); }
 button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, a:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
-/* Secondary controls — the topbar's 退出, the row menus, 刷新 — share one shape so the page does
-   not offer three different kinds of button. */
+/* One button vocabulary: everything the user can press uses the add-device colours. Only the
+   destructive confirmation inside a menu keeps the danger fill, so a dialog never offers two
+   identical-looking choices. */
 button.secondary, .button-link.ghost {
-  border: 1px solid var(--border);
-  background: var(--surface-subtle);
-  color: var(--text);
+  border: 1px solid var(--primary);
+  background: var(--primary);
+  color: #fff;
   font-weight: 600;
 }
-button.secondary:hover, .button-link.ghost:hover { background: var(--brand-tint, var(--surface-subtle)); border-color: var(--border-strong); }
+button.secondary:hover, .button-link.ghost:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
 button.danger { background: var(--danger); }
 button.danger:hover { background: #88252b; }
 input, select {
@@ -179,12 +180,16 @@ input[type="checkbox"] { width: auto; margin: .15rem .4rem 0 0; }
 .workspace-summary dd { margin: 0; font-size: 1.15rem; font-weight: 750; }
 
 .device-group { margin-top: 1.75rem; }
-.group-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .75rem; }
+.group-heading { display: flex; align-items: center; gap: .75rem; margin-bottom: .75rem; }
+.group-heading .count { margin-left: auto; }
 .group-heading h3 { margin: 0; font-size: 1.1rem; }
 .count { color: var(--muted); font-size: .85rem; }
 .device-cards { display: grid; gap: .75rem; }
 /* Device lists are tables, not stacks of cards: the console is read as a roster. */
-.device-table { width: 100%; margin-top: .75rem; border-collapse: collapse; }
+.device-table { width: 100%; margin-top: .75rem; border-collapse: collapse; table-layout: fixed; }
+.device-table th:nth-child(1) { width: 52%; }
+.device-table th:nth-child(2) { width: 22%; }
+.device-table th:nth-child(3) { width: 26%; }
 .device-table th {
   padding: .5rem .75rem .5rem 0;
   border-bottom: 1px solid var(--border-strong);
@@ -245,8 +250,8 @@ article.device-card { padding: 1rem; }
 .device-facts div { min-width: 0; }
 .device-facts dt { color: var(--muted); font-size: .8rem; }
 .device-facts dd { margin: .2rem 0 0; overflow-wrap: anywhere; }
-.action-menu > summary { min-height: 36px; display: inline-flex; align-items: center; padding: 0 .9rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-subtle); color: var(--text); cursor: pointer; font-weight: 600; list-style: none; }
-.action-menu > summary:hover { border-color: var(--border-strong); }
+.action-menu > summary { min-height: 36px; display: inline-flex; align-items: center; padding: 0 .9rem; border: 1px solid var(--primary); border-radius: var(--radius); background: var(--primary); color: #fff; cursor: pointer; font-weight: 600; list-style: none; }
+.action-menu > summary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
 .action-menu > summary::-webkit-details-marker { display: none; }
 .confirm-form { display: grid; gap: .75rem; width: min(22rem, calc(100vw - 4rem)); margin-top: .6rem; padding: .9rem; border: 1px solid var(--border); border-radius: .7rem; background: var(--surface-subtle); }
 .confirm-form label { display: flex; align-items: flex-start; }
