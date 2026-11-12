@@ -137,6 +137,35 @@ release body. `scripts/verify_release_notes.py` enforces that shape, and
 The release title is the tag alone. A product-name prefix turns the Release list
 into a column of identical truncated names and hides which version each entry is.
 
+### v0.1.11 publication and deployment
+
+Release `v0.1.11` binds source revision `34c953b`; protocol version remains `0.1.0`. The console
+settings page gains a custom stylesheet field: it carries the same default sheet the browser
+extension ships, keeps the value in the browser rather than the database, and applies it to the
+console pages, including sign-in and first-run setup.
+
+The automatic tag workflow is
+[run 43237756415](https://github.com/huaxianyan/SevenMirror-Server/actions/runs/43237756415).
+The multi-architecture index is
+`sha256:fd38d8500da0c7b790885d93f3ab71527fa86061e7309dc2891ba2b81993314c`.
+
+Deployment to the operator host replaced the single `SEVENMIRROR_IMAGE` line from
+`sha256:e695a886…` to the index above. A `backup-workspace` snapshot of workspace
+`GdOsMUd9Bij6pKFl7Qehbw` was taken first and `verify-workspace-backup` reported `result=verified`;
+`data/` and `authority/` were copied alongside it as a raw rollback asset. The previous `.env` is
+kept as `.env.pre-0.1.11`. After the swap the relay reports healthy, `/healthz` and `/readyz` return
+200, and the console login page returns 200.
+
+### v0.1.10 publication and deployment
+
+Release `v0.1.10` raised the toolchain to Go 1.27.4 to clear reachable advisory `GO-2026-6859`
+(`net/http` `MaxBytesReader` could set `Connection: close` while a handler was still writing) and
+completed the base-image digest pin that the release pipeline requires.
+
+The multi-architecture index is
+`sha256:e695a88632dca4c328316e10d3151ca72ff9b3a8cd070bd8dd85ea0c5ecf6fa3`, which the operator host
+ran until `v0.1.11`.
+
 ### v0.1.9 publication and deployment
 
 Release `v0.1.9` binds source revision `c01050d`; protocol version remains `0.1.0`. The sign-in card

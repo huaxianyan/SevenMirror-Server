@@ -11,7 +11,7 @@
 # 下面固定为 v0.1.9 的已核验镜像摘要。升级时只修改这一处，
 # 新摘要及其源提交见 security/registry-release-ledger.json。
 
-x-image: &sevenmirror-image ghcr.io/huaxianyan/sevenmirror-server@sha256:3669ddde5f3fdcaaa03b5a01d7ee59f0f82df03f41dc6b13813c903213dade81
+x-image: &sevenmirror-image ghcr.io/huaxianyan/sevenmirror-server@sha256:fd38d8500da0c7b790885d93f3ab71527fa86061e7309dc2891ba2b81993314c
 
 services:
   # 每次 up 都跑一次的初始化。只在没有工作区时创建，已存在则直接成功退出，
