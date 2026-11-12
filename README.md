@@ -3,7 +3,9 @@
 
   # SevenMirror Server
 
-[项目总仓库](https://github.com/huaxianyan/SevenMirror-Project) · [Android 应用](https://github.com/huaxianyan/SevenMirror-Android) · [浏览器扩展](https://github.com/huaxianyan/SevenMirror-Extension) · 服务端
+[项目总仓库](https://github.com/huaxianyan/SevenMirror-Project) · 服务端 · [Chrome 扩展](https://github.com/huaxianyan/SevenMirror-Extension) · [Android 应用](https://github.com/huaxianyan/SevenMirror-Android)
+
+[简体中文](README.md) | [English](README.en.md)
 </div>
 
 SevenMirror 的中继服务端。它在你自己的主机上路由手机与浏览器之间的端到端加密通知，并持有决定哪些设备可以加入的私有空间权威。
