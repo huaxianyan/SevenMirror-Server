@@ -1,7 +1,4 @@
-# TODO(go-1.27.4-digest): pin golang:1.27.4-alpine by digest before the next release. The bump
-# patches GO-2026-6859 (net/http MaxBytesReader header race); the digest has to come from the
-# registry index, not from this comment.
-FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS build
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 ARG SOURCE_REVISION
