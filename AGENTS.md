@@ -7,7 +7,7 @@
 
 ## 工具链与命令
 
-- Go 版本由 `go.mod` 的 `go` 指令决定，本机默认 Go 较旧，命令前显式 `GOTOOLCHAIN=go1.27.3`（或与 `go.mod` 一致），否则会拉到别的工具链。
+- Go 版本由 `go.mod` 的 `go` 指令决定，本机默认 Go 较旧，命令前显式 `GOTOOLCHAIN=go1.27.4`（或与 `go.mod` 一致），否则会拉到别的工具链。
 - 拉依赖与工具链需要代理：`HTTPS_PROXY=http://127.0.0.1:37777 HTTP_PROXY=http://127.0.0.1:37777 GOPROXY=https://proxy.golang.org,direct`。
 - 本地验证：`go test ./...`、`go vet ./...`。合入门禁是仓库 CI 的 `test`，含 `govulncheck`（对实时漏洞库查询，会随时间出现新告警）。
 - 升级 Go 必须同时改三处：`go.mod`、`Dockerfile` 里按 digest 固定的 `golang:*-alpine`、`docs/server-container-provenance.md`；`govulncheck` 的固定版本也要一起升，否则会在新语法树上直接 panic。
@@ -28,7 +28,7 @@
 常用命令（以 `internal/adminweb` 为例，`WORK` 指临时根）：
 
 ```bash
-export GOTOOLCHAIN=go1.27.3
+export GOTOOLCHAIN=go1.27.4
 crapper --root "$WORK" --source-root "E:\Dev\SevenMirror-Project\repos\server" internal/adminweb cmd/admin-web
 dryer   --root "$WORK" --source-root "E:\Dev\SevenMirror-Project\repos\server" internal/adminweb cmd/admin-web
 mutator --root "$WORK" --source-root "E:\Dev\SevenMirror-Project\repos\server" internal/adminweb --scan

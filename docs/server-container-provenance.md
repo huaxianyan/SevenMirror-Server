@@ -4,10 +4,13 @@ Status: **public GHCR candidate and pull-side graph/runtime evidence verified; g
 
 ## Immutable build inputs
 
-The Dockerfile pins both upstream image indexes by digest:
+The Dockerfile pins the runtime image index by digest; the build image is pinned only by tag until the 1.27.4 digest is filled in (see the first bullet):
 
-- `golang:1.27.3-alpine` —
-  `sha256:fa3d596898d9f126af7c01d14ee7597bab3f39cccf392ef36b69fe77cd681f18`;
+- `golang:1.27.4-alpine` — digest **not yet pinned**; the Dockerfile builds from the tag alone
+  for now. GO-2026-6859 (`net/http` MaxBytesReader header race, reachable through the
+  request path) forced the bump from 1.27.3, so the 1.27.3 digest no longer applies.
+  Refill it before the next release: `docker buildx imagetools inspect golang:1.27.4-alpine`
+  and the Docker Hub tag endpoint must agree on the same index digest;
 - `gcr.io/distroless/static-debian12:nonroot` —
   `sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab`.
 

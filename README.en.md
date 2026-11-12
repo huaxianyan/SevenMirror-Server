@@ -112,7 +112,7 @@ The admin interface and the device API **do not share a public origin**; give th
 ## Requirements
 
 - A Linux host with Docker Engine and Compose v2
-- Go 1.27.3 or newer (only when building the binary yourself)
+- Go 1.27.4 or newer (only when building the binary yourself)
 - A domain with a valid TLS certificate for serving over the internet
 
 ## Building and running from source
