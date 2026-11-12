@@ -6,6 +6,7 @@
   <title>{{.SectionLabel}} · SevenMirror 管理端</title>
   <link rel="icon" href="/favicon.ico">
   <link rel="stylesheet" href="/assets/admin.css">
+  <script src="/assets/custom-css.js" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -256,6 +257,17 @@
               <button type="submit">保存时区</button>
             </form>
             <p class="muted">选择记在当前浏览器里，换浏览器或换设备要重新设置。</p>
+          </div>
+          <div class="setting-item">
+            <h2>自定义样式</h2>
+            <p class="muted">这些 CSS 会应用到管理端页面，用来调整内置样式没有覆盖的排版。内容记在当前浏览器里。</p>
+            <textarea id="custom-css-input" class="custom-css-input" spellcheck="false" aria-label="自定义样式"></textarea>
+            <div class="custom-css-actions">
+              <button id="save-custom-css" type="button">保存样式</button>
+              <button id="restore-custom-css" class="secondary" type="button">恢复默认</button>
+              <button id="clear-custom-css" class="secondary" type="button">清空</button>
+              <p id="custom-css-status" class="muted" hidden></p>
+            </div>
           </div>
         </section>
         {{end}}

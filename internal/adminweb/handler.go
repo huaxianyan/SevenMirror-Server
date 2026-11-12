@@ -86,7 +86,7 @@ func consoleNavigation(active string) []navigationEntry {
 // simply asks the administrator to start the setup over.
 const setupPendingLifetime = 10 * time.Minute
 
-//go:embed templates/*.html assets/*.css assets/*.ico
+//go:embed templates/*.html assets/*.css assets/*.js assets/*.ico
 var files embed.FS
 
 type Manager interface {
@@ -306,6 +306,7 @@ func NewHandler(manager Manager, accounts AccountStore, config HandlerConfig) (h
 	mux.HandleFunc("/actions/remove", handler.removeDevice)
 	mux.HandleFunc("/actions/timezone", handler.changeTimezone)
 	mux.HandleFunc("/assets/admin.css", handler.stylesheet)
+	mux.HandleFunc("/assets/custom-css.js", handler.customStylesheet)
 	mux.HandleFunc("/favicon.ico", handler.favicon)
 	mux.HandleFunc("/", handler.dashboard)
 	return handler.securityHeaders(mux), nil
@@ -984,6 +985,22 @@ func actionFailure() *flashMessage {
 	return &flashMessage{
 		Kind: "error", Message: "操作没有完成。请刷新设备状态后重试。",
 	}
+}
+
+// customStylesheet serves the script that applies the admin's own sheet and wires its editor.
+func (h *Handler) customStylesheet(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	encoded, err := files.ReadFile("assets/custom-css.js")
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	_, _ = w.Write(encoded)
 }
 
 func (h *Handler) stylesheet(w http.ResponseWriter, r *http.Request) {

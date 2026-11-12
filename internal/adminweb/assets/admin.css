@@ -317,3 +317,20 @@ article.device-card { padding: 1rem; }
   .notice.success { background: #183526; border-color: #4d8d64; }
   .status.pending { background: #503712; color: #ffdca5; }
 }
+
+/* The editor shows the sheet as written, so it keeps a monospace face whatever the sheet does. */
+.custom-css-input {
+  width: 100%;
+  min-height: 10rem;
+  padding: .75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: .8rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+.custom-css-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-top: .75rem; }
+.custom-css-actions p { margin: 0; }
