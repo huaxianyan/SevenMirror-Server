@@ -1083,7 +1083,10 @@ func (h *Handler) securityHeaders(next http.Handler) http.Handler {
 		// load, so with default-src 'none' and no img-src directive Chromium refuses
 		// to draw it and the tab falls back to a blank page glyph. It stays
 		// same-origin, so nothing here lets a page reach an off-host image.
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+		// The console loads one same-origin script from /assets, and a custom sheet arrives as a
+		// blob stylesheet built from the browser's own storage. Inline styles stay forbidden, so the
+		// sheet comes through blob: instead of a <style> element.
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self' blob:; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 		// Chromium derives the Origin header of a navigation request (which is what a
 		// form submission is) from the referrer, so "no-referrer" makes every form
 		// post arrive as origin null and validOrigin rejects the login before the

@@ -45,7 +45,6 @@
         <section class="panel" aria-labelledby="panel-title">
           <div class="panel-heading">
             <h1 id="panel-title">设备</h1>
-            <p class="muted">先处理待批准申请，再查看已接入设备或生成加入码。</p>
           </div>
 
           {{if .Workspaces}}
@@ -193,7 +192,7 @@
                     <h3 id="add-title-{{.Reference}}">添加设备</h3>
                     <button type="button" class="button-link" popovertarget="add-{{.Reference}}" popovertargetaction="hide">关闭</button>
                   </div>
-                  <p class="muted">加入码十分钟内有效，只能提交一次申请。批准前设备不能同步通知。设备名称由客户端加入时填写。</p>
+                  <p class="muted">加入码十分钟内有效，只能提交一次申请；批准前该设备收不到通知。</p>
                 </div>
                 <form method="post" action="/actions/pairing-code" class="inline-form">
                   <input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
@@ -222,7 +221,6 @@
         <section class="panel" aria-labelledby="panel-title">
           <div class="panel-heading">
             <h1 id="panel-title">凭据</h1>
-            <p class="muted">管理端只有一个账号，没有多账号或角色划分。登录需要这个账号、对应口令，以及验证器应用里当前显示的动态验证码。</p>
           </div>
           <div class="setting-item">
             <h2>当前账号</h2>
@@ -237,12 +235,11 @@
         <section class="panel" aria-labelledby="panel-title">
           <div class="panel-heading">
             <h1 id="panel-title">设置</h1>
-            <p class="muted">这些设置只改变这个浏览器里的显示方式，不影响服务端记录、设备状态或任何同步行为。</p>
+            <p class="muted">只改变这个浏览器里的显示方式，不影响服务端记录、设备状态或同步。</p>
           </div>
           <div class="setting-item">
             <h2>时间显示时区</h2>
-            <p class="muted">页面上的时间默认按 UTC 显示，读起来不直观。选一个时区后，本页所有时间都按它换算；服务端和数据库仍然按 UTC 记录，历史数据不会被改动。</p>
-            <p>当前显示时区：<strong>{{.Timezone.Label}}</strong></p>
+            <p class="muted">选定后本页时间按它换算；服务端与数据库仍按 UTC 记录，已有数据不受影响。</p>
             <form method="post" action="/actions/timezone" class="setting-form">
               <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
               <label class="field-label" for="admin-timezone">时区
@@ -259,9 +256,11 @@
             <p class="muted">选择记在当前浏览器里，换浏览器或换设备要重新设置。</p>
           </div>
           <div class="setting-item">
-            <h2>自定义样式</h2>
-            <p class="muted">这些 CSS 会应用到管理端页面，用来调整内置样式没有覆盖的排版。内容记在当前浏览器里。</p>
-            <textarea id="custom-css-input" class="custom-css-input" spellcheck="false" aria-label="自定义样式"></textarea>
+            <h2 id="custom-css-title">自定义样式</h2>
+            <p class="muted">这些 CSS 应用到管理端页面，调整内置样式没有覆盖的排版；内容记在当前浏览器里。</p>
+            <label class="field-label" for="custom-css-input">样式内容
+              <textarea id="custom-css-input" class="custom-css-input" spellcheck="false"></textarea>
+            </label>
             <div class="custom-css-actions">
               <button id="save-custom-css" type="button">保存样式</button>
               <button id="restore-custom-css" class="secondary" type="button">恢复默认</button>
@@ -276,7 +275,6 @@
         <section class="panel" aria-labelledby="panel-title">
           <div class="panel-heading">
             <h1 id="panel-title">部署与维护</h1>
-            <p class="muted">这个页面只负责设备与凭据。</p>
           </div>
           <div class="setting-item">
             <h2>维护私有服务</h2>
@@ -289,7 +287,6 @@
         <section class="panel" aria-labelledby="panel-title">
           <div class="panel-heading">
             <h1 id="panel-title">关于</h1>
-            <p class="muted">管理页面与公开中继来自同一个镜像，但按需单独启动，只监听回环地址。</p>
           </div>
           <div class="setting-item">
             <h2>SevenMirror Server</h2>

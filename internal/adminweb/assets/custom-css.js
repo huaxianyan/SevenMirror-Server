@@ -15,14 +15,23 @@
     }
   }
 
+  // The page forbids inline styles, so the sheet is handed to the browser as a blob stylesheet and
+  // swapped in through a link element.
+  var sheetUrl = null;
+
   function inject(css) {
-    var style = document.getElementById('custom-css');
-    if (!style) {
-      style = document.createElement('style');
-      style.id = 'custom-css';
-      document.head.appendChild(style);
+    var link = document.getElementById('custom-css');
+    if (!link) {
+      link = document.createElement('link');
+      link.id = 'custom-css';
+      link.rel = 'stylesheet';
+      document.head.appendChild(link);
     }
-    style.textContent = css;
+    if (sheetUrl !== null) {
+      window.URL.revokeObjectURL(sheetUrl);
+    }
+    sheetUrl = window.URL.createObjectURL(new Blob([css], { type: 'text/css' }));
+    link.href = sheetUrl;
   }
 
   inject(stored());
