@@ -137,6 +137,23 @@ release body. `scripts/verify_release_notes.py` enforces that shape, and
 The release title is the tag alone. A product-name prefix turns the Release list
 into a column of identical truncated names and hides which version each entry is.
 
+### v0.1.12 publication and deployment
+
+Release `v0.1.12` fixes the custom stylesheet added in `v0.1.11`: the console policy allowed neither
+scripts nor inline styles, so the field stayed empty and saving had no effect. The policy now allows
+one same-origin script and a blob stylesheet, and the sheet is injected as a blob link. The same
+release drops four console paragraphs that restated a heading or the console's own structure.
+
+The multi-architecture index is
+`sha256:da373a8fcbe0ea5b5f2425f5cdc73b61ec58db2327657a058ef49e44ffe44056`. Deployment repeated the
+`v0.1.11` procedure: `backup-workspace` to `backups/pre-v0.1.12`, verified with
+`verify-workspace-backup` (`result=verified`), with `data/` and `authority/` copied to
+`backups/pre-v0.1.12-raw/` and the previous `.env` kept as `.env.pre-0.1.12`.
+
+Note for the next operator run: `docker compose up -d` after that stop sequence restarted only the
+relay and left `admin-web` exited. Starting it explicitly (`docker compose up -d admin-web`)
+brought the console back; the check is `/login` returning 200.
+
 ### v0.1.11 publication and deployment
 
 Release `v0.1.11` binds source revision `34c953b`; protocol version remains `0.1.0`. The console
