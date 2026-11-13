@@ -5,7 +5,7 @@
 
 [Project hub](https://github.com/huaxianyan/SevenMirror-Project) · Server · [Chrome extension](https://github.com/huaxianyan/SevenMirror-Extension) · [Android app](https://github.com/huaxianyan/SevenMirror-Android)
 
-English | [简体中文](README.md)
+[简体中文](README.md) | English
 </div>
 
 The relay server for SevenMirror. It routes end-to-end encrypted notifications between your phone and your browsers on your own host, and holds the private-space authority that decides which devices may join.
