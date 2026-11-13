@@ -14,6 +14,10 @@ import (
 const (
 	defaultAdminAddress = "127.0.0.1:8081"
 	defaultDatabasePath = "data/syncnotifications.db"
+	// defaultWebDirectory is where the admin image keeps the console's templates
+	// and static files, so a deployment can mount a directory over it and update
+	// the interface without replacing the binary.
+	defaultWebDirectory = "/app/web"
 )
 
 type RuntimeConfig struct {
@@ -23,6 +27,7 @@ type RuntimeConfig struct {
 	AuthorityKeyDirectory string
 	RecoveryCodeEnabled   bool
 	TrustedProxyCIDRs     []netip.Prefix
+	WebDirectory          string
 	ShutdownTimeout       time.Duration
 }
 
@@ -65,6 +70,7 @@ func LoadRuntimeConfig() (RuntimeConfig, error) {
 			"NM_AUTHORITY_KEY_DIR", filepath.Join(filepath.Dir(databasePath), "authority-keys")),
 		RecoveryCodeEnabled: recoveryCodeEnabled,
 		TrustedProxyCIDRs:   trustedProxies,
+		WebDirectory:        envOrDefault("NM_ADMIN_WEB_DIR", defaultWebDirectory),
 		ShutdownTimeout:     10 * time.Second,
 	}, nil
 }

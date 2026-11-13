@@ -74,13 +74,13 @@ class ContainerArtifactTest(unittest.TestCase):
                 write_oci_archive(archive, architecture)
                 archives[architecture] = archive
             output = root / "release"
-            build(archives, output, REVISION)
-            verify(output, REVISION)
+            build(archives, output, REVISION, "server")
+            verify(output, REVISION, "server")
 
             target = output / "sevenmirror-server-linux-amd64.oci.tar"
             target.write_bytes(target.read_bytes() + b"tampered")
             with self.assertRaisesRegex(RuntimeError, "field archive_sha256 is invalid"):
-                verify(output, REVISION)
+                verify(output, REVISION, "server")
 
 
 if __name__ == "__main__":

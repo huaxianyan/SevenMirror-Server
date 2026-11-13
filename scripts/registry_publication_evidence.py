@@ -26,7 +26,7 @@ from build_container_artifacts import (
 )
 
 DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
-REGISTRY_REPOSITORY = "ghcr.io/huaxianyan/sevenmirror-server"
+from release_components import COMPONENTS, ENTRYPOINTS, image_repository
 REVISION = re.compile(r"^[0-9a-f]{40}$")
 SCHEMA = "sevenmirror-registry-publication-evidence-v1"
 TRIVY_DATABASE = "ghcr.io/aquasecurity/trivy-db:2"
@@ -36,6 +36,7 @@ REGCTL_VERSION = "0.11.5"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--component", required=True, choices=COMPONENTS)
     parser.add_argument("--container-release", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--revision", required=True)
@@ -114,6 +115,7 @@ def inspect_pulled_layout(
     layout: Path,
     expected_records: list[dict[str, object]],
     revision: str,
+    component: str,
 ) -> tuple[str, bytes]:
     blobs, outer_content = layout_blobs(layout)
     outer = parse_json(outer_content, "pulled OCI outer index")
@@ -154,7 +156,7 @@ def inspect_pulled_layout(
         runtime = config.get("config")
         if config.get("architecture") != architecture or config.get("os") != "linux" or \
                 not isinstance(runtime, dict) or runtime.get("User") != "nonroot:nonroot" or \
-                runtime.get("Entrypoint") != ["/app/server"]:
+                runtime.get("Entrypoint") != [ENTRYPOINTS[component]]:
             raise RuntimeError("published registry runtime identity is invalid")
         labels = runtime.get("Labels")
         if not isinstance(labels, dict) or labels.get("org.opencontainers.image.revision") != revision:
@@ -187,6 +189,7 @@ def build(
     revision: str,
     trivy: Path,
     cache_dir: Path,
+    component: str,
 ) -> None:
     if output.exists() or output.is_symlink():
         raise RuntimeError("registry evidence output must not already exist")
@@ -198,8 +201,10 @@ def build(
     if version != f"Version: {TRIVY_VERSION}":
         raise RuntimeError("unexpected Trivy version")
     records = container_records(container_release, revision)
-    index_digest, index_content = inspect_pulled_layout(pulled_layout, records, revision)
-    immutable_ref = f"{REGISTRY_REPOSITORY}@{index_digest}"
+    index_digest, index_content = inspect_pulled_layout(
+        pulled_layout, records, revision, component,
+    )
+    immutable_ref = f"{image_repository(component)}@{index_digest}"
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     run([str(trivy), "image", "--cache-dir", str(cache_dir), "--download-db-only", "--no-progress"])
@@ -252,7 +257,7 @@ def build(
         "immutable_reference": immutable_ref,
         "observed_at": observed_at,
         "registry_index": "registry-index.json",
-        "registry_repository": REGISTRY_REPOSITORY,
+        "registry_repository": image_repository(component),
         "regctl_version": REGCTL_VERSION,
         "scans": scans,
         "schema": SCHEMA,
@@ -266,7 +271,9 @@ def build(
     )
 
 
-def verify(output: Path, container_release: Path, revision: str) -> None:
+def verify(
+    output: Path, container_release: Path, revision: str, component: str,
+) -> None:
     records = container_records(container_release, revision)
     if not output.is_dir() or output.is_symlink():
         raise RuntimeError("registry evidence must be a non-symlink directory")
@@ -277,7 +284,7 @@ def verify(output: Path, container_release: Path, revision: str) -> None:
         "registry_repository", "regctl_version", "scans", "schema", "source_revision",
         "trivy_version",
     } or manifest.get("schema") != SCHEMA or manifest.get("source_revision") != revision or \
-            manifest.get("registry_repository") != REGISTRY_REPOSITORY or \
+            manifest.get("registry_repository") != image_repository(component) or \
             manifest.get("regctl_version") != REGCTL_VERSION or \
             manifest.get("trivy_version") != TRIVY_VERSION or manifest.get("database") != TRIVY_DATABASE:
         raise RuntimeError("registry publication manifest identity is invalid")
@@ -285,7 +292,7 @@ def verify(output: Path, container_release: Path, revision: str) -> None:
     index_content = (output / "registry-index.json").read_bytes()
     index_digest = f"sha256:{sha256_bytes(index_content)}"
     if manifest.get("index_digest") != index_digest or manifest.get("index_sha256") != sha256_bytes(index_content) or \
-            manifest.get("immutable_reference") != f"{REGISTRY_REPOSITORY}@{index_digest}" or \
+            manifest.get("immutable_reference") != f"{image_repository(component)}@{index_digest}" or \
             manifest.get("registry_index") != "registry-index.json":
         raise RuntimeError("registry index digest binding is invalid")
     index = parse_json(index_content, "registry index")
@@ -349,9 +356,9 @@ def main() -> None:
             raise RuntimeError("pulled layout, Trivy and cache directory are required")
         build(
             container_release, args.pulled_layout.resolve(), output, args.revision,
-            args.trivy.resolve(), args.cache_dir.resolve(),
+            args.trivy.resolve(), args.cache_dir.resolve(), args.component,
         )
-    verify(output, container_release, args.revision)
+    verify(output, container_release, args.revision, args.component)
     print("SevenMirror registry publication and runtime scan evidence verified.")
 
 

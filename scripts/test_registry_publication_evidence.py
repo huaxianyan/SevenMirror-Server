@@ -97,7 +97,7 @@ class RegistryPublicationEvidenceTest(unittest.TestCase):
             layout = Path(directory) / "pulled"
             records, expected_digest = write_pulled_layout(layout)
             actual_digest, index_content = MODULE.inspect_pulled_layout(
-                layout, records, REVISION,
+                layout, records, REVISION, "server",
             )
             self.assertEqual(actual_digest, expected_digest)
             self.assertEqual(
@@ -111,7 +111,7 @@ class RegistryPublicationEvidenceTest(unittest.TestCase):
             records, _ = write_pulled_layout(layout)
             records[1]["manifest_digest"] = "sha256:" + "0" * 64
             with self.assertRaisesRegex(RuntimeError, "platform binding"):
-                MODULE.inspect_pulled_layout(layout, records, REVISION)
+                MODULE.inspect_pulled_layout(layout, records, REVISION, "server")
 
     def test_pulled_registry_graph_rejects_unreferenced_blob(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -119,7 +119,7 @@ class RegistryPublicationEvidenceTest(unittest.TestCase):
             records, _ = write_pulled_layout(layout)
             write_blob(layout, b"unreferenced registry content")
             with self.assertRaisesRegex(RuntimeError, "unreferenced graph"):
-                MODULE.inspect_pulled_layout(layout, records, REVISION)
+                MODULE.inspect_pulled_layout(layout, records, REVISION, "server")
 
 
 if __name__ == "__main__":

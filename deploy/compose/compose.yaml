@@ -8,10 +8,13 @@
 # 持久化数据就在这个文件旁边的 data/、authority/、backups/ 三个目录里，
 # 备份就是把它们复制走。
 #
-# 下面固定为 v0.1.9 的已核验镜像摘要。升级时只修改这一处，
-# 新摘要及其源提交见 security/registry-release-ledger.json。
+# 两个镜像分开升级：中继与管理 CLI 随服务端标签（vX.Y.Z）发布，
+# 管理界面随管理端标签（admin-vX.Y.Z）发布。只换其中一行就能只升级一半，
+# 换行前先备份 data/ 与 authority/。两边摘要及其源提交见
+# security/registry-release-ledger.json。
 
-x-image: &sevenmirror-image ghcr.io/huaxianyan/sevenmirror-server@sha256:da373a8fcbe0ea5b5f2425f5cdc73b61ec58db2327657a058ef49e44ffe44056
+x-server-image: &sevenmirror-server-image ghcr.io/huaxianyan/sevenmirror-server@sha256:da373a8fcbe0ea5b5f2425f5cdc73b61ec58db2327657a058ef49e44ffe44056
+x-admin-image: &sevenmirror-admin-image ghcr.io/huaxianyan/sevenmirror-admin@sha256:PENDING_FIRST_ADMIN_RELEASE
 
 services:
   # 每次 up 都跑一次的初始化。只在没有工作区时创建，已存在则直接成功退出，
@@ -21,7 +24,7 @@ services:
   # 交付一次性密钥，项目规定 admin 输出不得进入日志管道。要看工作区 ID 就用：
   #   docker compose run --rm admin list-workspaces
   prepare:
-    image: *sevenmirror-image
+    image: *sevenmirror-server-image
     entrypoint: ["/app/admin"]
     command: ["init-workspace"]
     # 用 root 是为了让 Docker 自动创建的挂载目录直接可用，省掉手工 mkdir 与
@@ -49,7 +52,7 @@ services:
 
   # 常驻的中继。对外只绑定宿主机回环地址，由你自己的反向代理转发进来。
   relay:
-    image: *sevenmirror-image
+    image: *sevenmirror-server-image
     restart: unless-stopped
     depends_on:
       # 等工作区建好再启动，否则中继会先对着一个没有工作区的库跑起来。
@@ -92,7 +95,7 @@ services:
   # 一次性工作区管理。不连接网络，也是唯一能读到权威私钥的服务。
   admin:
     profiles: [admin]
-    image: *sevenmirror-image
+    image: *sevenmirror-server-image
     entrypoint: ["/app/admin"]
     user: "0:0"
     read_only: true
@@ -116,7 +119,7 @@ services:
   # 只监听回环地址，通过 SSH 隧道访问；不对外暴露。
   admin-web:
     profiles: [admin-web]
-    image: *sevenmirror-image
+    image: *sevenmirror-admin-image
     entrypoint: ["/app/admin-web"]
     user: "0:0"
     read_only: true
@@ -130,6 +133,9 @@ services:
       # 只有通过域名访问管理端时才需要这一项，默认值就是上面的地址。
       # 如果设了，必须与浏览器地址栏逐字符一致，含协议与端口。
       # NM_ADMIN_ORIGIN: https://sevenmirror-admin.example.com
+      # 模板与静态文件在镜像的 /app/web。把下面这行取消注释，就能用挂载的
+      # 目录覆盖它们：只改措辞或样式时不必再发镜像，替换文件后重启本服务。
+      # NM_ADMIN_WEB_DIR: /app/web
     volumes:
       - ./data:/data
       - ./authority:/authority

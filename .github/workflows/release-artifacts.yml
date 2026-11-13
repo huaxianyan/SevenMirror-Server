@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - 'v*'
+      - 'admin-v*'
+
+# The relay and the console ship apart: vX.Y.Z publishes the server image and
+# admin-vX.Y.Z publishes the console image. A release that changes the database
+# schema still ships both, because an older console refuses a newer registry.
+env:
+  COMPONENT: ${{ startsWith(github.ref_name, 'admin-v') && 'admin' || 'server' }}
+  IMAGE_NAME: ${{ startsWith(github.ref_name, 'admin-v') && 'sevenmirror-admin' || 'sevenmirror-server' }}
+  DOCKERFILE: ${{ startsWith(github.ref_name, 'admin-v') && 'Dockerfile.admin' || 'Dockerfile' }}
 
 permissions:
   contents: write
@@ -38,8 +47,8 @@ jobs:
         if: github.ref_type == 'tag'
         run: |
           # Release versions are independent of the wire protocol version.
-          [[ "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
-            echo 'Release tags must use vMAJOR.MINOR.PATCH.' >&2
+          [[ "$GITHUB_REF_NAME" =~ ^(admin-)?v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || {
+            echo 'Release tags must use vMAJOR.MINOR.PATCH or admin-vMAJOR.MINOR.PATCH.' >&2
             exit 1
           }
       - name: Validate vulnerability evidence and exception registry
@@ -68,6 +77,7 @@ jobs:
           tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP" trivy
           chmod 0700 "$RUNNER_TEMP/trivy"
           python3 scripts/base_image_evidence.py \
+            --dockerfile "$DOCKERFILE" \
             --trivy "$RUNNER_TEMP/trivy" \
             --cache-dir "$RUNNER_TEMP/trivy-cache" \
             --output "$RUNNER_TEMP/sevenmirror-base-image-evidence" \
@@ -75,7 +85,8 @@ jobs:
       - name: Build and verify release artifact set
         run: |
           python3 scripts/build_release_artifacts.py \
-            --output "$RUNNER_TEMP/sevenmirror-server-release" \
+            --component "$COMPONENT" \
+            --output "$RUNNER_TEMP/sevenmirror-${{ env.COMPONENT }}-release" \
             --revision "$GITHUB_SHA"
       - name: Build and verify OCI container artifact set
         run: |
@@ -84,6 +95,7 @@ jobs:
           trap 'docker buildx rm --force "$builder"' EXIT
           for architecture in amd64 arm64; do
             docker buildx build \
+              --file "$DOCKERFILE" \
               --platform "linux/${architecture}" \
               --build-arg "SOURCE_REVISION=${GITHUB_SHA}" \
               --provenance=false \
@@ -93,15 +105,16 @@ jobs:
           done
           python3 scripts/test_build_container_artifacts.py
           python3 scripts/build_container_artifacts.py \
+            --component "$COMPONENT" \
             --amd64-archive "$RUNNER_TEMP/sevenmirror-amd64.oci.tar" \
             --arm64-archive "$RUNNER_TEMP/sevenmirror-arm64.oci.tar" \
-            --output "$RUNNER_TEMP/sevenmirror-container-release" \
+            --output "$RUNNER_TEMP/sevenmirror-${{ env.COMPONENT }}-container-release" \
             --revision "$GITHUB_SHA"
       - name: Publish verified OCI graph and verify registry-served runtime
         env:
           REGCTL_LINUX_AMD64_SHA256: c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467
           REGCTL_VERSION: 0.11.5
-          REGISTRY_REPOSITORY: ghcr.io/huaxianyan/sevenmirror-server
+          REGISTRY_REPOSITORY: ghcr.io/huaxianyan/${{ env.IMAGE_NAME }}
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           regctl="$RUNNER_TEMP/regctl"
@@ -124,12 +137,12 @@ jobs:
             source_layout="$RUNNER_TEMP/sevenmirror-source-${architecture}"
             mkdir -m 0700 "$source_layout"
             tar --extract --file \
-              "$RUNNER_TEMP/sevenmirror-container-release/sevenmirror-server-linux-${architecture}.oci.tar" \
+              "$RUNNER_TEMP/sevenmirror-${{ env.COMPONENT }}-container-release/sevenmirror-${{ env.COMPONENT }}-linux-${architecture}.oci.tar" \
               --directory "$source_layout"
             manifest_digest="$(jq -er \
               --arg architecture "$architecture" \
               '.images[] | select(.architecture == $architecture) | .manifest_digest' \
-              "$RUNNER_TEMP/sevenmirror-container-release/container-manifest.json")"
+              "$RUNNER_TEMP/sevenmirror-${{ env.COMPONENT }}-container-release/container-manifest.json")"
             "$regctl" image copy \
               "ocidir://${source_layout}@${manifest_digest}" \
               "ocidir://${combined}:${architecture}"
@@ -173,7 +186,8 @@ jobs:
           fi
 
           python3 scripts/registry_publication_evidence.py \
-            --container-release "$RUNNER_TEMP/sevenmirror-container-release" \
+            --component "$COMPONENT" \
+            --container-release "$RUNNER_TEMP/sevenmirror-${{ env.COMPONENT }}-container-release" \
             --pulled-layout "$pulled" \
             --trivy "$RUNNER_TEMP/trivy" \
             --cache-dir "$RUNNER_TEMP/trivy-cache" \
@@ -190,11 +204,11 @@ jobs:
       - name: Generate signed binary provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: '${{ runner.temp }}/sevenmirror-server-release/*'
+          subject-path: '${{ runner.temp }}/sevenmirror-${{ env.COMPONENT }}-release/*'
       - name: Generate signed container provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
-          subject-path: '${{ runner.temp }}/sevenmirror-container-release/*'
+          subject-path: '${{ runner.temp }}/sevenmirror-${{ env.COMPONENT }}-container-release/*'
       - name: Generate signed vulnerability-evidence provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
@@ -216,15 +230,15 @@ jobs:
       - name: Upload verified binary artifact set
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: sevenmirror-server-${{ github.sha }}
-          path: '${{ runner.temp }}/sevenmirror-server-release/'
+          name: sevenmirror-${{ env.COMPONENT }}-${{ github.sha }}
+          path: '${{ runner.temp }}/sevenmirror-${{ env.COMPONENT }}-release/'
           if-no-files-found: error
           retention-days: 30
       - name: Upload verified container artifact set
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: sevenmirror-container-${{ github.sha }}
-          path: '${{ runner.temp }}/sevenmirror-container-release/'
+          path: '${{ runner.temp }}/sevenmirror-${{ env.COMPONENT }}-container-release/'
           if-no-files-found: error
           retention-days: 30
       - name: Upload bounded vulnerability evidence
@@ -247,7 +261,7 @@ jobs:
       # container registry, so only the binary set becomes a Release asset.
       - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6.0.0
         with:
-          name: sevenmirror-server-${{ github.sha }}
+          name: sevenmirror-${{ env.COMPONENT }}-${{ github.sha }}
           path: release
       - name: Assemble and publish the GitHub Release
         env:

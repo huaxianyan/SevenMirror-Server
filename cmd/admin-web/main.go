@@ -54,7 +54,7 @@ func main() {
 	}
 	handler, err := adminweb.NewHandler(management, store, adminweb.HandlerConfig{
 		RecoveryCode: recoveryCode, ExpectedOrigin: config.ExpectedOrigin,
-		TrustedProxyCIDRs: config.TrustedProxyCIDRs,
+		TrustedProxyCIDRs: config.TrustedProxyCIDRs, WebRoot: config.WebDirectory,
 	})
 	if err != nil {
 		logger.Error("configure admin handler", "error", err)

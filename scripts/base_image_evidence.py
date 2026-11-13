@@ -37,6 +37,7 @@ OUT_PATH = re.compile(r"(?<![A-Za-z0-9_.-])(/out(?:/[A-Za-z0-9_.-]+)?)")
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--dockerfile", type=Path, default=DOCKERFILE)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--revision", required=True)
     parser.add_argument("--trivy", type=Path)
@@ -239,7 +240,9 @@ def run(command: list[str]) -> None:
     subprocess.run(command, check=True)
 
 
-def build(output: Path, revision: str, trivy: Path, cache_dir: Path) -> None:
+def build(
+    output: Path, revision: str, trivy: Path, cache_dir: Path, dockerfile: Path = DOCKERFILE,
+) -> None:
     if output.exists() or output.is_symlink():
         raise RuntimeError("base-image evidence output must not already exist")
     if not trivy.is_file() or trivy.is_symlink():
@@ -264,7 +267,7 @@ def build(output: Path, revision: str, trivy: Path, cache_dir: Path) -> None:
     shutil.copyfile(metadata_source, output / "trivy-db-metadata.json")
     exceptions = active_exceptions()
     scans: list[dict[str, object]] = []
-    for image in dockerfile_images():
+    for image in dockerfile_images(dockerfile):
         for architecture in ARCHITECTURES:
             prefix = [
                 str(trivy), "image", "--cache-dir", str(cache_dir), "--skip-db-update",
@@ -293,7 +296,7 @@ def build(output: Path, revision: str, trivy: Path, cache_dir: Path) -> None:
     observed_at = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     require_fresh_database(updated_at, observed_at)
     manifest = {
-        "builder_output_controls": builder_output_controls(),
+        "builder_output_controls": builder_output_controls(dockerfile),
         "database": TRIVY_DATABASE,
         "database_metadata": "trivy-db-metadata.json",
         "database_metadata_sha256": sha256_file(output / "trivy-db-metadata.json"),
@@ -311,7 +314,7 @@ def build(output: Path, revision: str, trivy: Path, cache_dir: Path) -> None:
     )
 
 
-def verify(output: Path, revision: str) -> None:
+def verify(output: Path, revision: str, dockerfile: Path = DOCKERFILE) -> None:
     if not REVISION.fullmatch(revision):
         raise RuntimeError("expected revision must be a canonical commit")
     if not output.is_dir() or output.is_symlink():
@@ -322,13 +325,13 @@ def verify(output: Path, revision: str) -> None:
         "database_updated_at", "observed_at", "schema", "source_revision", "trivy_version", "scans",
     } or manifest.get("schema") != SCHEMA or manifest.get("source_revision") != revision or \
             manifest.get("trivy_version") != TRIVY_VERSION or manifest.get("database") != TRIVY_DATABASE or \
-            manifest.get("builder_output_controls") != builder_output_controls():
+            manifest.get("builder_output_controls") != builder_output_controls(dockerfile):
         raise RuntimeError("base-image manifest identity is invalid")
     require_fresh_database(manifest["database_updated_at"], manifest["observed_at"])
     scans = manifest.get("scans")
     if not isinstance(scans, list) or len(scans) != 4:
         raise RuntimeError("base-image scan inventory is invalid")
-    expected_images = dockerfile_images()
+    expected_images = dockerfile_images(dockerfile)
     expected_pairs = [
         (image["role"], architecture, image["reference"])
         for image in expected_images for architecture in ARCHITECTURES
@@ -385,8 +388,11 @@ def main() -> None:
     if not args.verify_only:
         if args.trivy is None or args.cache_dir is None:
             raise RuntimeError("Trivy and cache directory are required")
-        build(output, args.revision, args.trivy.resolve(), args.cache_dir.resolve())
-    verify(output, args.revision)
+        build(
+            output, args.revision, args.trivy.resolve(), args.cache_dir.resolve(),
+            args.dockerfile.resolve(),
+        )
+    verify(output, args.revision, args.dockerfile.resolve())
     print("SevenMirror base-image SBOM and vulnerability evidence verified.")
 
 

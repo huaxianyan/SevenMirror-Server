@@ -109,17 +109,22 @@ jobs:
           builder="sevenmirror-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           docker buildx create --name "$builder" --driver docker-container --use
           trap 'docker buildx rm --force "$builder"' EXIT
-          for architecture in amd64 arm64; do
-            docker buildx build \
-              --platform "linux/${architecture}" \
-              --build-arg "SOURCE_REVISION=${GITHUB_SHA}" \
-              --provenance=false \
-              --sbom=false \
-              --output "type=oci,dest=${RUNNER_TEMP}/sevenmirror-${architecture}.oci.tar" \
-              .
+          for component in server admin; do
+            if [ "$component" = admin ]; then dockerfile=Dockerfile.admin; else dockerfile=Dockerfile; fi
+            for architecture in amd64 arm64; do
+              docker buildx build \
+                --file "$dockerfile" \
+                --platform "linux/${architecture}" \
+                --build-arg "SOURCE_REVISION=${GITHUB_SHA}" \
+                --provenance=false \
+                --sbom=false \
+                --output "type=oci,dest=${RUNNER_TEMP}/sevenmirror-${component}-${architecture}.oci.tar" \
+                .
+            done
+            python3 scripts/build_container_artifacts.py \
+              --component "$component" \
+              --amd64-archive "$RUNNER_TEMP/sevenmirror-${component}-amd64.oci.tar" \
+              --arm64-archive "$RUNNER_TEMP/sevenmirror-${component}-arm64.oci.tar" \
+              --output "$RUNNER_TEMP/sevenmirror-${component}-container-release" \
+              --revision "$GITHUB_SHA"
           done
-          python3 scripts/build_container_artifacts.py \
-            --amd64-archive "$RUNNER_TEMP/sevenmirror-amd64.oci.tar" \
-            --arm64-archive "$RUNNER_TEMP/sevenmirror-arm64.oci.tar" \
-            --output "$RUNNER_TEMP/sevenmirror-container-release" \
-            --revision "$GITHUB_SHA"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package and verify bounded OCI image layouts for SevenMirror Server."""
+"""Package and verify bounded OCI image layouts for one SevenMirror release component."""
 
 from __future__ import annotations
 
@@ -11,15 +11,18 @@ import re
 import shutil
 import tarfile
 
+from release_components import COMPONENTS, ENTRYPOINTS, IMAGES, require_component
+
 ARCHITECTURES = ("amd64", "arm64")
 DIGEST = re.compile(r"^sha256:([0-9a-f]{64})$")
 REVISION = re.compile(r"^[0-9a-f]{40}$")
 REPOSITORY = "https://github.com/huaxianyan/SevenMirror-Server"
-SCHEMA = "sevenmirror-server-container-release-v1"
+SCHEMA = "sevenmirror-component-container-release-v1"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--component", required=True, choices=COMPONENTS)
     parser.add_argument("--amd64-archive", type=Path)
     parser.add_argument("--arm64-archive", type=Path)
     parser.add_argument("--output", required=True, type=Path)
@@ -66,7 +69,9 @@ def descriptor_blob(
     return digest, content
 
 
-def inspect_archive(path: Path, architecture: str, revision: str) -> dict[str, object]:
+def inspect_archive(
+    path: Path, architecture: str, revision: str, component: str,
+) -> dict[str, object]:
     if not path.is_file() or path.is_symlink():
         raise RuntimeError("OCI archive must be a regular file")
     regular: dict[str, bytes] = {}
@@ -129,7 +134,7 @@ def inspect_archive(path: Path, architecture: str, revision: str) -> dict[str, o
     labels = runtime.get("Labels")
     if config.get("architecture") != architecture or config.get("os") != "linux" or \
             runtime.get("User") != "nonroot:nonroot" or \
-            runtime.get("Entrypoint") != ["/app/server"] or \
+            runtime.get("Entrypoint") != [ENTRYPOINTS[component]] or \
             not isinstance(labels, dict) or labels.get("org.opencontainers.image.source") != REPOSITORY or \
             labels.get("org.opencontainers.image.revision") != revision:
         raise RuntimeError("OCI platform, runtime, or source identity is invalid")
@@ -142,16 +147,16 @@ def inspect_archive(path: Path, architecture: str, revision: str) -> dict[str, o
         "config_digest": config_digest,
         "layer_count": len(layers),
         "runtime_user": "nonroot:nonroot",
-        "entrypoint": ["/app/server"],
+        "entrypoint": [ENTRYPOINTS[component]],
     }
 
 
-def archive_name(architecture: str) -> str:
-    return f"sevenmirror-server-linux-{architecture}.oci.tar"
+def archive_name(component: str, architecture: str) -> str:
+    return f"sevenmirror-{component}-linux-{architecture}.oci.tar"
 
 
 def build(
-    archives: dict[str, Path], output: Path, revision: str,
+    archives: dict[str, Path], output: Path, revision: str, component: str,
 ) -> None:
     if not REVISION.fullmatch(revision):
         raise RuntimeError("container revision must be a canonical commit")
@@ -160,14 +165,18 @@ def build(
     records: list[dict[str, object]] = []
     for architecture in ARCHITECTURES:
         source = archives[architecture]
-        record = inspect_archive(source, architecture, revision)
-        record["name"] = archive_name(architecture)
+        record = inspect_archive(source, architecture, revision, component)
+        record["name"] = archive_name(component, architecture)
         records.append(record)
     output.mkdir(mode=0o700)
     for architecture in ARCHITECTURES:
-        shutil.copyfile(archives[architecture], output / archive_name(architecture))
+        shutil.copyfile(
+            archives[architecture], output / archive_name(component, architecture),
+        )
     manifest = {
         "schema": SCHEMA,
+        "component": component,
+        "image": IMAGES[component],
         "source_repository": REPOSITORY,
         "source_revision": revision,
         "images": records,
@@ -183,7 +192,7 @@ def build(
     )
 
 
-def verify(output: Path, revision: str) -> None:
+def verify(output: Path, revision: str, component: str) -> None:
     if not REVISION.fullmatch(revision):
         raise RuntimeError("expected revision must be a canonical commit")
     if not output.is_dir() or output.is_symlink():
@@ -194,14 +203,15 @@ def verify(output: Path, revision: str) -> None:
         )
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise RuntimeError("container manifest is invalid") from error
-    if manifest.get("schema") != SCHEMA or manifest.get("source_repository") != REPOSITORY or \
+    if manifest.get("schema") != SCHEMA or manifest.get("component") != component or \
+            manifest.get("image") != IMAGES[component] or manifest.get("source_repository") != REPOSITORY or \
             manifest.get("source_revision") != revision:
         raise RuntimeError("container manifest source binding is invalid")
     records = manifest.get("images")
     if not isinstance(records, list) or len(records) != len(ARCHITECTURES):
         raise RuntimeError("container image inventory is invalid")
     expected_entries = {"container-manifest.json", "SHA256SUMS"} | {
-        archive_name(architecture) for architecture in ARCHITECTURES
+        archive_name(component, architecture) for architecture in ARCHITECTURES
     }
     entries = list(output.iterdir())
     if {entry.name for entry in entries} != expected_entries or any(
@@ -210,14 +220,17 @@ def verify(output: Path, revision: str) -> None:
         raise RuntimeError("container output has missing, extra, or unsafe entries")
     checksum_lines: list[str] = []
     for architecture, record in zip(ARCHITECTURES, records, strict=True):
-        if not isinstance(record, dict) or record.get("name") != archive_name(architecture):
+        expected_name = archive_name(component, architecture)
+        if not isinstance(record, dict) or record.get("name") != expected_name:
             raise RuntimeError("container image record order or name is invalid")
-        actual = inspect_archive(output / archive_name(architecture), architecture, revision)
+        actual = inspect_archive(
+            output / expected_name, architecture, revision, component,
+        )
         for key, value in actual.items():
             if record.get(key) != value:
                 raise RuntimeError(f"container image {architecture} field {key} is invalid")
         checksum_lines.append(
-            f"{actual['archive_sha256']}  {archive_name(architecture)}\n"
+            f"{actual['archive_sha256']}  {expected_name}\n"
         )
     if (output / "SHA256SUMS").read_text(encoding="ascii") != "".join(checksum_lines):
         raise RuntimeError("container checksums do not match the manifest")
@@ -236,9 +249,10 @@ def main() -> None:
             },
             output,
             args.revision,
+            args.component,
         )
-    verify(output, args.revision)
-    print("SevenMirror Server OCI container artifact set verified.")
+    verify(output, args.revision, args.component)
+    print(f"SevenMirror {IMAGES[args.component]} OCI container artifact set verified.")
 
 
 if __name__ == "__main__":

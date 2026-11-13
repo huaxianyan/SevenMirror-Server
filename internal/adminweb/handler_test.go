@@ -134,6 +134,7 @@ func (r *countingRandom) Read(buffer []byte) (int, error) {
 func newTestHandler(t *testing.T, accounts AccountStore, moment *time.Time) http.Handler {
 	t.Helper()
 	handler, err := NewHandler(&fixedStore{}, accounts, HandlerConfig{
+		WebRoot:        "./",
 		RecoveryCode:   []byte("recovery-code-for-tests"),
 		ExpectedOrigin: "http://127.0.0.1:8081",
 		Now:            func() time.Time { return *moment },
@@ -203,6 +204,7 @@ func TestAdministratorLogsInOnceAndSeesDeviceStatusWithoutInternalIdentifiers(t 
 		invalidSecondFactor = "111111"
 	}
 	handler, err := NewHandler(store, storedAccountStore(t), HandlerConfig{
+		WebRoot:        "./",
 		RecoveryCode:   []byte("recovery-code-for-tests"),
 		ExpectedOrigin: "http://127.0.0.1:8081",
 		Now:            func() time.Time { return loginMoment },
@@ -334,6 +336,7 @@ func TestAdministratorRecoveryCodeIsSingleUseAndExpires(t *testing.T) {
 	}
 	moment := time.UnixMilli(1_800_000_000_000)
 	handler, err := NewHandler(&fixedStore{}, storedAccountStore(t), HandlerConfig{
+		WebRoot:        "./",
 		RecoveryCode:   []byte("recovery-code-for-tests"),
 		ExpectedOrigin: "http://127.0.0.1:8081",
 		Now:            func() time.Time { return moment },
@@ -786,6 +789,7 @@ func TestUnparsableStoredCredentialStopsTheConsole(t *testing.T) {
 	} {
 		accounts := &memoryAccountStore{credential: credential, has: true}
 		if _, err := NewHandler(&fixedStore{}, accounts, HandlerConfig{
+			WebRoot:        "./",
 			ExpectedOrigin: "http://127.0.0.1:8081",
 		}); err == nil {
 			t.Fatalf("NewHandler accepted a credential with a %s", name)
@@ -838,6 +842,7 @@ func TestConsoleSectionsAndDisplayTimeZone(t *testing.T) {
 	}
 	moment := now
 	handler, err := NewHandler(store, storedAccountStore(t), HandlerConfig{
+		WebRoot:        "./",
 		RecoveryCode:   []byte("recovery-code-for-tests"),
 		ExpectedOrigin: "http://127.0.0.1:8081",
 		Now:            func() time.Time { return moment },

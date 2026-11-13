@@ -6,14 +6,16 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
-	"embed"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -86,8 +88,49 @@ func consoleNavigation(active string) []navigationEntry {
 // simply asks the administrator to start the setup over.
 const setupPendingLifetime = 10 * time.Minute
 
-//go:embed templates/*.html assets/*.css assets/*.js assets/*.ico
-var files embed.FS
+// webAssets is the console's presentation layer, read from disk once at startup.
+// It used to be embedded in the binary, which meant a copy fix could only ship by
+// releasing the whole server again. Reading a directory lets the admin image carry
+// the files and lets a deployment mount them, so the two can be updated apart.
+type webAssets struct {
+	templates   *template.Template
+	stylesheet  []byte
+	editor      []byte
+	faviconIcon []byte
+}
+
+// loadWebAssets reads the console's templates and static files, naming the directory
+// in every failure: a missing file here is a deployment mistake, and the console must
+// say which directory was read rather than start with half a page.
+func loadWebAssets(root string) (webAssets, error) {
+	source := os.DirFS(root)
+	templates, err := template.ParseFS(source, "templates/*.html")
+	if err != nil {
+		return webAssets{}, fmt.Errorf("read admin console templates in %s: %w", root, err)
+	}
+	read := func(name string) ([]byte, error) {
+		encoded, err := fs.ReadFile(source, name)
+		if err != nil {
+			return nil, fmt.Errorf("read admin console file %s in %s: %w", name, root, err)
+		}
+		return encoded, nil
+	}
+	stylesheet, err := read("assets/admin.css")
+	if err != nil {
+		return webAssets{}, err
+	}
+	editor, err := read("assets/custom-css.js")
+	if err != nil {
+		return webAssets{}, err
+	}
+	faviconIcon, err := read("assets/favicon.ico")
+	if err != nil {
+		return webAssets{}, err
+	}
+	return webAssets{
+		templates: templates, stylesheet: stylesheet, editor: editor, faviconIcon: faviconIcon,
+	}, nil
+}
 
 type Manager interface {
 	ListWorkspaces(context.Context) ([]admission.WorkspaceSummary, error)
@@ -102,8 +145,10 @@ type HandlerConfig struct {
 	RecoveryCode      []byte
 	ExpectedOrigin    string
 	TrustedProxyCIDRs []netip.Prefix
-	Now               func() time.Time
-	Random            io.Reader
+	// WebRoot is the directory holding templates/ and assets/.
+	WebRoot string
+	Now     func() time.Time
+	Random  io.Reader
 }
 
 type Handler struct {
@@ -121,7 +166,7 @@ type Handler struct {
 	loginAttempts     *ratelimit.FixedWindow
 	setupAttempts     *ratelimit.FixedWindow
 	managementActions *ratelimit.FixedWindow
-	templates         *template.Template
+	web               webAssets
 
 	mu           sync.Mutex
 	account      account
@@ -272,7 +317,7 @@ func NewHandler(manager Manager, accounts AccountStore, config HandlerConfig) (h
 	if err != nil {
 		return nil, err
 	}
-	templates, err := template.ParseFS(files, "templates/*.html")
+	web, err := loadWebAssets(config.WebRoot)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +333,7 @@ func NewHandler(manager Manager, accounts AccountStore, config HandlerConfig) (h
 		loginAttempts:     loginAttempts,
 		setupAttempts:     setupAttempts,
 		managementActions: managementActions,
-		templates:         templates,
+		web:               web,
 		sessions:          make(map[[sha256.Size]byte]session),
 	}
 	if _, err := io.ReadFull(random, handler.workspaceRefKey[:]); err != nil {
@@ -994,13 +1039,8 @@ func (h *Handler) customStylesheet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	encoded, err := files.ReadFile("assets/custom-css.js")
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
 	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-	_, _ = w.Write(encoded)
+	_, _ = w.Write(h.web.editor)
 }
 
 func (h *Handler) stylesheet(w http.ResponseWriter, r *http.Request) {
@@ -1009,32 +1049,22 @@ func (h *Handler) stylesheet(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	encoded, err := files.ReadFile("assets/admin.css")
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
-	_, _ = w.Write(encoded)
+	_, _ = w.Write(h.web.stylesheet)
 }
 
-// favicon serves the console's tab icon. It is embedded rather than linked from a CDN
-// because the console is served by a distroless image with no writable static root, and
-// because the CSP below only ever allows same-origin images. Chromium also requests
-// /favicon.ico on its own when a page declares no icon, so this path is answered too.
+// favicon serves the console's tab icon. It is read from the console's own web
+// directory rather than linked from a CDN, because the CSP below only ever allows
+// same-origin images. Chromium also requests /favicon.ico on its own when a page
+// declares no icon, so this path is answered too.
 func (h *Handler) favicon(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	encoded, err := files.ReadFile("assets/favicon.ico")
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
 	w.Header().Set("Content-Type", "image/x-icon")
-	_, _ = w.Write(encoded)
+	_, _ = w.Write(h.web.faviconIcon)
 }
 
 func (h *Handler) currentSession(r *http.Request) (session, [sha256.Size]byte, bool) {
@@ -1069,7 +1099,7 @@ func (h *Handler) render(w http.ResponseWriter, name string, data any) {
 func (h *Handler) renderStatus(w http.ResponseWriter, status int, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	_ = h.templates.ExecuteTemplate(w, name, data)
+	_ = h.web.templates.ExecuteTemplate(w, name, data)
 }
 
 func (h *Handler) validOrigin(r *http.Request) bool {

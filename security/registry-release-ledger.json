@@ -2,6 +2,7 @@
   "entries": [
     {
       "archive_reference": null,
+      "component": "server",
       "decided_at": null,
       "decision_actors": [],
       "decision_reference": null,
@@ -25,6 +26,7 @@
     },
     {
       "archive_reference": null,
+      "component": "server",
       "decided_at": null,
       "decision_actors": [],
       "decision_reference": null,
@@ -48,6 +50,7 @@
     },
     {
       "archive_reference": null,
+      "component": "server",
       "decided_at": null,
       "decision_actors": [],
       "decision_reference": null,
@@ -71,6 +74,7 @@
     },
     {
       "archive_reference": null,
+      "component": "server",
       "decided_at": null,
       "decision_actors": [],
       "decision_reference": null,
@@ -94,6 +98,7 @@
     },
     {
       "archive_reference": null,
+      "component": "server",
       "decided_at": null,
       "decision_actors": [],
       "decision_reference": null,
@@ -117,6 +122,7 @@
     },
     {
       "archive_reference": null,
+      "component": "server",
       "decided_at": null,
       "decision_actors": [],
       "decision_reference": null,
@@ -140,6 +146,7 @@
     },
     {
       "archive_reference": null,
+      "component": "server",
       "decided_at": null,
       "decision_actors": [],
       "decision_reference": null,
@@ -163,6 +170,7 @@
     },
     {
       "archive_reference": null,
+      "component": "server",
       "decided_at": null,
       "decision_actors": [],
       "decision_reference": null,
@@ -186,6 +194,7 @@
     },
     {
       "archive_reference": null,
+      "component": "server",
       "decided_at": null,
       "decision_actors": [],
       "decision_reference": null,
@@ -209,6 +218,7 @@
     },
     {
       "archive_reference": null,
+      "component": "server",
       "decided_at": null,
       "decision_actors": [],
       "decision_reference": null,
@@ -232,6 +242,7 @@
     },
     {
       "archive_reference": null,
+      "component": "server",
       "decided_at": null,
       "decision_actors": [],
       "decision_reference": null,
@@ -255,6 +266,7 @@
     },
     {
       "archive_reference": null,
+      "component": "server",
       "decided_at": null,
       "decision_actors": [],
       "decision_reference": null,
@@ -278,6 +290,7 @@
     },
     {
       "archive_reference": null,
+      "component": "server",
       "decided_at": null,
       "decision_actors": [],
       "decision_reference": null,
@@ -300,6 +313,9 @@
       "state": "candidate"
     }
   ],
-  "registry_repository": "ghcr.io/huaxianyan/sevenmirror-server",
+  "registry_repositories": {
+    "admin": "ghcr.io/huaxianyan/sevenmirror-admin",
+    "server": "ghcr.io/huaxianyan/sevenmirror-server"
+  },
   "schema": "sevenmirror-registry-release-ledger-v1"
 }

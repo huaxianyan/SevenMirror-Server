@@ -11,7 +11,7 @@ import re
 
 LEDGER = Path(__file__).resolve().parents[1] / "security" / "registry-release-ledger.json"
 SCHEMA = "sevenmirror-registry-release-ledger-v1"
-REGISTRY_REPOSITORY = "ghcr.io/huaxianyan/sevenmirror-server"
+from release_components import COMPONENTS, image_repository
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 REVISION = re.compile(r"[0-9a-f]{40}")
 RUN_URL = re.compile(
@@ -20,6 +20,7 @@ RUN_URL = re.compile(
 ACTOR = re.compile(r"@[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?")
 ENTRY_KEYS = {
     "archive_reference",
+    "component",
     "decision_actors",
     "decision_reference",
     "decided_at",
@@ -142,11 +143,21 @@ def validate_ledger(path: Path = LEDGER, publication_revision: str | None = None
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise RuntimeError("registry release ledger is invalid JSON") from error
     if not isinstance(ledger, dict) or set(ledger) != {
-        "entries", "registry_repository", "schema",
+        "entries", "registry_repositories", "schema",
     } or ledger.get("schema") != SCHEMA or \
-            ledger.get("registry_repository") != REGISTRY_REPOSITORY or \
+            not isinstance(ledger.get("registry_repositories"), dict) or \
             not isinstance(ledger.get("entries"), list):
         raise RuntimeError("registry release ledger shape is invalid")
+    # Both tracks record digests in one file, so it names the repository each
+    # component publishes to instead of assuming a single image.
+    repositories = ledger["registry_repositories"]
+    if set(repositories) != set(COMPONENTS) or any(
+        repositories.get(component) != image_repository(component) for component in COMPONENTS
+    ):
+        raise RuntimeError("registry release ledger repositories are invalid")
+    for entry in ledger["entries"]:
+        if not isinstance(entry, dict) or entry.get("component") not in COMPONENTS:
+            raise RuntimeError("registry release ledger entry has no known component")
     identities = [validate_entry(entry) for entry in ledger["entries"]]
     if identities != sorted(identities) or len({item[1] for item in identities}) != len(identities) or \
             len({item[2] for item in identities}) != len(identities):

@@ -11,20 +11,26 @@ from pathlib import Path
 import re
 import subprocess
 
-ARTIFACTS = (
-    ("server", "linux", "amd64"),
-    ("admin", "linux", "amd64"),
-    ("admin-web", "linux", "amd64"),
-    ("server", "linux", "arm64"),
-    ("admin", "linux", "arm64"),
-    ("admin-web", "linux", "arm64"),
-)
+from release_components import COMMANDS, COMPONENTS, IMAGES
+
+SCHEMA = "sevenmirror-component-release-v1"
+ARCHITECTURES = ("amd64", "arm64")
+
+
+def artifact_plan(component: str) -> tuple[tuple[str, str, str], ...]:
+    """The binaries one component's release carries, per architecture."""
+    return tuple(
+        (command, "linux", architecture)
+        for architecture in ARCHITECTURES
+        for command in COMMANDS[component]
+    )
 REVISION = re.compile(r"^[0-9a-f]{40}$")
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--component", required=True, choices=COMPONENTS)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--revision", required=True)
     parser.add_argument("--verify-only", action="store_true")
@@ -43,7 +49,7 @@ def artifact_name(command: str, goos: str, goarch: str) -> str:
     return f"sevenmirror-{command}-{goos}-{goarch}"
 
 
-def build(output: Path, revision: str, repository: Path) -> None:
+def build(output: Path, revision: str, repository: Path, component: str) -> None:
     if output.exists() or output.is_symlink():
         raise RuntimeError("release output must not already exist")
     if not REVISION.fullmatch(revision):
@@ -57,7 +63,7 @@ def build(output: Path, revision: str, repository: Path) -> None:
         encoding="utf-8").strip()
     output.mkdir(mode=0o700)
     records: list[dict[str, object]] = []
-    for command, goos, goarch in ARTIFACTS:
+    for command, goos, goarch in artifact_plan(component):
         name = artifact_name(command, goos, goarch)
         destination = output / name
         env = os.environ.copy()
@@ -97,7 +103,8 @@ def build(output: Path, revision: str, repository: Path) -> None:
         })
     records.sort(key=lambda record: str(record["name"]))
     manifest = {
-        "schema": "sevenmirror-server-release-v1",
+        "schema": SCHEMA,
+        "component": component,
         "source_repository": "https://github.com/huaxianyan/SevenMirror-Server",
         "source_revision": revision,
         "protocol_version": protocol_version,
@@ -114,14 +121,14 @@ def build(output: Path, revision: str, repository: Path) -> None:
     )
 
 
-def verify(output: Path, revision: str) -> None:
+def verify(output: Path, revision: str, component: str) -> None:
     if not output.is_dir() or output.is_symlink():
         raise RuntimeError("release artifact directory must be a non-symlink directory")
     if not REVISION.fullmatch(revision):
         raise RuntimeError("expected revision must be a canonical commit")
     expected_targets = {
         artifact_name(command, goos, goarch): (command, goos, goarch)
-        for command, goos, goarch in ARTIFACTS
+        for command, goos, goarch in artifact_plan(component)
     }
     expected_names = set(expected_targets)
     expected_entries = expected_names | {"release-manifest.json", "SHA256SUMS"}
@@ -131,12 +138,12 @@ def verify(output: Path, revision: str) -> None:
     ):
         raise RuntimeError("release artifact directory has missing, extra, or unsafe entries")
     manifest = json.loads((output / "release-manifest.json").read_text(encoding="utf-8"))
-    if manifest.get("schema") != "sevenmirror-server-release-v1" or \
+    if manifest.get("schema") != SCHEMA or manifest.get("component") != component or \
             manifest.get("source_revision") != revision or \
             manifest.get("source_repository") != "https://github.com/huaxianyan/SevenMirror-Server":
         raise RuntimeError("release manifest source binding is invalid")
     records = manifest.get("artifacts")
-    if not isinstance(records, list) or len(records) != len(ARTIFACTS):
+    if not isinstance(records, list) or len(records) != len(expected_targets):
         raise RuntimeError("release manifest artifact inventory is invalid")
     checksum_lines: list[str] = []
     seen: set[str] = set()
@@ -167,9 +174,9 @@ def main() -> None:
     repository = Path(__file__).resolve().parents[1]
     output = args.output.resolve()
     if not args.verify_only:
-        build(output, args.revision, repository)
-    verify(output, args.revision)
-    print("SevenMirror Server release artifact set verified.")
+        build(output, args.revision, repository, args.component)
+    verify(output, args.revision, args.component)
+    print(f"SevenMirror {IMAGES[args.component]} release artifact set verified.")
 
 
 if __name__ == "__main__":

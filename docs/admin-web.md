@@ -2,7 +2,9 @@
 
 > 状态：左侧分类导航加右侧面板的任务界面，内置默认账号加首次登录凭据设置，复用 UX-002 authority 管理闭环
 
-`admin-web` 是与公开 relay 分离的按需管理进程。它直接读取同一个 SQLite registry 和 authority key 目录：列表页面不需要私钥，批准、重命名和移除设备时由 `internal/adminservice` 读取对应 authority private key 并签发成员事实。它不会挂载到设备注册、Membership 或 WebSocket Handler，也不会读取通知业务密文。常驻 relay 容器不得挂载 authority key 目录。
+模板与静态文件不在二进制里，而是从 `NM_ADMIN_WEB_DIR`（默认 `/app/web`）读取，启动时一次性读入并校验；缺文件就带着目录名报错退出，不会起成半张页面。部署时把这个目录换成挂载，就能只改文案或样式而不重发镜像。
+
+`admin-web` 是与公开 relay 分离的按需管理进程，也是唯一按 `admin-vX.Y.Z` 单独发布的组件。它直接读取同一个 SQLite registry 和 authority key 目录：列表页面不需要私钥，批准、重命名和移除设备时由 `internal/adminservice` 读取对应 authority private key 并签发成员事实。它不会挂载到设备注册、Membership 或 WebSocket Handler，也不会读取通知业务密文。常驻 relay 容器不得挂载 authority key 目录。
 
 当前切片提供：
 

@@ -6,17 +6,19 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from build_release_artifacts import ARTIFACTS, artifact_name, verify
+from build_release_artifacts import artifact_name, artifact_plan, verify
 
 
 class ReleaseArtifactManifestTest(unittest.TestCase):
-    def test_release_inventory_contains_every_server_command_for_each_target(self) -> None:
-        self.assertEqual(ARTIFACTS, (
+    def test_release_inventory_contains_every_command_of_the_component(self) -> None:
+        self.assertEqual(artifact_plan("server"), (
             ("server", "linux", "amd64"),
             ("admin", "linux", "amd64"),
-            ("admin-web", "linux", "amd64"),
             ("server", "linux", "arm64"),
             ("admin", "linux", "arm64"),
+        ))
+        self.assertEqual(artifact_plan("admin"), (
+            ("admin-web", "linux", "amd64"),
             ("admin-web", "linux", "arm64"),
         ))
 
@@ -26,7 +28,7 @@ class ReleaseArtifactManifestTest(unittest.TestCase):
             output = Path(temporary) / "release"
             output.mkdir()
             records = []
-            for command, goos, goarch in ARTIFACTS:
+            for command, goos, goarch in artifact_plan("server"):
                 name = artifact_name(command, goos, goarch)
                 content = f"fixture:{name}".encode("ascii")
                 (output / name).write_bytes(content)
@@ -40,7 +42,8 @@ class ReleaseArtifactManifestTest(unittest.TestCase):
                 })
             records.sort(key=lambda record: record["name"])
             manifest = {
-                "schema": "sevenmirror-server-release-v1",
+                "schema": "sevenmirror-component-release-v1",
+                "component": "server",
                 "source_repository": "https://github.com/huaxianyan/SevenMirror-Server",
                 "source_revision": revision,
                 "protocol_version": "fixture",
@@ -54,16 +57,16 @@ class ReleaseArtifactManifestTest(unittest.TestCase):
                 encoding="ascii",
             )
 
-            verify(output, revision)
+            verify(output, revision, "server")
             records[0]["command"] = "admin-web"
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             with self.assertRaisesRegex(RuntimeError, "artifact binding is invalid"):
-                verify(output, revision)
+                verify(output, revision, "server")
             records[0]["command"] = "admin"
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             (output / records[0]["name"]).write_bytes(b"tampered")
             with self.assertRaisesRegex(RuntimeError, "does not match its manifest"):
-                verify(output, revision)
+                verify(output, revision, "server")
 
 
 if __name__ == "__main__":

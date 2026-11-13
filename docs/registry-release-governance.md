@@ -46,8 +46,11 @@ The review limitations described below remain open.
 
 ## Immutable identities and tags
 
-- The deployable identity is
-  `ghcr.io/huaxianyan/sevenmirror-server@sha256:<index>`.
+- Two deployable identities exist now, one per release track:
+  `ghcr.io/huaxianyan/sevenmirror-server@sha256:<index>` published from `vX.Y.Z`
+  and `ghcr.io/huaxianyan/sevenmirror-admin@sha256:<index>` published from
+  `admin-vX.Y.Z`. The ledger names both repositories and records a `component`
+  on every entry, so an entry never has to be guessed back to its image.
 - A 40-character source-revision tag is only a retrieval aid. The protected
   workflow refuses to repoint an existing revision tag to different content.
 - A tag build also publishes `latest` and the release tag with its `v` removed.

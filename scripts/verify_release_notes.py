@@ -30,7 +30,9 @@ DEFAULT_FORBIDDEN_HEADINGS = (
 # 身份节至多出现一个，通常由工作流追加
 IDENTITY_HEADINGS = ("## 版本信息", "## 构建信息")
 # 指向仓库内某个标签下的文档，例如 /blob/v0.2.0/docs/architecture.md
-DEFAULT_LINK_PATTERN = r"/blob/v[^/\s]+/"
+# The console releases on admin-v tags, the server on v tags, and a note links
+# to the record at its own tag, so both shapes are accepted.
+DEFAULT_LINK_PATTERN = r"/blob/(?:admin-)?v[^/\s]+/"
 DEFAULT_NOTES_DIR = "docs/release-notes"
 DEFAULT_MAX_LINES = 40
 
@@ -107,7 +109,7 @@ def main():
     parser = argparse.ArgumentParser(description="check versioned release notes",
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("notes", nargs="*", help="release note files")
-    parser.add_argument("--tag", help="release tag, for example v0.2.0")
+    parser.add_argument("--tag", help="release tag, for example v0.2.0 or admin-v0.2.0")
     parser.add_argument("--dir", default=DEFAULT_NOTES_DIR,
                         help="release notes directory (default: %(default)s)")
     parser.add_argument("--max-lines", type=int, default=DEFAULT_MAX_LINES,

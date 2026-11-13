@@ -27,6 +27,7 @@ def candidate() -> dict[str, object]:
         "replacement_index_digest": None,
         "source_revision": "4" * 40,
         "state": "candidate",
+        "component": "server",
     }
 
 
@@ -35,7 +36,10 @@ class RegistryReleaseLedgerTest(unittest.TestCase):
         path.write_text(
             json.dumps({
                 "entries": entries,
-                "registry_repository": "ghcr.io/huaxianyan/sevenmirror-server",
+                "registry_repositories": {
+                    "admin": "ghcr.io/huaxianyan/sevenmirror-admin",
+                    "server": "ghcr.io/huaxianyan/sevenmirror-server",
+                },
                 "schema": SCHEMA,
             }),
             encoding="utf-8",
