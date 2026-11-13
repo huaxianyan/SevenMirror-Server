@@ -40,7 +40,12 @@ jobs:
           git status --short
           test -z "$(git status --porcelain=v1)"
           python3 scripts/build_release_artifacts.py \
+            --component server \
             --output "$RUNNER_TEMP/sevenmirror-server-release" \
+            --revision "$GITHUB_SHA"
+          python3 scripts/build_release_artifacts.py \
+            --component admin \
+            --output "$RUNNER_TEMP/sevenmirror-admin-release" \
             --revision "$GITHUB_SHA"
       - name: Scan Git history for secrets
         uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
