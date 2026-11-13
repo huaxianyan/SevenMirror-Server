@@ -70,8 +70,10 @@ def read_json(path: Path, description: str) -> object:
         raise RuntimeError(f"{description} is invalid JSON") from error
 
 
-def container_records(container_release: Path, revision: str) -> list[dict[str, object]]:
-    verify_container_release(container_release, revision)
+def container_records(
+    container_release: Path, revision: str, component: str,
+) -> list[dict[str, object]]:
+    verify_container_release(container_release, revision, component)
     value = read_json(container_release / "container-manifest.json", "container manifest")
     if not isinstance(value, dict) or not isinstance(value.get("images"), list):
         raise RuntimeError("container manifest image inventory is invalid")
@@ -200,7 +202,7 @@ def build(
     ).stdout.strip()
     if version != f"Version: {TRIVY_VERSION}":
         raise RuntimeError("unexpected Trivy version")
-    records = container_records(container_release, revision)
+    records = container_records(container_release, revision, component)
     index_digest, index_content = inspect_pulled_layout(
         pulled_layout, records, revision, component,
     )
@@ -274,7 +276,7 @@ def build(
 def verify(
     output: Path, container_release: Path, revision: str, component: str,
 ) -> None:
-    records = container_records(container_release, revision)
+    records = container_records(container_release, revision, component)
     if not output.is_dir() or output.is_symlink():
         raise RuntimeError("registry evidence must be a non-symlink directory")
     manifest = read_json(output / "registry-publication-manifest.json", "registry publication manifest")
