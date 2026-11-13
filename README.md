@@ -5,14 +5,12 @@
 
 [项目总仓库](https://github.com/huaxianyan/SevenMirror-Project) · 服务端 · [Chrome 扩展](https://github.com/huaxianyan/SevenMirror-Extension) · [Android 应用](https://github.com/huaxianyan/SevenMirror-Android)
 
-[简体中文](README.md) | [English](README.en.md)
+简体中文 | [English](README.en.md)
 </div>
 
 SevenMirror 的中继服务端。它在你自己的主机上路由手机与浏览器之间的端到端加密通知，并持有决定哪些设备可以加入的私有空间权威。
 
-> 状态：日常自托管已经可用。密文中继、权威签名的成员管理、持久投递与快照恢复、管理端页面、Docker 部署资产都已实现。生产级安全评审与协议兼容性政策尚未完成。
-
-## 能做什么
+## 功能
 
 - **只转发密文**：服务端看不懂通知内容。它能看到密文长度与投递时序，看不到标题、正文、应用名或回复。
 - **私有空间**：默认没有任何公开注册。设备用一次性的加入码申请，运维者批准后才生效。
@@ -22,7 +20,7 @@ SevenMirror 的中继服务端。它在你自己的主机上路由手机与浏�
 - **管理端页面**：按需启动的管理界面，可以查看设备状态、签发加入码、批准、拒绝、重命名与移除设备。
 - **一条命令完成部署**：仓库自带 Compose 文件与首次运行指引，管理端仅在需要时启动。
 
-## 怎么部署
+## 部署
 
 需要一台 Linux 主机、Docker Engine 与 Compose v2。如果要让手机和浏览器从外网连入，还需要一个带有效 TLS 证书的域名。
 

@@ -5,14 +5,12 @@
 
 [Project hub](https://github.com/huaxianyan/SevenMirror-Project) · Server · [Chrome extension](https://github.com/huaxianyan/SevenMirror-Extension) · [Android app](https://github.com/huaxianyan/SevenMirror-Android)
 
-[English](README.en.md) | [简体中文](README.md)
+English | [简体中文](README.md)
 </div>
 
 The relay server for SevenMirror. It routes end-to-end encrypted notifications between your phone and your browsers on your own host, and holds the private-space authority that decides which devices may join.
 
-> Status: usable today for everyday self-hosting. Ciphertext relay, authority-signed membership, durable delivery and snapshot recovery, the admin pages and the Docker assets are all implemented. A production-grade security review and a protocol compatibility policy are not.
-
-## What it does
+## Features
 
 - **Forwards ciphertext only**: the server cannot read notification content. It sees ciphertext length and delivery timing, not titles, bodies, app names or replies.
 - **Private space**: no public registration by default. Devices apply with a one-time join code and take effect only after the operator approves them.
@@ -22,7 +20,7 @@ The relay server for SevenMirror. It routes end-to-end encrypted notifications b
 - **Admin pages**: an on-demand interface to inspect device status and to issue join codes, approve, reject, rename and remove devices.
 - **One-command deployment**: the repository ships a Compose file and a first-run guide; the admin interface runs only when you need it.
 
-## Deploying
+## Deployment
 
 You need a Linux host, Docker Engine and Compose v2. To let phones and browsers connect from the internet, you also need a domain with a valid TLS certificate.
 
