@@ -177,7 +177,10 @@ jobs:
           # is running. Both point at the exact index digest just verified above,
           # so they cannot disagree with the immutable tag.
           if test "$GITHUB_REF_TYPE" = tag; then
-            for moveable_tag in latest "${GITHUB_REF_NAME#v}"; do
+            # admin-v0.1.0 must not become a version tag named admin-v0.1.0;
+            # the retrieval tag is 0.1.0 under its own repository.
+            release_version="${GITHUB_REF_NAME#admin-}"
+            for moveable_tag in latest "${release_version#v}"; do
               target_ref="${REGISTRY_REPOSITORY}:${moveable_tag}"
               "$regctl" image copy \
                 "${REGISTRY_REPOSITORY}@${expected_index_digest}" "$target_ref"

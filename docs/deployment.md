@@ -42,27 +42,33 @@ process can do: `cap_drop: [ALL]` leaves no capability to use, the root
 filesystem is read-only, and the image still declares `nonroot:nonroot` so any
 other runtime keeps the least-privileged default.
 
-### One image, three services
+### Two images, one release track each
 
-All three services use the same image reference, defined once at the top of
-`compose.yaml`. The image ships
-three static binaries (`/app/server`, `/app/admin`, `/app/admin-web`) and each
-service selects one through its `entrypoint`; the image's own entrypoint is the
-relay. Building or publishing a release therefore produces exactly one
-multi-arch image per revision.
+The relay and the admin CLI come from `ghcr.io/huaxianyan/sevenmirror-server`
+(`/app/server`, `/app/admin`), published from `vMAJOR.MINOR.PATCH` tags. The
+console comes from `ghcr.io/huaxianyan/sevenmirror-admin` (`/app/admin-web`),
+published from `admin-vMAJOR.MINOR.PATCH` tags. `compose.yaml` names both
+references once each: `x-server-image` feeds `prepare`, `relay` and `admin`,
+`x-admin-image` feeds `admin-web`.
 
-The privilege boundary between the relay and the console comes from the mount
-list, not from the image contents: only `admin` and `admin-web` mount
-`authority`, and the relay's only persistent mount is `data`. Splitting the image
-per service would not widen that boundary, because the relay binary and the
-console binary already live in one image while the relay still cannot read the
-key.
+Updating one line replaces only that half. A console fix leaves the relay
+running with its connections intact, and a relay release does not restart the
+console.
 
-Because all three share one reference, updating any one of them updates the
-reference for all. A feature change that touches only the console still means the
-next `docker compose up -d` replaces the relay container too, and the devices
-reconnect a few seconds later. That is an accepted cost of the single-image
-layout, not a failure.
+The privilege boundary does not come from the image contents: only `admin` and
+`admin-web` mount `authority`, and the relay's only persistent mount is `data`.
+Two images do not change that, and each one still runs read-only with all
+capabilities dropped.
+
+The database stays shared, and that is the one coupling left. The console opens
+the same SQLite registry and refuses to start when the file's schema version is
+newer than it supports. When a release bumps the schema, upgrade both images in
+the same `docker compose up -d`; when it does not, upgrade whichever changed.
+
+The console reads its templates and styles from `/app/web` at startup. Mounting a
+directory there lets you replace wording or CSS and restart only that service.
+A missing file stops the console with the directory named in the error rather
+than starting with half a page.
 
 ### Pinning a revision
 

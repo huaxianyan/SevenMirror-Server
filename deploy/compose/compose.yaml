@@ -13,8 +13,8 @@
 # 换行前先备份 data/ 与 authority/。两边摘要及其源提交见
 # security/registry-release-ledger.json。
 
-x-server-image: &sevenmirror-server-image ghcr.io/huaxianyan/sevenmirror-server@sha256:da373a8fcbe0ea5b5f2425f5cdc73b61ec58db2327657a058ef49e44ffe44056
-x-admin-image: &sevenmirror-admin-image ghcr.io/huaxianyan/sevenmirror-admin@sha256:PENDING_FIRST_ADMIN_RELEASE
+x-server-image: &sevenmirror-server-image ghcr.io/huaxianyan/sevenmirror-server@sha256:5aa90ab302b167f22ec63c293e3c78fa04f6ad787dfd9c880c41964576e33395
+x-admin-image: &sevenmirror-admin-image ghcr.io/huaxianyan/sevenmirror-admin@sha256:41d8ed852f16393e6aa4d06c5dba0886b05ce3ece29aec43452f05add12e6db9
 
 services:
   # 每次 up 都跑一次的初始化。只在没有工作区时创建，已存在则直接成功退出，

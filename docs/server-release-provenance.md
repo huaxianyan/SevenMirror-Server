@@ -137,6 +137,27 @@ release body. `scripts/verify_release_notes.py` enforces that shape, and
 The release title is the tag alone. A product-name prefix turns the Release list
 into a column of identical truncated names and hides which version each entry is.
 
+### v0.1.13 and admin-v0.1.0 publication and deployment
+
+These are the first releases on separate tracks. `v0.1.13` publishes the relay and the admin CLI as
+`ghcr.io/huaxianyan/sevenmirror-server` at index digest
+`sha256:5aa90ab302b167f22ec63c293e3c78fa04f6ad787dfd9c880c41964576e33395` (run
+`43360459688`), and `admin-v0.1.0` publishes the console as
+`ghcr.io/huaxianyan/sevenmirror-admin` at index digest
+`sha256:41d8ed852f16393e6aa4d06c5dba0886b05ce3ece29aec43452f05add12e6db9` (run
+`43360459737`). Both were built from revision `35f193d`, which is why the ledger now keys uniqueness
+on the pair of component and revision instead of the revision alone.
+
+The console's templates and styles moved out of the binary and are read from `NM_ADMIN_WEB_DIR`
+(default `/app/web`); the console image carries that directory and the server image no longer
+contains `/app/admin-web` or any web files. Deployment pins the two images separately in `.env`
+(`SEVENMIRROR_SERVER_IMAGE`, `SEVENMIRROR_ADMIN_IMAGE`) and in the repo's `compose.yaml`
+(`x-server-image`, `x-admin-image`).
+
+Pre-update backup: `backup-workspace` to `backups/pre-0.1.13`, `verify-workspace-backup` returned
+`result=verified`, and `data/` plus `authority/` were copied to `rollback-pre-0.1.13/` with the
+previous `.env` kept beside it.
+
 ### v0.1.12 publication and deployment
 
 Release `v0.1.12` fixes the custom stylesheet added in `v0.1.11`: the console policy allowed neither

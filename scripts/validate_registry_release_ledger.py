@@ -68,7 +68,7 @@ def optional_digest(value: object, field: str) -> str | None:
     return text
 
 
-def validate_entry(entry: object) -> tuple[datetime, str, str]:
+def validate_entry(entry: object) -> tuple[datetime, str, str, str]:
     if not isinstance(entry, dict) or set(entry) != ENTRY_KEYS:
         raise RuntimeError("registry release entry has an invalid field set")
     revision = require_text(entry["source_revision"], "source_revision")
@@ -132,7 +132,7 @@ def validate_entry(entry: object) -> tuple[datetime, str, str]:
         if availability == "expected" and archive_reference is not None:
             raise RuntimeError("preserved removal evidence requires removed availability")
 
-    return published_at, revision, index_digest
+    return published_at, entry["component"], revision, index_digest
 
 
 def validate_ledger(path: Path = LEDGER, publication_revision: str | None = None) -> int:
@@ -159,8 +159,13 @@ def validate_ledger(path: Path = LEDGER, publication_revision: str | None = None
         if not isinstance(entry, dict) or entry.get("component") not in COMPONENTS:
             raise RuntimeError("registry release ledger entry has no known component")
     identities = [validate_entry(entry) for entry in ledger["entries"]]
-    if identities != sorted(identities) or len({item[1] for item in identities}) != len(identities) or \
-            len({item[2] for item in identities}) != len(identities):
+    # Publication order is global, but a revision and an index are unique per
+    # component: the server and the console can legitimately ship from one commit
+    # on the same day, and each image still needs its own identity.
+    revisions = [(item[1], item[2]) for item in identities]
+    indexes = [(item[1], item[3]) for item in identities]
+    if identities != sorted(identities) or len(set(revisions)) != len(revisions) or \
+            len(set(indexes)) != len(indexes):
         raise RuntimeError("registry releases must be ordered with unique revisions and indexes")
     if publication_revision is not None:
         if REVISION.fullmatch(publication_revision) is None:

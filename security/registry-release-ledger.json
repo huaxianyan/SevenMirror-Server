@@ -311,6 +311,54 @@
       "replacement_index_digest": null,
       "source_revision": "c01050d60703684106e014350c8b852ea5777348",
       "state": "candidate"
+    },
+    {
+      "archive_reference": null,
+      "component": "admin",
+      "decided_at": null,
+      "decision_actors": [],
+      "decision_reference": null,
+      "index_digest": "sha256:41d8ed852f16393e6aa4d06c5dba0886b05ce3ece29aec43452f05add12e6db9",
+      "platforms": [
+        {
+          "architecture": "amd64",
+          "manifest_digest": "sha256:6e7b99a5b98a2bd1ed589481c45ab0b3af73b1efbd3b9b972838b22d8c660202"
+        },
+        {
+          "architecture": "arm64",
+          "manifest_digest": "sha256:5b56f917eba13944a15e0416af4d8f3ba95d25b5b71176bedfad314e2e0ee4a5"
+        }
+      ],
+      "publication_run": "https://github.com/huaxianyan/SevenMirror-Server/actions/runs/43360459737",
+      "published_at": "2026-11-13T03:42:00Z",
+      "registry_availability": "expected",
+      "replacement_index_digest": null,
+      "source_revision": "35f193d4dc70bb09fc17fada70de30754b7cf388",
+      "state": "candidate"
+    },
+    {
+      "archive_reference": null,
+      "component": "server",
+      "decided_at": null,
+      "decision_actors": [],
+      "decision_reference": null,
+      "index_digest": "sha256:5aa90ab302b167f22ec63c293e3c78fa04f6ad787dfd9c880c41964576e33395",
+      "platforms": [
+        {
+          "architecture": "amd64",
+          "manifest_digest": "sha256:1f77948236eb087a8f40ced710d7c2f01ae0029e728ae203aa5fd97f9d813e88"
+        },
+        {
+          "architecture": "arm64",
+          "manifest_digest": "sha256:b0baac213cb1df099f79e7b284c5a0bd13b5acec97a7bfc2e8236dc12493badf"
+        }
+      ],
+      "publication_run": "https://github.com/huaxianyan/SevenMirror-Server/actions/runs/43360459688",
+      "published_at": "2026-11-13T03:42:00Z",
+      "registry_availability": "expected",
+      "replacement_index_digest": null,
+      "source_revision": "35f193d4dc70bb09fc17fada70de30754b7cf388",
+      "state": "candidate"
     }
   ],
   "registry_repositories": {
