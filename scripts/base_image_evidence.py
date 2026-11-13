@@ -34,6 +34,20 @@ GO_BUILD = re.compile(
 BUILDER_COPY = re.compile(r"^COPY\s+--chown=\S+\s+--from=build\s+(\S+)\s+(\S+)$")
 OUT_PATH = re.compile(r"(?<![A-Za-z0-9_.-])(/out(?:/[A-Za-z0-9_.-]+)?)")
 
+# The build stage of each component, as an exact inventory. Both images share the
+# base images; they differ in what the builder produces, which is what this pins.
+COMPONENTS_BY_DOCKERFILE = {"Dockerfile": "server", "Dockerfile.admin": "admin"}
+OUTPUT_CONTROLS = {
+    "server": (
+        [("0", "/out/server", "./cmd/server"), ("0", "/out/admin", "./cmd/admin")],
+        ["/out/server", "/out/admin", "/out/data", "/out"],
+    ),
+    "admin": (
+        [("0", "/out/admin-web", "./cmd/admin-web")],
+        ["/out/admin-web", "/out/web", "/out/web", "/out"],
+    ),
+}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -113,11 +127,13 @@ def builder_output_controls(path: Path = DOCKERFILE) -> dict[str, object]:
         if match is None:
             raise RuntimeError("every builder Go command must use the guarded static-build form")
         builds.append(match.groups())
-    expected_builds = [
-        ("0", "/out/server", "./cmd/server"),
-        ("0", "/out/admin", "./cmd/admin"),
-        ("0", "/out/admin-web", "./cmd/admin-web"),
-    ]
+    # Each component builds only its own commands, and only its own output paths
+    # may appear in the build stage: a stray producer is how an image silently
+    # starts carrying something the manifest does not describe.
+    component = COMPONENTS_BY_DOCKERFILE.get(path.name)
+    if component is None:
+        raise RuntimeError(f"unknown release component for {path.name}")
+    expected_builds, expected_out_paths = OUTPUT_CONTROLS[component]
     if builds != expected_builds:
         raise RuntimeError("builder outputs or CGO boundary changed")
 
@@ -126,7 +142,7 @@ def builder_output_controls(path: Path = DOCKERFILE) -> dict[str, object]:
         raise RuntimeError("runtime must copy only the bounded builder output directory")
 
     out_paths = [match.group(1) for line in lines for match in OUT_PATH.finditer(line)]
-    if out_paths != ["/out/server", "/out/admin", "/out/admin-web", "/out/data", "/out"]:
+    if out_paths != expected_out_paths:
         raise RuntimeError("builder output directory contains an undeclared producer or copy")
 
     images = dockerfile_images(path)
@@ -134,7 +150,7 @@ def builder_output_controls(path: Path = DOCKERFILE) -> dict[str, object]:
         raise RuntimeError("runtime base must remain a distroless static image")
     return {
         "advisory": BUILDER_ADVISORY,
-        "build_commands": ["./cmd/server", "./cmd/admin", "./cmd/admin-web"],
+        "build_commands": [command for _, _, command in expected_builds],
         "cgo_enabled": False,
         "copied_builder_path": "/out",
         "runtime_path": "/app",
