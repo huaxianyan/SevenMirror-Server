@@ -168,6 +168,9 @@ input[type="checkbox"] { width: auto; margin: .15rem .4rem 0 0; }
 .setting-item { padding: 1rem; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface-subtle); }
 .setting-item h2 { margin: 0 0 .5rem; font-size: 1.1rem; }
 .setting-item p { margin: .5rem 0; line-height: 1.55; }
+/* Two cards in one panel need the same gap the panel area uses between panels;
+   without it they share an edge and read as a single block. */
+.setting-item + .setting-item { margin-top: 1.25rem; }
 .setting-form { display: grid; grid-template-columns: minmax(13rem, 26rem) auto; align-items: end; gap: .75rem; margin: 1rem 0 .5rem; }
 .setting-form select { margin-bottom: 0; }
 .setting-form button { justify-self: start; }
